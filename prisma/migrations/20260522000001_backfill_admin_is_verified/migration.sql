@@ -1,1 +1,0 @@
-UPDATE "admin_users" SET "isVerified" = true WHERE "isVerified" = false;
