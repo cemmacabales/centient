@@ -12,6 +12,10 @@ Running log of shipped features and scaffolding milestones.
 
 - **Shared utilities (issue #15):** `lib/constants.ts` (Celo chain config + cUSD/USDC addresses + `REWARD_CUSD`), `lib/minipay.ts` (client-only `isMiniPay` + `getWalletAddress` via `eth_requestAccounts`), `lib/payout.ts` (server-side `payCUSD`, `waitForTx`, `rewardInWei` via viem + `privateKeyToAccount`), `lib/quality.ts` (15s in-memory rate limiter + reason-spam validator), `types/index.ts` (`PayoutStatus`, `Choice`, `TaskResponse`, `SubmitRequest`, `SubmitResponse`, `MeResponse`). Bumped `tsconfig.json` target to `ES2020` to allow the `100_000n` BigInt literal in `payout.ts`.
 
+## Data
+
+- **Task seed (issue #16):** `prisma/seed.ts` idempotently upserts 100 task pairs — 90 regular (15 general, 15 coding, 10 writing, 15 math, 15 explanation, 10 creative, 10 advice) and 10 gold (4 factually wrong, 2 empty, 2 inappropriate refusal, 2 nonsense) with deterministic string IDs and a 5-A/5-B gold answer balance. Uses `@prisma/adapter-pg`. Runs via `npm run db:seed`; re-runs are safe thanks to `upsert` keyed on `id`.
+
 ## Core flows
 
 _Nothing shipped yet._
