@@ -16,6 +16,10 @@ Running log of shipped features and scaffolding milestones.
 
 - **Task seed (issue #16):** `prisma/seed.ts` idempotently upserts 100 task pairs — 90 regular (15 general, 15 coding, 10 writing, 15 math, 15 explanation, 10 creative, 10 advice) and 10 gold (4 factually wrong, 2 empty, 2 inappropriate refusal, 2 nonsense) with deterministic string IDs and a 5-A/5-B gold answer balance. Uses `@prisma/adapter-pg`. Runs via `npm run db:seed`; re-runs are safe thanks to `upsert` keyed on `id`.
 
+## UI
+
+- **Global layout, design tokens, and brand fonts (issue #20):** `app/globals.css` declares the full Tailwind 4 `@theme` token set (Material 3-derived primary/secondary/tertiary/error/surface/outline color scale, Manrope/Inter font variables, six-step radius scale). `app/layout.tsx` loads Manrope + Inter via `next/font/google`, links Material Symbols Outlined, sets `<title>` to "Centient", and applies the font CSS variables on `<html>` with `bg-surface text-on-surface antialiased` on `<body>`.
+
 ## Core flows
 
 _Nothing shipped yet._
