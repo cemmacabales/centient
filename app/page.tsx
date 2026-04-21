@@ -6,6 +6,7 @@ import TaskCard from "@/components/TaskCard";
 import EarningsBadge from "@/components/EarningsBadge";
 import SubmitButton from "@/components/SubmitButton";
 import LoadingScreen from "@/components/LoadingScreen";
+import AccountSheet from "@/components/AccountSheet";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
 type Screen =
@@ -35,11 +36,14 @@ export default function Home() {
   const [earnings, setEarnings] = useState("0");
   const [submitting, setSubmitting] = useState(false);
   const [lastTxHash, setLastTxHash] = useState<string | null>(null);
+  const [submissionCount, setSubmissionCount] = useState(0);
+  const [accountOpen, setAccountOpen] = useState(false);
 
   const fetchUserData = useCallback(async (addr: string) => {
     const res = await fetch(`/api/me?wallet=${addr}`);
     const data = await res.json();
     setEarnings(data.totalEarned ?? "0");
+    setSubmissionCount(data.submissionCount ?? 0);
   }, []);
 
   const fetchTask = useCallback(async (addr: string) => {
@@ -154,11 +158,27 @@ export default function Home() {
               Centient
             </span>
           </div>
-          <EarningsBadge totalEarned={earnings} />
+          <button
+            type="button"
+            onClick={() => setAccountOpen(true)}
+            aria-label="View account"
+            className="rounded-full transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          >
+            <EarningsBadge totalEarned={earnings} />
+          </button>
         </header>
         <main className="mx-auto max-w-lg px-4 py-6">
           <TaskCard task={task} onSubmit={handleSubmit} loading={submitting} />
         </main>
+        <AccountSheet
+          open={accountOpen}
+          onClose={() => setAccountOpen(false)}
+          walletAddress={wallet ?? ""}
+          totalEarned={earnings}
+          rewardSymbol={REWARD_TOKEN_SYMBOL}
+          submissionCount={submissionCount}
+          explorerUrl={EXPLORER_URL}
+        />
       </div>
     );
   }
