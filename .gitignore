@@ -3,3 +3,4 @@ node_modules/
 app/generated/
 .next/
 *.tsbuildinfo
+assets/logo-source.png
