@@ -28,6 +28,7 @@ export interface SubmitResponse {
 
 export interface MeResponse {
   walletAddress: string;
-  totalEarnedCUSD: string;
+  totalEarned: string;
+  rewardSymbol: string;
   submissionCount: number;
 }

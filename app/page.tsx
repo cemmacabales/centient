@@ -5,6 +5,7 @@ import { isMiniPay, getWalletAddress } from "@/lib/minipay";
 import TaskCard from "@/components/TaskCard";
 import EarningsBadge from "@/components/EarningsBadge";
 import SubmitButton from "@/components/SubmitButton";
+import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
 type Screen =
   | "checking"
@@ -36,7 +37,7 @@ export default function Home() {
   const fetchUserData = useCallback(async (addr: string) => {
     const res = await fetch(`/api/me?wallet=${addr}`);
     const data = await res.json();
-    setEarnings(data.totalEarnedCUSD ?? "0");
+    setEarnings(data.totalEarned ?? "0");
   }, []);
 
   const fetchTask = useCallback(async (addr: string) => {
@@ -165,7 +166,7 @@ export default function Home() {
               Centient
             </span>
           </div>
-          <EarningsBadge totalEarnedCUSD={earnings} />
+          <EarningsBadge totalEarned={earnings} />
         </header>
         <main className="mx-auto max-w-lg px-4 py-6">
           <TaskCard task={task} onSubmit={handleSubmit} loading={submitting} />
@@ -191,7 +192,9 @@ export default function Home() {
               check
             </span>
           </div>
-          <h2 className="text-2xl font-headline font-bold text-on-surface">Paid 0.05 cUSD</h2>
+          <h2 className="text-2xl font-headline font-bold text-on-surface">
+            Paid {REWARD_AMOUNT} {REWARD_TOKEN_SYMBOL}
+          </h2>
           <p className="text-center font-body text-sm text-on-surface-variant">
             Your contribution helps improve AI.
             {lastTxHash && (
@@ -203,7 +206,7 @@ export default function Home() {
                   rel="noopener noreferrer"
                   className="text-primary underline"
                 >
-                  View on Celoscan
+                  View on explorer
                 </a>
               </>
             )}
@@ -217,7 +220,7 @@ export default function Home() {
                 <span className="font-headline text-4xl font-extrabold tracking-tighter text-on-surface">
                   {earnings}
                 </span>
-                <span className="font-headline text-xl font-bold text-secondary">cUSD</span>
+                <span className="font-headline text-xl font-bold text-secondary">{REWARD_TOKEN_SYMBOL}</span>
               </div>
             </div>
           </div>
@@ -280,7 +283,7 @@ export default function Home() {
           <p className="font-body text-sm text-on-surface-variant">
             Check back soon for more tasks.
           </p>
-          <EarningsBadge totalEarnedCUSD={earnings} />
+          <EarningsBadge totalEarned={earnings} />
         </div>
       </div>
     );

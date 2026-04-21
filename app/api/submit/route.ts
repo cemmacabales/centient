@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { payCUSD, rewardInWei } from "@/lib/payout";
+import { payReward, rewardInWei } from "@/lib/payout";
 import { isRateLimited, isSpamReason } from "@/lib/quality";
 
 const EXPLORER_URL = process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://celoscan.io";
@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
   });
 
   try {
-    const txHash = await payCUSD(walletAddress as `0x${string}`);
+    const txHash = await payReward(walletAddress as `0x${string}`);
     await prisma.$transaction([
       prisma.submission.update({
         where: { id: submission.id },
