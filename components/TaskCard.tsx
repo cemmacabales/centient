@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import SubmitButton from "./SubmitButton";
+import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
 interface TaskCardProps {
   task: {
@@ -13,9 +14,16 @@ interface TaskCardProps {
   onSubmit: (choice: "A" | "B", reason: string) => Promise<void>;
   loading: boolean;
   reward?: string;
+  tokenSymbol?: string;
 }
 
-export default function TaskCard({ task, onSubmit, loading, reward = "0.05" }: TaskCardProps) {
+export default function TaskCard({
+  task,
+  onSubmit,
+  loading,
+  reward = REWARD_AMOUNT,
+  tokenSymbol = REWARD_TOKEN_SYMBOL,
+}: TaskCardProps) {
   const [choice, setChoice] = useState<"A" | "B" | null>(null);
   const [reason, setReason] = useState("");
 
@@ -45,7 +53,7 @@ export default function TaskCard({ task, onSubmit, loading, reward = "0.05" }: T
           >
             monetization_on
           </span>
-          <span className="font-headline text-sm font-bold text-secondary">{reward} cUSD</span>
+          <span className="font-headline text-sm font-bold text-secondary">{reward} {tokenSymbol}</span>
         </div>
       </div>
 
