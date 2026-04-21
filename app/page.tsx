@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { isMiniPay, getWalletAddress } from "@/lib/minipay";
+import { isMiniPay, connectMiniPay } from "@/lib/minipay";
 import TaskCard from "@/components/TaskCard";
 import EarningsBadge from "@/components/EarningsBadge";
 import SubmitButton from "@/components/SubmitButton";
@@ -16,7 +16,8 @@ type Screen =
   | "no_tasks"
   | "success"
   | "quality_failed"
-  | "banned";
+  | "banned"
+  | "wallet_error";
 
 interface TaskData {
   id: string;
@@ -58,15 +59,13 @@ export default function Home() {
       return;
     }
     setScreen("loading");
-    getWalletAddress().then(async (addr) => {
-      if (!addr) {
-        setScreen("not_minipay");
-        return;
-      }
-      setWallet(addr);
-      await fetchUserData(addr);
-      await fetchTask(addr);
-    });
+    connectMiniPay()
+      .then(async (addr) => {
+        setWallet(addr);
+        await fetchUserData(addr);
+        await fetchTask(addr);
+      })
+      .catch(() => setScreen("wallet_error"));
   }, [fetchUserData, fetchTask]);
 
   async function handleSubmit(choice: "A" | "B", reason: string) {
@@ -273,6 +272,30 @@ export default function Home() {
             Check back soon for more tasks.
           </p>
           <EarningsBadge totalEarned={earnings} />
+        </div>
+      </div>
+    );
+  }
+
+  if (screen === "wallet_error") {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-6 text-center">
+        <div className="flex w-full max-w-sm flex-col items-center gap-6">
+          <div className="flex h-32 w-32 items-center justify-center rounded-full bg-error-container">
+            <span
+              className="material-symbols-outlined text-[64px] text-on-error-container"
+              aria-hidden="true"
+            >
+              link_off
+            </span>
+          </div>
+          <h2 className="text-2xl font-headline font-bold text-on-surface">
+            Couldn&apos;t connect to MiniPay
+          </h2>
+          <p className="font-body text-sm text-on-surface-variant">
+            Open the app from MiniPay or try again.
+          </p>
+          <SubmitButton label="Try again" onClick={() => window.location.reload()} />
         </div>
       </div>
     );
