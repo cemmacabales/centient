@@ -85,3 +85,10 @@
     transform: translateY(0);
   }
 }
+
+details > summary::-webkit-details-marker {
+  display: none;
+}
+details > summary {
+  list-style: none;
+}

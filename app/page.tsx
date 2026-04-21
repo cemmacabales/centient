@@ -5,16 +5,21 @@ import Image from "next/image";
 import { isMiniPay, connectMiniPay } from "@/lib/minipay";
 import TaskCard from "@/components/TaskCard";
 import EarningsBadge from "@/components/EarningsBadge";
+import WalletChip from "@/components/WalletChip";
 import SubmitButton from "@/components/SubmitButton";
 import LoadingScreen from "@/components/LoadingScreen";
 import AccountSheet from "@/components/AccountSheet";
+import Landing from "@/components/Landing";
 import Toast, { type ToastKind, type ToastMessage } from "@/components/Toast";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+
+const MIN_LOADING_MS = 1500;
 
 type Screen =
   | "checking"
   | "not_minipay"
   | "loading"
+  | "landing"
   | "task"
   | "no_tasks"
   | "success"
@@ -107,14 +112,21 @@ export default function Home() {
       return;
     }
     setScreen("loading");
-    connectMiniPay()
-      .then(async (addr) => {
-        setWallet(addr);
-        await fetchUserData(addr);
-        await fetchTask(addr);
-      })
+    const connect = connectMiniPay().then(async (addr) => {
+      setWallet(addr);
+      await fetchUserData(addr);
+    });
+    const minDelay = new Promise<void>((resolve) => setTimeout(resolve, MIN_LOADING_MS));
+    Promise.all([connect, minDelay])
+      .then(() => setScreen("landing"))
       .catch(() => setScreen("wallet_error"));
-  }, [fetchUserData, fetchTask]);
+  }, [fetchUserData]);
+
+  const handleStartEarning = useCallback(() => {
+    if (!wallet) return;
+    setScreen("loading");
+    fetchTask(wallet);
+  }, [wallet, fetchTask]);
 
   async function handleSubmit(choice: "A" | "B", reason: string) {
     if (!wallet || !task) return;
@@ -209,11 +221,19 @@ export default function Home() {
         </div>
       </div>
     );
+  } else if (screen === "landing") {
+    body = (
+      <Landing
+        totalEarned={earnings}
+        submissionCount={submissionCount}
+        onStart={handleStartEarning}
+      />
+    );
   } else if (screen === "task" && task) {
     body = (
       <div className="min-h-screen bg-surface">
-        <header className="sticky top-0 z-40 flex w-full items-center justify-between bg-surface-container-low px-6 py-4">
-          <div className="flex items-center gap-3">
+        <header className="sticky top-0 z-40 flex w-full items-center justify-between bg-surface-container-low px-4 py-4">
+          <div className="flex items-center gap-2">
             <Image
               src="/logo.png"
               alt=""
@@ -226,14 +246,24 @@ export default function Home() {
               Centient
             </span>
           </div>
-          <button
-            type="button"
-            onClick={() => setAccountOpen(true)}
-            aria-label="View account"
-            className="rounded-full transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-          >
-            <EarningsBadge totalEarned={earnings} />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAccountOpen(true)}
+              aria-label="View account"
+              className="rounded-full transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+            >
+              <WalletChip address={wallet} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setAccountOpen(true)}
+              aria-label="View account"
+              className="rounded-full transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+            >
+              <EarningsBadge totalEarned={earnings} />
+            </button>
+          </div>
         </header>
         <main className="mx-auto max-w-lg px-4 py-6">
           <TaskCard task={task} onSubmit={handleSubmit} loading={submitting} />
