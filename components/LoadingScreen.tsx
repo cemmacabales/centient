@@ -1,5 +1,7 @@
 "use client";
 
+import Image from "next/image";
+
 export default function LoadingScreen() {
   return (
     <div className="relative flex min-h-screen flex-col items-center justify-center bg-surface px-6 text-center">
@@ -8,6 +10,14 @@ export default function LoadingScreen() {
         <div className="absolute -left-[20%] top-[40%] h-[70vw] w-[70vw] rounded-full bg-secondary/5 blur-[80px]" />
       </div>
       <div className="relative z-10 flex flex-col items-center gap-6">
+        <Image
+          src="/logo.png"
+          alt=""
+          width={120}
+          height={120}
+          priority
+          className="select-none drop-shadow-[0_8px_24px_rgba(0,109,61,0.15)]"
+        />
         <span className="text-4xl font-headline font-extrabold tracking-tighter text-primary">
           Centient
         </span>
