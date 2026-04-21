@@ -5,6 +5,7 @@ import { isMiniPay, getWalletAddress } from "@/lib/minipay";
 import TaskCard from "@/components/TaskCard";
 import EarningsBadge from "@/components/EarningsBadge";
 import SubmitButton from "@/components/SubmitButton";
+import LoadingScreen from "@/components/LoadingScreen";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
 type Screen =
@@ -104,19 +105,7 @@ export default function Home() {
   }
 
   if (screen === "checking" || screen === "loading") {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-surface">
-        <span className="flex gap-1" aria-label="Loading">
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              className="h-2.5 w-2.5 rounded-full bg-primary motion-safe:animate-bounce"
-              style={{ animationDelay: `${i * 0.15}s` }}
-            />
-          ))}
-        </span>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   if (screen === "not_minipay") {
