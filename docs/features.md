@@ -18,4 +18,4 @@ Running log of shipped features and scaffolding milestones.
 
 ## Core flows
 
-_Nothing shipped yet._
+- **`GET /api/task` (issue #17):** Returns the next un-submitted task for a wallet. Validates the `wallet` query param against `/^0x[a-f0-9]{40}$/`, picks from gold tasks 10% of the time and regular tasks 90%, orders by `createdAt asc`, excludes tasks the wallet has already submitted, and never exposes `isGold` or `goldAnswer` in the response. Returns `{ task: null, message: "No more tasks available" }` when nothing remains.
