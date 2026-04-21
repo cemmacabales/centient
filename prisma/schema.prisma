@@ -1,0 +1,63 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  // NOTE: url lives in prisma.config.ts, NOT here.
+}
+
+model User {
+  walletAddress   String   @id
+  createdAt       DateTime @default(now())
+  totalEarnedWei  BigInt   @default(0)
+  submissionCount Int      @default(0)
+  goldCorrect     Int      @default(0)
+  goldAttempted   Int      @default(0)
+  isBanned        Boolean  @default(false)
+
+  submissions Submission[]
+
+  @@map("users")
+}
+
+model Task {
+  id         String   @id @default(uuid())
+  prompt     String
+  responseA  String
+  responseB  String
+  modelA     String?
+  modelB     String?
+  category   String?
+  isGold     Boolean  @default(false)
+  goldAnswer String?
+  createdAt  DateTime @default(now())
+
+  submissions Submission[]
+
+  @@index([isGold])
+  @@map("tasks")
+}
+
+model Submission {
+  id              String   @id @default(uuid())
+  walletAddress   String
+  taskId          String
+  choice          String
+  reason          String
+  isGoldCheck     Boolean  @default(false)
+  goldPassed      Boolean?
+  payoutAmountWei BigInt
+  payoutTxHash    String?
+  payoutStatus    String   @default("pending")
+  createdAt       DateTime @default(now())
+
+  user User @relation(fields: [walletAddress], references: [walletAddress])
+  task Task @relation(fields: [taskId], references: [id])
+
+  @@unique([walletAddress, taskId])
+  @@index([walletAddress])
+  @@index([payoutStatus])
+  @@map("submissions")
+}
