@@ -1,10 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { isMiniPay, getWalletAddress } from "@/lib/minipay";
+import { isMiniPay, connectMiniPay } from "@/lib/minipay";
 import TaskCard from "@/components/TaskCard";
 import EarningsBadge from "@/components/EarningsBadge";
 import SubmitButton from "@/components/SubmitButton";
+import LoadingScreen from "@/components/LoadingScreen";
+import AccountSheet from "@/components/AccountSheet";
+import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
 type Screen =
   | "checking"
@@ -14,7 +17,8 @@ type Screen =
   | "no_tasks"
   | "success"
   | "quality_failed"
-  | "banned";
+  | "banned"
+  | "wallet_error";
 
 interface TaskData {
   id: string;
@@ -32,11 +36,14 @@ export default function Home() {
   const [earnings, setEarnings] = useState("0");
   const [submitting, setSubmitting] = useState(false);
   const [lastTxHash, setLastTxHash] = useState<string | null>(null);
+  const [submissionCount, setSubmissionCount] = useState(0);
+  const [accountOpen, setAccountOpen] = useState(false);
 
   const fetchUserData = useCallback(async (addr: string) => {
     const res = await fetch(`/api/me?wallet=${addr}`);
     const data = await res.json();
-    setEarnings(data.totalEarnedCUSD ?? "0");
+    setEarnings(data.totalEarned ?? "0");
+    setSubmissionCount(data.submissionCount ?? 0);
   }, []);
 
   const fetchTask = useCallback(async (addr: string) => {
@@ -56,15 +63,13 @@ export default function Home() {
       return;
     }
     setScreen("loading");
-    getWalletAddress().then(async (addr) => {
-      if (!addr) {
-        setScreen("not_minipay");
-        return;
-      }
-      setWallet(addr);
-      await fetchUserData(addr);
-      await fetchTask(addr);
-    });
+    connectMiniPay()
+      .then(async (addr) => {
+        setWallet(addr);
+        await fetchUserData(addr);
+        await fetchTask(addr);
+      })
+      .catch(() => setScreen("wallet_error"));
   }, [fetchUserData, fetchTask]);
 
   async function handleSubmit(choice: "A" | "B", reason: string) {
@@ -103,19 +108,7 @@ export default function Home() {
   }
 
   if (screen === "checking" || screen === "loading") {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-surface">
-        <span className="flex gap-1" aria-label="Loading">
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              className="h-2.5 w-2.5 rounded-full bg-primary motion-safe:animate-bounce"
-              style={{ animationDelay: `${i * 0.15}s` }}
-            />
-          ))}
-        </span>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   if (screen === "not_minipay") {
@@ -165,11 +158,27 @@ export default function Home() {
               Centient
             </span>
           </div>
-          <EarningsBadge totalEarnedCUSD={earnings} />
+          <button
+            type="button"
+            onClick={() => setAccountOpen(true)}
+            aria-label="View account"
+            className="rounded-full transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          >
+            <EarningsBadge totalEarned={earnings} />
+          </button>
         </header>
         <main className="mx-auto max-w-lg px-4 py-6">
           <TaskCard task={task} onSubmit={handleSubmit} loading={submitting} />
         </main>
+        <AccountSheet
+          open={accountOpen}
+          onClose={() => setAccountOpen(false)}
+          walletAddress={wallet ?? ""}
+          totalEarned={earnings}
+          rewardSymbol={REWARD_TOKEN_SYMBOL}
+          submissionCount={submissionCount}
+          explorerUrl={EXPLORER_URL}
+        />
       </div>
     );
   }
@@ -191,7 +200,9 @@ export default function Home() {
               check
             </span>
           </div>
-          <h2 className="text-2xl font-headline font-bold text-on-surface">Paid 0.05 cUSD</h2>
+          <h2 className="text-2xl font-headline font-bold text-on-surface">
+            Paid {REWARD_AMOUNT} {REWARD_TOKEN_SYMBOL}
+          </h2>
           <p className="text-center font-body text-sm text-on-surface-variant">
             Your contribution helps improve AI.
             {lastTxHash && (
@@ -203,7 +214,7 @@ export default function Home() {
                   rel="noopener noreferrer"
                   className="text-primary underline"
                 >
-                  View on Celoscan
+                  View on explorer
                 </a>
               </>
             )}
@@ -217,7 +228,7 @@ export default function Home() {
                 <span className="font-headline text-4xl font-extrabold tracking-tighter text-on-surface">
                   {earnings}
                 </span>
-                <span className="font-headline text-xl font-bold text-secondary">cUSD</span>
+                <span className="font-headline text-xl font-bold text-secondary">{REWARD_TOKEN_SYMBOL}</span>
               </div>
             </div>
           </div>
@@ -280,7 +291,31 @@ export default function Home() {
           <p className="font-body text-sm text-on-surface-variant">
             Check back soon for more tasks.
           </p>
-          <EarningsBadge totalEarnedCUSD={earnings} />
+          <EarningsBadge totalEarned={earnings} />
+        </div>
+      </div>
+    );
+  }
+
+  if (screen === "wallet_error") {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-6 text-center">
+        <div className="flex w-full max-w-sm flex-col items-center gap-6">
+          <div className="flex h-32 w-32 items-center justify-center rounded-full bg-error-container">
+            <span
+              className="material-symbols-outlined text-[64px] text-on-error-container"
+              aria-hidden="true"
+            >
+              link_off
+            </span>
+          </div>
+          <h2 className="text-2xl font-headline font-bold text-on-surface">
+            Couldn&apos;t connect to MiniPay
+          </h2>
+          <p className="font-body text-sm text-on-surface-variant">
+            Open the app from MiniPay or try again.
+          </p>
+          <SubmitButton label="Try again" onClick={() => window.location.reload()} />
         </div>
       </div>
     );
