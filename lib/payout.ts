@@ -3,21 +3,28 @@ import { privateKeyToAccount } from "viem/accounts";
 import { celo } from "viem/chains";
 import { CUSD_MAINNET, REWARD_CUSD } from "./constants";
 
-const account = privateKeyToAccount(process.env.PAYOUT_PRIVATE_KEY as `0x${string}`);
+function rpcUrl(): string {
+  return process.env.CELO_RPC_URL ?? "https://forno.celo.org";
+}
 
-const publicClient = createPublicClient({
-  chain: celo,
-  transport: http(process.env.CELO_RPC_URL ?? "https://forno.celo.org"),
-});
+function publicClient() {
+  return createPublicClient({ chain: celo, transport: http(rpcUrl()) });
+}
 
-const walletClient = createWalletClient({
-  account,
-  chain: celo,
-  transport: http(process.env.CELO_RPC_URL ?? "https://forno.celo.org"),
-});
+function walletClient() {
+  const key = process.env.PAYOUT_PRIVATE_KEY;
+  if (!key) {
+    throw new Error("PAYOUT_PRIVATE_KEY is not configured");
+  }
+  return createWalletClient({
+    account: privateKeyToAccount(key as `0x${string}`),
+    chain: celo,
+    transport: http(rpcUrl()),
+  });
+}
 
 export async function payCUSD(to: `0x${string}`): Promise<`0x${string}`> {
-  return walletClient.writeContract({
+  return walletClient().writeContract({
     address: CUSD_MAINNET,
     abi: erc20Abi,
     functionName: "transfer",
@@ -27,7 +34,7 @@ export async function payCUSD(to: `0x${string}`): Promise<`0x${string}`> {
 }
 
 export async function waitForTx(hash: `0x${string}`) {
-  return publicClient.waitForTransactionReceipt({ hash, timeout: 30_000 });
+  return publicClient().waitForTransactionReceipt({ hash, timeout: 30_000 });
 }
 
 export function rewardInWei(): bigint {
