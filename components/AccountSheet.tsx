@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { truncateAddress } from "@/lib/wallet";
 
 interface AccountSheetProps {
   open: boolean;
@@ -32,9 +33,7 @@ export default function AccountSheet({
 
   if (!open) return null;
 
-  const truncated = walletAddress
-    ? `${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}`
-    : "—";
+  const truncated = truncateAddress(walletAddress);
 
   return (
     <div
