@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { formatUnits } from "viem";
 import prisma from "@/lib/prisma";
+import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
 export async function GET(req: NextRequest) {
   const wallet = req.nextUrl.searchParams.get("wallet")?.toLowerCase();
@@ -14,7 +15,8 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     walletAddress: wallet,
-    totalEarnedCUSD: user ? formatUnits(user.totalEarnedWei, 18) : "0",
+    totalEarned: user ? formatUnits(user.totalEarnedWei, REWARD_TOKEN_DECIMALS) : "0",
+    rewardSymbol: REWARD_TOKEN_SYMBOL,
     submissionCount: user?.submissionCount ?? 0,
   });
 }
