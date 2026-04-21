@@ -1,0 +1,29 @@
+# Centient — Features
+
+Running log of shipped features and scaffolding milestones.
+
+## Scaffolding
+
+- **Project scaffold (issue #13):** Next.js 16 App Router project with React 19.2, TypeScript 5.4, Tailwind 4, Prisma 7, and viem 2.x. Established the directory layout (`app/`, `lib/`, `components/`, `types/`, `prisma/`) with placeholder modules, `next.config.ts` set to `output: "standalone"` for Railway, `.env.local.example` template, and `.gitignore` excluding `node_modules/`, `.env.local`, `app/generated/`, and `.next/`.
+- **Prisma 7 data model (issue #14):** `User`, `Task`, and `Submission` models in `prisma/schema.prisma` backed by PostgreSQL via `@prisma/adapter-pg`. Wallet-keyed users, UUID tasks with gold-task flags, and submissions keyed by `(walletAddress, taskId)` with payout tracking. Singleton client in `lib/prisma.ts` reuses the same instance across Next.js hot reloads. Initial migration (`init`) creates `users`, `tasks`, `submissions` plus supporting indexes.
+- **Local Postgres via Docker (issue #24):** `docker-compose.yml` defines a `postgres:15-alpine` service on port 5432 with credentials matching `.env.local.example`, a named `centient_pgdata` volume for persistence across restarts, and a `pg_isready` healthcheck. One-command local setup: `docker compose up -d`.
+
+## Libraries
+
+- **Shared utilities (issue #15):** `lib/constants.ts` (Celo chain config + cUSD/USDC addresses + `REWARD_CUSD`), `lib/minipay.ts` (client-only `isMiniPay` + `getWalletAddress` via `eth_requestAccounts`), `lib/payout.ts` (server-side `payCUSD`, `waitForTx`, `rewardInWei` via viem + `privateKeyToAccount`), `lib/quality.ts` (15s in-memory rate limiter + reason-spam validator), `types/index.ts` (`PayoutStatus`, `Choice`, `TaskResponse`, `SubmitRequest`, `SubmitResponse`, `MeResponse`). Bumped `tsconfig.json` target to `ES2020` to allow the `100_000n` BigInt literal in `payout.ts`.
+
+## Data
+
+- **Task seed (issue #16):** `prisma/seed.ts` idempotently upserts 100 task pairs — 90 regular (15 general, 15 coding, 10 writing, 15 math, 15 explanation, 10 creative, 10 advice) and 10 gold (4 factually wrong, 2 empty, 2 inappropriate refusal, 2 nonsense) with deterministic string IDs and a 5-A/5-B gold answer balance. Uses `@prisma/adapter-pg`. Runs via `npm run db:seed`; re-runs are safe thanks to `upsert` keyed on `id`.
+
+## UI
+
+- **Global layout, design tokens, and brand fonts (issue #20):** `app/globals.css` declares the full Tailwind 4 `@theme` token set (Material 3-derived primary/secondary/tertiary/error/surface/outline color scale, Manrope/Inter font variables, six-step radius scale). `app/layout.tsx` loads Manrope + Inter via `next/font/google`, links Material Symbols Outlined, sets `<title>` to "Centient", and applies the font CSS variables on `<html>` with `bg-surface text-on-surface antialiased` on `<body>`.
+- **Components — TaskCard, SubmitButton, EarningsBadge (issue #21):** Three reusable components built strictly on the design tokens from issue #20 — no hardcoded hex values. `EarningsBadge` is a secondary-color rounded pill rendering `$<amount>`. `SubmitButton` is the signature primary CTA: gradient fill, colored shadow, `active:scale-[0.97]`, three-dot bouncing loader when `loading={true}`, configurable Material Symbols icon (defaults to `arrow_forward`). `TaskCard` shows the prompt + reward badge, two response cards that toggle a `ring-2 ring-primary` selected state, a reason textarea revealed only after a choice (min 10 chars enforced), and a fixed-bottom `SubmitButton` with a fade-to-surface gradient.
+
+## Core flows
+
+- **`GET /api/task` (issue #17):** Returns the next un-submitted task for a wallet. Validates the `wallet` query param against `/^0x[a-f0-9]{40}$/`, picks from gold tasks 10% of the time and regular tasks 90%, orders by `createdAt asc`, excludes tasks the wallet has already submitted, and never exposes `isGold` or `goldAnswer` in the response. Returns `{ task: null, message: "No more tasks available" }` when nothing remains.
+- **`GET /api/me` (issue #19):** Returns cumulative earnings and submission count for a wallet. Validates the `wallet` query param against `/^0x[a-f0-9]{40}$/`. For unknown wallets returns zeroed stats (no 404). `totalEarnedCUSD` is formatted via `viem`'s `formatUnits(user.totalEarnedWei, 18)`.
+- **`POST /api/submit` (issue #18):** Validates body shape, applies the 15-second rate limit and `isSpamReason` check, upserts the user, rejects banned users (403), rejects duplicate `(walletAddress, taskId)` (409), and looks up the task. For gold tasks: a wrong answer records a skipped submission, increments `goldAttempted`, and bans the user when accuracy `< 50%` after `>= 3` attempts; a correct answer increments `goldCorrect` + `goldAttempted` and falls through. Left-bias guard rejects when `> 95%` of the last 20 submissions are the same side. On success, creates a pending submission, calls `payCUSD`, and atomically marks the submission `sent` while incrementing `submissionCount` and `totalEarnedWei`. Failures mark the submission `failed` and return 500. Response: `{ paid, txHash, explorerUrl }` derived from `NEXT_PUBLIC_EXPLORER_URL`.
+- **Main page — full screen flow (issue #22):** `app/page.tsx` is a single client component that drives one of seven `Screen` states: `checking`, `not_minipay`, `loading`, `task`, `no_tasks`, `success`, `quality_failed`, `banned`. On mount it gates on `isMiniPay()`, resolves `getWalletAddress()`, then fetches `/api/me` and `/api/task`. Submit posts to `/api/submit` and switches to `success` (auto-advances after 1.5s with a fresh fetch), `quality_failed` (auto-advances after 1.5s), or `banned` (no advance). Sticky header on the task screen carries the wordmark + `EarningsBadge`; ambient blob background only on `not_minipay` and `success` per the brand spec; success screen links to the explorer URL from `NEXT_PUBLIC_EXPLORER_URL`.

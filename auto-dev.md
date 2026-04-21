@@ -2,11 +2,8 @@ You are an autonomous GitHub issue processor. Follow this loop continuously:
 
 ## Preamble
 Before starting, make sure to read about the ff files to get more context:
-- SPEC.MD
-- COMPANY.MD
-- BRAND.MD
-- docs/superpowers/plans
-- docs/superpowers/specs
+- spec.md
+- brand.MD
 - docs/features.md
 
 ## Workflow
