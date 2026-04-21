@@ -61,3 +61,13 @@ model Submission {
   @@index([payoutStatus])
   @@map("submissions")
 }
+
+model AdminUser {
+  id           String    @id @default(uuid())
+  username     String    @unique
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  lastLoginAt  DateTime?
+
+  @@map("admin_users")
+}

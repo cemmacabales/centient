@@ -1,0 +1,69 @@
+import { NextRequest, NextResponse } from "next/server";
+import bcrypt from "bcryptjs";
+import prisma from "@/lib/prisma";
+import { getAdminSession } from "@/lib/admin-auth";
+import {
+  isLoginRateLimited,
+  recordLoginFailure,
+  resetLoginFailures,
+} from "@/lib/admin-rate-limit";
+
+function clientIp(req: NextRequest): string {
+  const forwarded = req.headers.get("x-forwarded-for");
+  if (forwarded) return forwarded.split(",")[0].trim();
+  return req.headers.get("x-real-ip") ?? "unknown";
+}
+
+function redirectToLogin(req: NextRequest, error: string) {
+  const url = new URL("/admin/login", req.url);
+  url.searchParams.set("error", error);
+  return NextResponse.redirect(url, 303);
+}
+
+export async function POST(req: NextRequest) {
+  const ip = clientIp(req);
+
+  if (isLoginRateLimited(ip)) {
+    console.warn("[admin] login_rate_limited", { ip });
+    return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+  }
+
+  const form = await req.formData();
+  const username = (form.get("username") ?? "").toString().trim();
+  const password = (form.get("password") ?? "").toString();
+
+  if (!username || !password) {
+    recordLoginFailure(ip);
+    console.warn("[admin] login_fail", { ip, username, reason: "missing_fields" });
+    return redirectToLogin(req, "invalid");
+  }
+
+  const admin = await prisma.adminUser.findUnique({ where: { username } });
+  if (!admin) {
+    recordLoginFailure(ip);
+    console.warn("[admin] login_fail", { ip, username, reason: "unknown_user" });
+    return redirectToLogin(req, "invalid");
+  }
+
+  const ok = await bcrypt.compare(password, admin.passwordHash);
+  if (!ok) {
+    recordLoginFailure(ip);
+    console.warn("[admin] login_fail", { ip, username, reason: "bad_password" });
+    return redirectToLogin(req, "invalid");
+  }
+
+  await prisma.adminUser.update({
+    where: { id: admin.id },
+    data: { lastLoginAt: new Date() },
+  });
+
+  const session = await getAdminSession();
+  session.adminId = admin.id;
+  session.username = admin.username;
+  await session.save();
+
+  resetLoginFailures(ip);
+  console.info("[admin] login_ok", { ip, username });
+
+  return NextResponse.redirect(new URL("/admin", req.url), 303);
+}
