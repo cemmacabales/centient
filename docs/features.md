@@ -19,6 +19,7 @@ Running log of shipped features and scaffolding milestones.
 ## UI
 
 - **Global layout, design tokens, and brand fonts (issue #20):** `app/globals.css` declares the full Tailwind 4 `@theme` token set (Material 3-derived primary/secondary/tertiary/error/surface/outline color scale, Manrope/Inter font variables, six-step radius scale). `app/layout.tsx` loads Manrope + Inter via `next/font/google`, links Material Symbols Outlined, sets `<title>` to "Centient", and applies the font CSS variables on `<html>` with `bg-surface text-on-surface antialiased` on `<body>`.
+- **Components — TaskCard, SubmitButton, EarningsBadge (issue #21):** Three reusable components built strictly on the design tokens from issue #20 — no hardcoded hex values. `EarningsBadge` is a secondary-color rounded pill rendering `$<amount>`. `SubmitButton` is the signature primary CTA: gradient fill, colored shadow, `active:scale-[0.97]`, three-dot bouncing loader when `loading={true}`, configurable Material Symbols icon (defaults to `arrow_forward`). `TaskCard` shows the prompt + reward badge, two response cards that toggle a `ring-2 ring-primary` selected state, a reason textarea revealed only after a choice (min 10 chars enforced), and a fixed-bottom `SubmitButton` with a fade-to-surface gradient.
 
 ## Core flows
 
