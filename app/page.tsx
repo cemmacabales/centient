@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Image from "next/image";
 import { isMiniPay, connectMiniPay } from "@/lib/minipay";
 import TaskCard from "@/components/TaskCard";
 import EarningsBadge from "@/components/EarningsBadge";
@@ -119,6 +120,14 @@ export default function Home() {
           <div className="absolute -left-[20%] top-[40%] h-[70vw] w-[70vw] rounded-full bg-secondary/5 blur-[80px]" />
         </div>
         <div className="relative z-10 flex max-w-sm flex-col items-center gap-6">
+          <Image
+            src="/logo.png"
+            alt=""
+            width={96}
+            height={96}
+            priority
+            className="select-none drop-shadow-[0_8px_24px_rgba(0,109,61,0.15)]"
+          />
           <h1 className="text-3xl font-headline font-extrabold tracking-tight text-on-surface">
             Centient runs inside MiniPay
           </h1>
@@ -147,13 +156,14 @@ export default function Home() {
       <div className="min-h-screen bg-surface">
         <header className="sticky top-0 z-40 flex w-full items-center justify-between bg-surface-container-low px-6 py-4">
           <div className="flex items-center gap-3">
-            <span
-              className="material-symbols-outlined text-primary"
-              style={{ fontVariationSettings: "'FILL' 1" }}
-              aria-hidden="true"
-            >
-              account_balance_wallet
-            </span>
+            <Image
+              src="/logo.png"
+              alt=""
+              width={32}
+              height={32}
+              priority
+              className="select-none"
+            />
             <span className="text-xl font-headline font-extrabold tracking-tighter text-primary">
               Centient
             </span>
