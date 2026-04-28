@@ -1,4 +1,5 @@
 import "dotenv/config";
+import bcrypt from "bcryptjs";
 import { PrismaClient } from "../app/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
@@ -960,6 +961,22 @@ async function main() {
   const total = await prisma.task.count();
   const gold = await prisma.task.count({ where: { isGold: true } });
   console.log(`Seeded ${total} tasks (${gold} gold)`);
+
+  const existingAdmin = await prisma.adminUser.findUnique({
+    where: { username: "admin" },
+  });
+  if (!existingAdmin) {
+    const password = process.env.ADMIN_SEED_PASSWORD ?? "GoCent!123";
+    await prisma.adminUser.create({
+      data: {
+        username: "admin",
+        passwordHash: await bcrypt.hash(password, 10),
+      },
+    });
+    console.log("Seeded admin user 'admin'");
+  } else {
+    console.log("Admin user 'admin' already exists — leaving untouched");
+  }
 }
 
 main()
