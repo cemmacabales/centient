@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { formatUnits } from "viem";
 import prisma from "@/lib/prisma";
-import { REWARD_TOKEN_DECIMALS } from "@/lib/constants";
 
 const SPLITS = {
   train: 0.8,
@@ -74,7 +73,6 @@ export async function GET(req: NextRequest) {
       reason: s.reason,
       model_chosen: chosenModel ?? null,
       model_rejected: rejectedModel ?? null,
-      reward_usd: formatUnits(s.payoutAmountWei, REWARD_TOKEN_DECIMALS),
       labeler: s.walletAddress,
       tx_hash: s.payoutTxHash ?? null,
       created_at: s.createdAt.toISOString(),
