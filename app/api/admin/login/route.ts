@@ -14,8 +14,17 @@ function clientIp(req: NextRequest): string {
   return req.headers.get("x-real-ip") ?? "unknown";
 }
 
+function externalOrigin(req: NextRequest): string {
+  const proto = req.headers.get("x-forwarded-proto")?.split(",")[0].trim();
+  const host =
+    req.headers.get("x-forwarded-host")?.split(",")[0].trim() ??
+    req.headers.get("host");
+  if (proto && host) return `${proto}://${host}`;
+  return new URL(req.url).origin;
+}
+
 function redirectToLogin(req: NextRequest, error: string) {
-  const url = new URL("/admin/login", req.url);
+  const url = new URL("/admin/login", externalOrigin(req));
   url.searchParams.set("error", error);
   return NextResponse.redirect(url, 303);
 }
@@ -65,5 +74,5 @@ export async function POST(req: NextRequest) {
   resetLoginFailures(ip);
   console.info("[admin] login_ok", { ip, username });
 
-  return NextResponse.redirect(new URL("/admin", req.url), 303);
+  return NextResponse.redirect(new URL("/admin", externalOrigin(req)), 303);
 }
