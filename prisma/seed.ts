@@ -963,17 +963,18 @@ async function main() {
   console.log(`Seeded ${total} tasks (${gold} gold)`);
 
   const existingAdmin = await prisma.adminUser.findUnique({
-    where: { username: "admin" },
+    where: { email: "admin@centient.work" },
   });
   if (!existingAdmin) {
     const password = process.env.ADMIN_SEED_PASSWORD ?? "GoCent!123";
     await prisma.adminUser.create({
       data: {
-        username: "admin",
+        email: "admin@centient.work",
+	role: "SUPER_ADMIN",
         passwordHash: await bcrypt.hash(password, 10),
       },
     });
-    console.log("Seeded admin user 'admin'");
+    console.log("Seeded admin user 'admin@centient.work'");
   } else {
     console.log("Admin user 'admin' already exists — leaving untouched");
   }
