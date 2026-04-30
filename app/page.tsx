@@ -10,6 +10,7 @@ import SubmitButton from "@/components/SubmitButton";
 import LoadingScreen from "@/components/LoadingScreen";
 import AccountSheet from "@/components/AccountSheet";
 import Landing from "@/components/Landing";
+import LandingPage from "@/components/LandingPage";
 import Toast, { type ToastKind, type ToastMessage } from "@/components/Toast";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
@@ -185,42 +186,7 @@ export default function Home() {
   if (screen === "checking" || screen === "loading") {
     body = <LoadingScreen />;
   } else if (screen === "not_minipay") {
-    body = (
-      <div className="relative flex min-h-screen flex-col items-center justify-center bg-surface px-6 text-center">
-        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
-          <div className="absolute -right-[10%] -top-[20%] h-[80vw] w-[80vw] rounded-full bg-primary/5 blur-[100px]" />
-          <div className="absolute -left-[20%] top-[40%] h-[70vw] w-[70vw] rounded-full bg-secondary/5 blur-[80px]" />
-        </div>
-        <div className="relative z-10 flex max-w-sm flex-col items-center gap-6">
-          <Image
-            src="/logo.png"
-            alt=""
-            width={96}
-            height={96}
-            priority
-            className="select-none drop-shadow-[0_8px_24px_rgba(0,109,61,0.15)]"
-          />
-          <h1 className="text-3xl font-headline font-extrabold tracking-tight text-on-surface">
-            Centient runs inside MiniPay
-          </h1>
-          <p className="font-body text-base text-on-surface-variant">Train AI, cent by cent.</p>
-          <a
-            href="https://minipay.to"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-br from-primary to-primary-container font-label text-lg font-bold text-white shadow-[0_8px_24px_rgba(0,109,61,0.2)] transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-          >
-            Get MiniPay
-            <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
-              arrow_forward
-            </span>
-          </a>
-          <p className="text-xs font-label font-bold uppercase tracking-[0.2em] text-outline">
-            centient.work
-          </p>
-        </div>
-      </div>
-    );
+    body = <LandingPage />;
   } else if (screen === "landing") {
     body = (
       <Landing
