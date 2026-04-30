@@ -1,3 +1,4 @@
+import ExportButton from "@/components/admin/ExportButton";
 import StatCard from "@/components/admin/StatCard";
 import {
   getDashboardTotals,
@@ -23,6 +24,7 @@ export default async function AdminDashboardPage() {
   return (
     <div className="space-y-8">
       <header>
+	<ExportButton />
         <div className="font-label text-[11px] font-bold uppercase tracking-[0.2em] text-outline">
           Operator overview
         </div>
