@@ -9,6 +9,6 @@ export default async function AdminDashboardRedirect() {
   if (session.role === "SUPER_ADMIN") {
     redirect("/admin/tasks");
   } else {
-    redirect("/admin/tasks");
+    redirect("/admin/campaigns");
   }
 }
