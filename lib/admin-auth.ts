@@ -4,14 +4,14 @@ import { redirect } from "next/navigation";
 
 export interface AdminSession {
   adminId?: string;
-  username?: string;
+  email?: string;
   save: () => Promise<void>;
   destroy: () => Promise<void>;
 }
 
 interface AdminSessionData {
   adminId?: string;
-  username?: string;
+  email?: string;
 }
 
 function sessionOptions() {
