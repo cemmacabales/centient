@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import prisma from "@/lib/prisma";
-import { getAdminSession } from "@/lib/admin-auth";
+import { signAdminJWT, setAdminSessionCookie } from "@/lib/admin-auth";
 import {
   isLoginRateLimited,
   recordLoginFailure,
@@ -60,12 +60,18 @@ export async function POST(req: NextRequest) {
     return redirectToLogin(req, "invalid");
   }
 
-  const session = await getAdminSession();
-  session.adminId = admin.id;
-  session.email = admin.email;
-  await session.save();
+  const token = await signAdminJWT({
+    sub: admin.id,
+    email: admin.email,
+    role: admin.role,
+    companyName: admin.companyName ?? null,
+  });
 
+  await setAdminSessionCookie(token);
   resetLoginFailures(ip);
   console.info("[admin] login_ok", { ip, email });
-  return NextResponse.redirect(new URL("/admin", externalOrigin(req)), 303);
+
+  // Redirect based on role
+  const destination = "/admin";
+  return NextResponse.redirect(new URL(destination, externalOrigin(req)), 303);
 }
