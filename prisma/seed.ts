@@ -976,7 +976,7 @@ async function main() {
     });
     console.log("Seeded admin user 'admin@centient.work'");
   } else {
-    console.log("Admin user 'admin' already exists — leaving untouched");
+    console.log("Admin user 'admin@centient.work' already exists — leaving untouched");
   }
 }
 
