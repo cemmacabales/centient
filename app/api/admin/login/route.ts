@@ -31,48 +31,41 @@ function redirectToLogin(req: NextRequest, error: string) {
 
 export async function POST(req: NextRequest) {
   const ip = clientIp(req);
-
   if (isLoginRateLimited(ip)) {
     console.warn("[admin] login_rate_limited", { ip });
     return NextResponse.json({ error: "rate_limited" }, { status: 429 });
   }
 
   const form = await req.formData();
-  const username = (form.get("username") ?? "").toString().trim();
+  const email = (form.get("email") ?? "").toString().trim();
   const password = (form.get("password") ?? "").toString();
 
-  if (!username || !password) {
+  if (!email || !password) {
     recordLoginFailure(ip);
-    console.warn("[admin] login_fail", { ip, username, reason: "missing_fields" });
+    console.warn("[admin] login_fail", { ip, email, reason: "missing_fields" });
     return redirectToLogin(req, "invalid");
   }
 
-  const admin = await prisma.adminUser.findUnique({ where: { username } });
+  const admin = await prisma.adminUser.findUnique({ where: { email } });
   if (!admin) {
     recordLoginFailure(ip);
-    console.warn("[admin] login_fail", { ip, username, reason: "unknown_user" });
+    console.warn("[admin] login_fail", { ip, email, reason: "unknown_user" });
     return redirectToLogin(req, "invalid");
   }
 
   const ok = await bcrypt.compare(password, admin.passwordHash);
   if (!ok) {
     recordLoginFailure(ip);
-    console.warn("[admin] login_fail", { ip, username, reason: "bad_password" });
+    console.warn("[admin] login_fail", { ip, email, reason: "bad_password" });
     return redirectToLogin(req, "invalid");
   }
 
-  await prisma.adminUser.update({
-    where: { id: admin.id },
-    data: { lastLoginAt: new Date() },
-  });
-
   const session = await getAdminSession();
   session.adminId = admin.id;
-  session.username = admin.username;
+  session.email = admin.email;
   await session.save();
 
   resetLoginFailures(ip);
-  console.info("[admin] login_ok", { ip, username });
-
+  console.info("[admin] login_ok", { ip, email });
   return NextResponse.redirect(new URL("/admin", externalOrigin(req)), 303);
 }
