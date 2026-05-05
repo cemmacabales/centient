@@ -72,6 +72,6 @@ export async function POST(req: NextRequest) {
   console.info("[admin] login_ok", { ip, email });
 
   // Redirect based on role
-  const destination = "/admin";
+  const destination = admin.role === "SUPER_ADMIN" ? "/admin/tasks" : "/admin/campaigns";
   return NextResponse.redirect(new URL(destination, externalOrigin(req)), 303);
 }
