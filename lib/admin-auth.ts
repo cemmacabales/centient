@@ -2,6 +2,7 @@ import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { AdminRole } from "@/app/generated/prisma/client";
+import { NextResponse } from "next/server";
 
 const COOKIE_NAME = "admin_session";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
@@ -67,10 +68,21 @@ export async function requireAdmin(): Promise<AdminJWTPayload> {
   return session;
 }
 
-export async function requireRole(role: AdminRole): Promise<AdminJWTPayload> {
+// For use in route handlers (API routes)
+export async function requireRoleForRoute(
+  role: AdminRole,
+  session: AdminJWTPayload
+): Promise<void | NextResponse> {
+  if (session.role !== role) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+}
+
+// For use in server components/pages
+export async function requireRoleForPage(role: AdminRole): Promise<AdminJWTPayload> {
   const session = await requireAdmin();
   if (session.role !== role) {
-    throw new Response(JSON.stringify({ error: "forbidden" }), { status: 403 });
+    redirect("/admin/login");
   }
   return session;
 }
