@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAdminSession } from "@/lib/admin-auth";
+import { clearAdminSessionCookie } from "@/lib/admin-auth";
 
 function externalOrigin(req: NextRequest): string {
   const proto = req.headers.get("x-forwarded-proto")?.split(",")[0].trim();
@@ -11,9 +11,7 @@ function externalOrigin(req: NextRequest): string {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getAdminSession();
-  const email = session.email;
-  session.destroy();
-  console.info("[admin] logout", { email });
+  await clearAdminSessionCookie();
+  console.info("[admin] logout");
   return NextResponse.redirect(new URL("/admin/login", externalOrigin(req)), 303);
 }
