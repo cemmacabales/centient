@@ -970,7 +970,7 @@ async function main() {
     await prisma.adminUser.create({
       data: {
         email: "admin@centient.work",
-	role: "SUPER_ADMIN",
+        role: "SUPER_ADMIN",
         passwordHash: await bcrypt.hash(password, 10),
       },
     });

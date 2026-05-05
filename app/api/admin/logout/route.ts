@@ -12,8 +12,8 @@ function externalOrigin(req: NextRequest): string {
 
 export async function POST(req: NextRequest) {
   const session = await getAdminSession();
-  const email  = session.email;
+  const email = session.email;
   session.destroy();
-  console.info("[admin] logout", { email  });
+  console.info("[admin] logout", { email });
   return NextResponse.redirect(new URL("/admin/login", externalOrigin(req)), 303);
 }
