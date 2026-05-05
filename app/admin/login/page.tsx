@@ -10,7 +10,7 @@ interface LoginPageProps {
 
 export default async function AdminLoginPage(props: LoginPageProps) {
   const session = await getAdminSession();
-  if (session.adminId) redirect("/admin");
+  if (session) redirect("/admin");
   const { error } = await props.searchParams;
   const showError = error === "invalid";
 
