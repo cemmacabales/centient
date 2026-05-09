@@ -9,8 +9,8 @@ import WalletChip from "@/components/WalletChip";
 import SubmitButton from "@/components/SubmitButton";
 import LoadingScreen from "@/components/LoadingScreen";
 import AccountSheet from "@/components/AccountSheet";
-import Landing from "@/components/Landing";
-import LandingPage from "@/components/LandingPage";
+import InAppLanding from "@/components/InAppLanding";
+import OutsideMiniPayPage from "@/components/OutsideMiniPayPage";
 import Toast, { type ToastKind, type ToastMessage } from "@/components/Toast";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
@@ -186,10 +186,10 @@ export default function Home() {
   if (screen === "checking" || screen === "loading") {
     body = <LoadingScreen />;
   } else if (screen === "not_minipay") {
-    body = <LandingPage />;
+    body = <OutsideMiniPayPage />;
   } else if (screen === "landing") {
     body = (
-      <Landing
+      <InAppLanding
         totalEarned={earnings}
         submissionCount={submissionCount}
         onStart={handleStartEarning}
