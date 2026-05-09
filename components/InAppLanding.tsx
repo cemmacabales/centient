@@ -5,13 +5,13 @@ import SubmitButton from "./SubmitButton";
 import Faq from "./Faq";
 import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
-interface LandingProps {
+interface InAppLandingProps {
   totalEarned: string;
   submissionCount: number;
   onStart: () => void;
 }
 
-export default function Landing({ totalEarned, submissionCount, onStart }: LandingProps) {
+export default function InAppLanding({ totalEarned, submissionCount, onStart }: InAppLandingProps) {
   const isNew = submissionCount === 0;
   const subline = isNew
     ? "Welcome — let's get started."
