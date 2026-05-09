@@ -342,12 +342,30 @@ export default function Home() {
   } else if (screen === "no_tasks") {
     body = (
       <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-6 text-center">
-        <div className="flex w-full max-w-sm flex-col items-center gap-4">
-          <h2 className="text-2xl font-headline font-bold text-on-surface">All tasks complete</h2>
-          <p className="font-body text-sm text-on-surface-variant">
-            Check back soon for more tasks.
-          </p>
-          <EarningsBadge totalEarned={earnings} />
+        <div className="flex w-full max-w-sm flex-col items-center gap-6">
+          <div className="flex h-24 w-24 items-center justify-center rounded-full bg-secondary-container">
+            <span
+              className="material-symbols-outlined text-[48px] text-on-secondary-container"
+              aria-hidden="true"
+            >
+              celebration
+            </span>
+          </div>
+          <div className="flex flex-col items-center gap-2">
+            <h2 className="text-2xl font-headline font-bold text-on-surface">
+              You&apos;ve done them all
+            </h2>
+            <p className="font-body text-sm text-on-surface-variant">
+              You&apos;ve labelled every task currently in the pool. New tasks land as customers
+              upload them — check back in a day or two.
+            </p>
+          </div>
+          <div className="flex flex-col items-center gap-1 rounded-3xl bg-surface-container-low px-6 py-4">
+            <span className="font-label text-xs uppercase tracking-[0.18em] text-outline">
+              Total earned
+            </span>
+            <EarningsBadge totalEarned={earnings} />
+          </div>
         </div>
       </div>
     );
