@@ -1,22 +1,20 @@
 import { requireRoleForPage } from "@/lib/admin-auth";
+import prisma from "@/lib/prisma";
 import CustomerTable from "@/components/admin/CustomerTable";
 import AddCustomerButton from "@/components/admin/AddCustomerButton";
 
 export const dynamic = "force-dynamic";
 
-async function getCustomers() {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/api/admin/customers`, {
-    cache: "no-store",
-    headers: { cookie: "admin_session" },
-  });
-  if (!res.ok) return [];
-  return res.json();
-}
-
 export default async function AdminCustomersPage() {
   await requireRoleForPage("SUPER_ADMIN");
 
-  const customers = await getCustomers();
+  const customers = await prisma.adminUser.findMany({
+    where: { role: "CUSTOMER" },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, email: true, companyName: true, createdAt: true },
+  }).then((rows) =>
+    rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }))
+  );
 
   return (
     <div className="space-y-6">
