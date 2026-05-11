@@ -971,6 +971,7 @@ async function main() {
       data: {
         email: "admin@centient.work",
         passwordHash: await bcrypt.hash(password, 10),
+        role: "SUPER_ADMIN",
       },
     });
     console.log("Seeded admin user 'admin@centient.work'");

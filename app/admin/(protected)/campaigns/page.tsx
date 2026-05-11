@@ -1,5 +1,4 @@
 import { requireAdmin } from "@/lib/admin-auth";
-import ExportButton from "@/components/admin/ExportButton";
 
 export const dynamic = "force-dynamic";
 
@@ -16,13 +15,26 @@ export default async function AdminCampaignsPage() {
           Campaigns
         </h1>
         <p className="mt-2 font-body text-sm text-on-surface-variant">
-          {session.companyName ? `Welcome, ${session.companyName}.` : "Welcome."}
+          {session.companyName ? `Welcome, ${session.companyName}.` : "Welcome."} Campaign creation
+          and CSV task upload are coming soon.
         </p>
       </header>
 
       <section className="rounded-3xl border border-outline-variant/40 bg-surface-container-low/60 p-8">
-        <h2 className="font-headline text-xl font-bold text-on-surface mb-4">Export Dataset</h2>
-        <ExportButton />
+        <h2 className="font-headline text-xl font-bold text-on-surface">Coming soon</h2>
+        <p className="mt-2 font-body text-sm text-on-surface-variant">
+          You&apos;ll be able to create labeling campaigns, upload CSV task batches, and review
+          per-campaign progress here. Track the rollout in{" "}
+          <a
+            href="https://github.com/webnxt-2030/t2p/issues/94"
+            target="_blank"
+            rel="noreferrer"
+            className="font-semibold text-primary underline"
+          >
+            issue #94
+          </a>
+          .
+        </p>
       </section>
     </div>
   );
