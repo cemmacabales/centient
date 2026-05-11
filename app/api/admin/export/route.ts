@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { formatUnits } from "viem";
 import prisma from "@/lib/prisma";
-import { getAdminSession } from "@/lib/admin-auth";
+import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 
 const SPLITS = {
   train: 0.8,
@@ -12,20 +12,17 @@ const SPLITS = {
 type Split = keyof typeof SPLITS;
 
 export async function GET(req: NextRequest) {
-  // Auth via JWT session cookie — no password prompt needed
   const session = await getAdminSession();
   if (!session) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const splitParam = (
-    req.nextUrl.searchParams.get("split") ?? "train"
-  ) as Split | "all";
+  const forbidden = await requireRoleForRoute("SUPER_ADMIN", session);
+  if (forbidden) return forbidden;
+
+  const splitParam = (req.nextUrl.searchParams.get("split") ?? "train") as Split | "all";
   const category = req.nextUrl.searchParams.get("category");
-  const limit = Math.min(
-    Number(req.nextUrl.searchParams.get("limit") ?? "50000"),
-    50000
-  );
+  const limit = Math.min(Number(req.nextUrl.searchParams.get("limit") ?? "50000"), 50000);
 
   const all = await prisma.submission.findMany({
     where: {
@@ -87,6 +84,7 @@ export async function GET(req: NextRequest) {
   });
 
   const jsonl = lines.join("\n");
+
   const filename =
     splitParam === "all"
       ? `centient_full_${new Date().toISOString().slice(0, 10)}.jsonl`
@@ -102,3 +100,4 @@ export async function GET(req: NextRequest) {
     },
   });
 }
+

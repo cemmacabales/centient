@@ -71,6 +71,5 @@ export async function POST(req: NextRequest) {
   resetLoginFailures(ip);
   console.info("[admin] login_ok", { ip, email });
 
-  const destination = (admin.role as string) === "SUPER_ADMIN" ? "/admin/tasks" : "/admin/campaigns";
-  return NextResponse.redirect(new URL(destination, externalOrigin(req)), 303);
+  return NextResponse.redirect(new URL("/admin", externalOrigin(req)), 303);
 }
