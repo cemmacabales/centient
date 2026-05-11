@@ -5,25 +5,48 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  // NOTE: url lives in prisma.config.ts, NOT here.
 }
 
 model User {
-  walletAddress        String   @id
-  createdAt            DateTime @default(now())
-  totalEarnedWei       BigInt   @default(0)
-  submissionCount      Int      @default(0)
-  goldCorrect          Int      @default(0)
-  goldAttempted        Int      @default(0)
-  isBanned             Boolean  @default(false)
-  country              String?
-  gender               String?
-  ageRange             String?
-  onboardingCompleted  Boolean  @default(false)
-
+  walletAddress      String   @id
+  createdAt          DateTime @default(now())
+  totalEarnedWei     BigInt   @default(0)
+  submissionCount    Int      @default(0)
+  goldCorrect        Int      @default(0)
+  goldAttempted      Int      @default(0)
+  isBanned           Boolean  @default(false)
+  ageRange           String?
+  country            String?
+  gender             String?
+  onboardingCompleted Boolean @default(false)
   submissions Submission[]
-
   @@map("users")
+}
+
+model AdminUser {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  role         AdminRole @default(OWNER)
+  companyName  String?
+  createdAt    DateTime  @default(now())
+  campaigns    Campaign[]
+  @@map("admin_users")
+}
+
+enum AdminRole {
+  OWNER
+  ADMIN
+}
+
+model Campaign {
+  id          String    @id @default(uuid())
+  adminUserId String
+  createdAt   DateTime  @default(now())
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id])
+  tasks       Task[]
+  @@index([adminUserId])
+  @@map("campaigns")
 }
 
 model Task {
@@ -39,10 +62,8 @@ model Task {
   createdAt      DateTime @default(now())
   campaignId     String?
   responseTarget Int?
-
-  submissions Submission[]
-  campaign    Campaign?    @relation(fields: [campaignId], references: [id])
-
+  campaign       Campaign? @relation(fields: [campaignId], references: [id])
+  submissions    Submission[]
   @@index([isGold])
   @@index([campaignId])
   @@map("tasks")
@@ -60,45 +81,10 @@ model Submission {
   payoutTxHash    String?
   payoutStatus    String   @default("pending")
   createdAt       DateTime @default(now())
-
-  user User @relation(fields: [walletAddress], references: [walletAddress])
-  task Task @relation(fields: [taskId], references: [id])
-
+  user User       @relation(fields: [walletAddress], references: [walletAddress])
+  task Task       @relation(fields: [taskId], references: [id])
   @@unique([walletAddress, taskId])
   @@index([walletAddress])
   @@index([payoutStatus])
   @@map("submissions")
-}
-
-enum AdminRole {
-  SUPER_ADMIN
-  CUSTOMER
-}
-
-model AdminUser {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  passwordHash String
-  role         AdminRole
-  companyName  String?
-  createdAt    DateTime  @default(now())
-
-  campaigns Campaign[]
-
-  @@map("admin_users")
-}
-
-model Campaign {
-  id                    String   @id @default(uuid())
-  adminUserId           String
-  name                  String
-  defaultResponseTarget Int
-  csvFileName           String?
-  createdAt             DateTime @default(now())
-
-  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
-  tasks     Task[]
-
-  @@index([adminUserId])
-  @@map("campaigns")
 }
