@@ -1,22 +1,25 @@
 "use client";
 
+const FORMATS = [
+  { label: "JSON", ext: "json", type: "json" },
+  { label: "CSV", ext: "csv", type: "csv" },
+  { label: "Plain text", ext: "txt", type: "txt" },
+];
+
 export default function ExportButton() {
-  function download(split: string) {
-    window.location.href = `/api/admin/export?split=${split}`;
+  function download(format: string) {
+    window.location.href = `/api/admin/export?format=${format}`;
   }
 
   return (
     <div className="flex items-center gap-3">
-      <span className="font-label text-xs font-bold uppercase tracking-[0.2em] text-outline">
-        Export Dataset
-      </span>
-      {["all", "train", "test", "validation"].map((split) => (
+      {FORMATS.map((fmt) => (
         <button
-          key={split}
-          onClick={() => download(split)}
+          key={fmt.type}
+          onClick={() => download(fmt.type)}
           className="rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90 active:scale-[0.97]"
         >
-          {split}.jsonl
+          {fmt.label}
         </button>
       ))}
     </div>
