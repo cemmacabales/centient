@@ -2,9 +2,7 @@
 
 export default function ExportButton() {
   function download(split: string) {
-    const key = prompt("Enter admin password:");
-    if (!key) return;
-    window.location.href = `/api/admin/export?key=${key}&split=${split}`;
+    window.location.href = `/api/admin/export?split=${split}`;
   }
 
   return (

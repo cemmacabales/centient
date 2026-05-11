@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export default async function AdminDashboardRedirect() {
   const session = await requireAdmin();
 
-  if (session.role === "SUPER_ADMIN") {
+  if (session.role === ("SUPER_ADMIN" as string)) {
     redirect("/admin/tasks");
   } else {
     redirect("/admin/campaigns");
