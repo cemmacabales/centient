@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS = [
-  { href: "/admin", label: "Dashboard" },
   { href: "/admin/tasks", label: "Tasks" },
   { href: "/admin/wallets", label: "Wallets" },
 ];
@@ -14,8 +13,7 @@ export default function AdminNav() {
   return (
     <nav className="flex items-center gap-1">
       {TABS.map((tab) => {
-        const active =
-          tab.href === "/admin" ? pathname === "/admin" : pathname.startsWith(tab.href);
+        const active = pathname.startsWith(tab.href);
         return (
           <Link
             key={tab.href}

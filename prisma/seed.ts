@@ -970,13 +970,13 @@ async function main() {
     await prisma.adminUser.create({
       data: {
         email: "admin@centient.work",
-        role: "SUPER_ADMIN",
         passwordHash: await bcrypt.hash(password, 10),
+        role: "SUPER_ADMIN",
       },
     });
     console.log("Seeded admin user 'admin@centient.work'");
   } else {
-    console.log("Admin user 'admin@centient.work' already exists — leaving untouched");
+    console.log("Admin user already exists — leaving untouched");
   }
 }
 
