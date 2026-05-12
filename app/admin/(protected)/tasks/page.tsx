@@ -1,5 +1,5 @@
 import TaskTable from "@/components/admin/TaskTable";
-import ExportModal from "@/components/admin/ExportModal";
+import ExportButton from "@/components/admin/ExportButton";
 import { getTaskTableItems } from "@/lib/admin-data";
 import { requireRoleForPage } from "@/lib/admin-auth";
 
@@ -23,7 +23,7 @@ export default async function AdminTasksPage() {
           <h1 className="font-headline text-3xl font-extrabold tracking-tight text-on-surface">
             Tasks
           </h1>
-          <ExportModal />
+          <ExportButton />
         </div>
         <p className="mt-2 font-body text-sm text-on-surface-variant">
           All {items.length} seeded task pairs. Click any row to inspect the responses and recent
