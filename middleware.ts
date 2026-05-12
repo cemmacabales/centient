@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyAdminJWT } from "@/lib/admin-auth";
+import { jwtVerify } from "jose";
 
 const PUBLIC_PATHS = ["/admin/login", "/api/admin/login", "/api/admin/logout"];
 
-export async function proxy(req: NextRequest) {
+function getJwtSecret(): Uint8Array {
+  const secret = process.env.ADMIN_JWT_SECRET;
+  if (!secret || secret.length < 32) {
+    return new TextEncoder().encode("");
+  }
+  return new TextEncoder().encode(secret);
+}
+
+export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Only intercept /admin/** routes
+  // Only intercept /admin/** and /api/admin/** routes
   if (!pathname.startsWith("/admin") && !pathname.startsWith("/api/admin")) {
     return NextResponse.next();
   }
@@ -22,20 +30,15 @@ export async function proxy(req: NextRequest) {
     return NextResponse.redirect(new URL("/admin/login", req.url));
   }
 
-  const payload = await verifyAdminJWT(token);
-  if (!payload) {
+  try {
+    await jwtVerify(token, getJwtSecret());
+  } catch {
     const res = NextResponse.redirect(new URL("/admin/login", req.url));
     res.cookies.delete("admin_session");
     return res;
   }
 
-  // Pass payload info to route handlers via headers
-  const requestHeaders = new Headers(req.headers);
-  requestHeaders.set("x-admin-id", payload.sub as string);
-  requestHeaders.set("x-admin-email", payload.email);
-  requestHeaders.set("x-admin-role", payload.role);
-
-  return NextResponse.next({ request: { headers: requestHeaders } });
+  return NextResponse.next();
 }
 
 export const config = {
