@@ -1,46 +1,88 @@
-import { getIronSession } from "iron-session";
+import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import type { AdminRole } from "@/app/generated/prisma/client";
+import { NextResponse } from "next/server";
 
-export interface AdminSession {
-  adminId?: string;
-  username?: string;
-  save: () => Promise<void>;
-  destroy: () => Promise<void>;
+const COOKIE_NAME = "admin_session";
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
+
+export interface AdminJWTPayload extends JWTPayload {
+  sub: string; // adminUserId
+  email: string;
+  role: AdminRole;
+  companyName: string | null;
 }
 
-interface AdminSessionData {
-  adminId?: string;
-  username?: string;
-}
-
-function sessionOptions() {
-  const password = process.env.ADMIN_SESSION_PASSWORD ?? "";
-  if (password.length < 32) {
-    throw new Error(
-      "ADMIN_SESSION_PASSWORD must be set to a secret at least 32 characters long",
-    );
+function getJwtSecret(): Uint8Array {
+  const secret = process.env.ADMIN_JWT_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error("ADMIN_JWT_SECRET must be set and at least 32 characters long");
   }
-  return {
-    password,
-    cookieName: "centient_admin",
-    cookieOptions: {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax" as const,
-      maxAge: 60 * 60 * 8,
-      path: "/",
-    },
-  };
+  return new TextEncoder().encode(secret);
 }
 
-export async function getAdminSession() {
+export async function signAdminJWT(payload: Omit<AdminJWTPayload, keyof JWTPayload>): Promise<string> {
+  return new SignJWT({ ...payload })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("7d")
+    .sign(getJwtSecret());
+}
+
+export async function verifyAdminJWT(token: string): Promise<AdminJWTPayload | null> {
+  try {
+    const { payload } = await jwtVerify(token, getJwtSecret());
+    return payload as AdminJWTPayload;
+  } catch {
+    return null;
+  }
+}
+
+export async function getAdminSession(): Promise<AdminJWTPayload | null> {
   const jar = await cookies();
-  return getIronSession<AdminSessionData>(jar, sessionOptions());
+  const token = jar.get(COOKIE_NAME)?.value;
+  if (!token) return null;
+  return verifyAdminJWT(token);
 }
 
-export async function requireAdmin() {
+export async function setAdminSessionCookie(token: string): Promise<void> {
+  const jar = await cookies();
+  jar.set(COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: COOKIE_MAX_AGE,
+    path: "/",
+  });
+}
+
+export async function clearAdminSessionCookie(): Promise<void> {
+  const jar = await cookies();
+  jar.delete(COOKIE_NAME);
+}
+
+export async function requireAdmin(): Promise<AdminJWTPayload> {
   const session = await getAdminSession();
-  if (!session.adminId) redirect("/admin/login");
+  if (!session) redirect("/admin/login");
+  return session;
+}
+
+// For use in route handlers (API routes)
+export async function requireRoleForRoute(
+  role: AdminRole,
+  session: AdminJWTPayload
+): Promise<void | NextResponse> {
+  if (session.role !== role) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+}
+
+// For use in server components/pages
+export async function requireRoleForPage(role: AdminRole): Promise<AdminJWTPayload> {
+  const session = await requireAdmin();
+  if (session.role !== role) {
+    redirect("/admin/login");
+  }
   return session;
 }
