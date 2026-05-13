@@ -70,7 +70,7 @@ const STEPS = [
   },
 ];
 
-export default function LandingPage() {
+export default function OutsideMiniPayPage() {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
 
   return (
