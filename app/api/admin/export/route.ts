@@ -3,9 +3,28 @@ import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 
 type ExportFormat = "json" | "csv" | "txt";
+type SplitValue = "train" | "test" | "validation" | "all";
+
+function hashForSplit(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    const char = id.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash);
+}
+
+function assignSplit(id: string): "train" | "test" | "validation" {
+  const h = hashForSplit(id);
+  const r = h % 100;
+  if (r < 80) return "train";
+  if (r < 90) return "test";
+  return "validation";
+}
 
 function escapeCsv(value: string): string {
-  if (value.includes(",") || value.includes('"') || value.includes("\n")) {
+  if (value.includes(",") || value.includes('"') || value.includes("\n") || value.includes("\r")) {
     return `"${value.replace(/"/g, '""')}"`;
   }
   return value;
@@ -20,7 +39,23 @@ export async function GET(req: NextRequest) {
   const forbidden = await requireRoleForRoute("SUPER_ADMIN", session);
   if (forbidden) return forbidden;
 
-  const format = (req.nextUrl.searchParams.get("format") ?? "json") as ExportFormat;
+  const rawFormat = req.nextUrl.searchParams.get("format");
+  const format: ExportFormat = (rawFormat as ExportFormat) ?? "json";
+  if (!["json", "csv", "txt"].includes(format)) {
+    return NextResponse.json(
+      { error: "invalid_format", message: "?format must be json, csv, or txt" },
+      { status: 400 }
+    );
+  }
+
+  const splitParam = (req.nextUrl.searchParams.get("split") ?? "all") as SplitValue;
+  if (!["train", "test", "validation", "all"].includes(splitParam)) {
+    return NextResponse.json(
+      { error: "invalid_split", message: "?split must be train, test, validation, or all" },
+      { status: 400 }
+    );
+  }
+
   const category = req.nextUrl.searchParams.get("category");
   const limit = Math.min(Number(req.nextUrl.searchParams.get("limit") ?? "50000"), 50000);
 
@@ -46,6 +81,10 @@ export async function GET(req: NextRequest) {
     take: limit,
   });
 
+  const filtered = splitParam === "all"
+    ? records
+    : records.filter((s) => assignSplit(s.id) === splitParam);
+
   const dateStr = new Date().toISOString().slice(0, 10);
 
   if (format === "csv") {
@@ -53,7 +92,7 @@ export async function GET(req: NextRequest) {
       "id", "prompt", "chosen", "rejected", "category", "chosen_side",
       "reason", "model_chosen", "model_rejected", "labeler", "tx_hash", "created_at",
     ];
-    const rows = records.map((s) => {
+    const rows = filtered.map((s) => {
       const chosen = s.choice === "A" ? s.task.responseA : s.task.responseB;
       const rejected = s.choice === "A" ? s.task.responseB : s.task.responseA;
       const chosenModel = s.choice === "A" ? s.task.modelA : s.task.modelB;
@@ -79,13 +118,13 @@ export async function GET(req: NextRequest) {
       headers: {
         "Content-Type": "text/csv",
         "Content-Disposition": `attachment; filename="centient_${dateStr}.csv"`,
-        "X-Total-Records": String(records.length),
+        "X-Total-Records": String(filtered.length),
       },
     });
   }
 
   if (format === "txt") {
-    const sections = records.map((s, i) => {
+    const sections = filtered.map((s, i) => {
       const chosen = s.choice === "A" ? s.task.responseA : s.task.responseB;
       const rejected = s.choice === "A" ? s.task.responseB : s.task.responseA;
       return `--- Record ${i + 1} ---
@@ -105,13 +144,13 @@ Created: ${s.createdAt.toISOString()}
       headers: {
         "Content-Type": "text/plain",
         "Content-Disposition": `attachment; filename="centient_${dateStr}.txt"`,
-        "X-Total-Records": String(records.length),
+        "X-Total-Records": String(filtered.length),
       },
     });
   }
 
   // JSON (default)
-  const lines = records.map((s) => {
+  const lines = filtered.map((s) => {
     const chosen = s.choice === "A" ? s.task.responseA : s.task.responseB;
     const rejected = s.choice === "A" ? s.task.responseB : s.task.responseA;
     const chosenModel = s.choice === "A" ? s.task.modelA : s.task.modelB;
@@ -130,6 +169,7 @@ Created: ${s.createdAt.toISOString()}
       labeler: s.walletAddress,
       tx_hash: s.payoutTxHash ?? null,
       created_at: s.createdAt.toISOString(),
+      split: assignSplit(s.id),
     });
   });
 
@@ -140,7 +180,7 @@ Created: ${s.createdAt.toISOString()}
     headers: {
       "Content-Type": "application/x-ndjson",
       "Content-Disposition": `attachment; filename="centient_${dateStr}.jsonl"`,
-      "X-Total-Records": String(records.length),
+      "X-Total-Records": String(filtered.length),
     },
   });
 }

@@ -3,17 +3,28 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const TABS = [
+const TABS_SUPER_ADMIN = [
   { href: "/admin/tasks", label: "Tasks" },
   { href: "/admin/wallets", label: "Wallets" },
   { href: "/admin/customers", label: "Customers" },
 ];
 
-export default function AdminNav() {
+const TABS_CUSTOMER = [
+  { href: "/admin/campaigns", label: "Campaigns" },
+  { href: "/admin/wallets", label: "Wallets" },
+];
+
+interface AdminNavProps {
+  role: "SUPER_ADMIN" | "CUSTOMER";
+}
+
+export default function AdminNav({ role }: AdminNavProps) {
   const pathname = usePathname();
+  const tabs = role === "CUSTOMER" ? TABS_CUSTOMER : TABS_SUPER_ADMIN;
+
   return (
     <nav className="flex items-center gap-1">
-      {TABS.map((tab) => {
+      {tabs.map((tab) => {
         const active = pathname.startsWith(tab.href);
         return (
           <Link
