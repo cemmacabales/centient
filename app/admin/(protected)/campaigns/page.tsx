@@ -1,16 +1,31 @@
 import { requireRoleForPage } from "@/lib/admin-auth";
+import prisma from "@/lib/prisma";
 import CampaignList from "@/components/admin/CampaignList";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminCampaignsPage() {
-  await requireRoleForPage("CUSTOMER");
+  const session = await requireRoleForPage("CUSTOMER");
 
-  const res = await fetch(
-    `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/api/admin/campaigns`,
-    { cache: "no-store" }
+  const campaigns = await prisma.campaign.findMany({
+    where: { adminUserId: session.sub },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      name: true,
+      defaultResponseTarget: true,
+      createdAt: true,
+      _count: { select: { tasks: true } },
+    },
+  }).then((rows) =>
+    rows.map((c) => ({
+      id: c.id,
+      name: c.name,
+      defaultResponseTarget: c.defaultResponseTarget,
+      taskCount: c._count.tasks,
+      createdAt: c.createdAt.toISOString(),
+    }))
   );
-  const campaigns = res.ok ? await res.json() : [];
 
   return <CampaignList initialCampaigns={campaigns} />;
 }
