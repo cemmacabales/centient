@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/admin-auth";
+import { randomUUID } from "crypto";
 
 type TaskRow = {
   prompt: string;
@@ -9,35 +10,87 @@ type TaskRow = {
   responseTarget?: number;
 };
 
-function parseCSV(text: string): TaskRow[] {
+function parseCSV(text: string): { rows: TaskRow[]; errors: string[] } {
   const lines = text.trim().split("\n");
-  if (lines.length < 2) return [];
+  if (lines.length < 2) return { rows: [], errors: [] };
 
-  const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
+  const headerLine = lines[0];
+  const headers = headerLine.split(",").map((h) => h.trim().toLowerCase());
+
+  const promptIdx = headers.indexOf("prompt");
+  const responseAIdx = headers.indexOf("responsea");
+  const responseBIdx = headers.indexOf("responseb");
+  const responseTargetIdx = headers.indexOf("responsetarget");
+
+  if (promptIdx === -1 || responseAIdx === -1 || responseBIdx === -1) {
+    return { rows: [], errors: ["CSV must have prompt, responseA, responseB columns"] };
+  }
+
   const rows: TaskRow[] = [];
+  const errors: string[] = [];
 
   for (let i = 1; i < lines.length; i++) {
-    const values = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map((v) => v.trim().replace(/^"|"$/g, ""));
-    const row: Record<string, string> = {};
-    headers.forEach((h, idx) => {
-      row[h] = values[idx] ?? "";
-    });
+    const line = lines[i];
+    if (!line.trim()) continue;
 
-    if (!row.prompt || !row.responsea && !row.responseb) continue;
-    if (!row.prompt) {
-      rows.push({ prompt: "", responseA: "", responseB: "" });
+    const values = parseCSVLine(line);
+    const prompt = values[promptIdx]?.trim() ?? "";
+    const responseA = values[responseAIdx]?.trim() ?? "";
+    const responseB = values[responseBIdx]?.trim() ?? "";
+    const responseTargetStr = responseTargetIdx >= 0 ? values[responseTargetIdx]?.trim() : undefined;
+
+    if (!prompt && !responseA && !responseB) {
+      errors.push(`Row ${i + 1}: empty row`);
+      continue;
+    }
+    if (!prompt) {
+      errors.push(`Row ${i + 1}: missing prompt`);
+      continue;
+    }
+    if (!responseA) {
+      errors.push(`Row ${i + 1}: missing responseA`);
+      continue;
+    }
+    if (!responseB) {
+      errors.push(`Row ${i + 1}: missing responseB`);
       continue;
     }
 
     rows.push({
-      prompt: row.prompt,
-      responseA: row.responsea ?? row.response_a ?? "",
-      responseB: row.responseb ?? row.response_b ?? "",
-      responseTarget: row.responsetarget ? parseInt(row.responsetarget, 10) : undefined,
+      prompt,
+      responseA,
+      responseB,
+      responseTarget: responseTargetStr ? parseInt(responseTargetStr, 10) : undefined,
     });
   }
 
-  return rows.filter((r) => r.prompt && (r.responseA || r.responseB));
+  return { rows, errors };
+}
+
+function parseCSVLine(line: string): string[] {
+  const values: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    const nextChar = line[i + 1];
+
+    if (char === '"' && inQuotes && nextChar === '"') {
+      current += '"';
+      i++;
+    } else if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === "," && !inQuotes) {
+      values.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  values.push(current);
+
+  return values;
 }
 
 export async function POST(
@@ -66,29 +119,27 @@ export async function POST(
   }
 
   const text = await file.text();
-  const rows = parseCSV(text);
+  const { rows, errors: parseErrors } = parseCSV(text);
 
-  const errors: string[] = [];
+  const allErrors: string[] = [...parseErrors];
   let inserted = 0;
 
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row.prompt || (!row.responseA && !row.responseB)) {
-      errors.push(`Row ${i + 2}: missing required fields`);
-      continue;
-    }
-
+  for (const row of rows) {
     try {
       await prisma.task.upsert({
-        where: { id: `${campaign.id}-${i}` },
+        where: {
+          campaignId_prompt: {
+            campaignId: campaign.id,
+            prompt: row.prompt,
+          },
+        },
         update: {
-          prompt: row.prompt,
           responseA: row.responseA,
           responseB: row.responseB,
           responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
         },
         create: {
-          id: `${campaign.id}-${i}`,
+          id: randomUUID(),
           campaignId: campaign.id,
           prompt: row.prompt,
           responseA: row.responseA,
@@ -98,7 +149,7 @@ export async function POST(
       });
       inserted++;
     } catch (err) {
-      errors.push(`Row ${i + 2}: failed to insert`);
+      allErrors.push(`Row ${rows.indexOf(row) + 2}: failed to upsert`);
     }
   }
 
@@ -109,7 +160,7 @@ export async function POST(
 
   return NextResponse.json({
     inserted,
-    skipped: rows.length - inserted,
-    errors: errors.slice(0, 10),
+    skipped: rows.length - inserted + parseErrors.length,
+    errors: allErrors.slice(0, 10),
   });
 }

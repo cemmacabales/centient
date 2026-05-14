@@ -14,9 +14,10 @@ interface TaskProgress {
 interface CampaignDetailProps {
   campaignId: string;
   campaignName: string;
+  defaultResponseTarget: number;
 }
 
-export default function CampaignDetail({ campaignId, campaignName }: CampaignDetailProps) {
+export default function CampaignDetail({ campaignId, campaignName, defaultResponseTarget }: CampaignDetailProps) {
   const [tasks, setTasks] = useState<TaskProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -61,6 +62,19 @@ export default function CampaignDetail({ campaignId, campaignName }: CampaignDet
     if (fileRef.current) fileRef.current.value = "";
   }
 
+  async function handleDownloadTemplate() {
+    const res = await fetch("/api/admin/campaigns/template.csv");
+    if (res.ok) {
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "campaign_template.csv";
+      a.click();
+      window.URL.revokeObjectURL(url);
+    }
+  }
+
   const sorted = [...tasks].sort((a, b) => a.pct - b.pct);
 
   return (
@@ -73,97 +87,70 @@ export default function CampaignDetail({ campaignId, campaignName }: CampaignDet
           <span className="material-symbols-outlined text-[18px]">arrow_back</span>
           Back
         </Link>
+      </div>
+
+      <div className="flex items-baseline gap-4">
         <h1 className="font-headline text-3xl font-extrabold tracking-tight text-on-surface">
           {campaignName}
         </h1>
+        <span className="font-body text-sm text-on-surface-variant">
+          Target: {defaultResponseTarget} responses per task
+        </span>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
-        <section className="rounded-3xl border border-outline-variant/40 bg-surface-container-low/60 p-6">
-          <h2 className="font-headline text-lg font-bold text-on-surface">Upload Tasks (CSV)</h2>
-          <p className="mt-1 font-body text-sm text-on-surface-variant">
-            Upload a CSV with prompts and response pairs.
-          </p>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleDownloadTemplate}
+          className="flex items-center gap-2 rounded-xl border border-outline-variant bg-surface-container-low px-4 py-2 font-label text-sm font-semibold text-on-surface transition-colors hover:bg-surface-container-high"
+        >
+          <span className="material-symbols-outlined text-[18px]">download</span>
+          Download Template
+        </button>
 
-          <div className="mt-4">
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".csv"
-              onChange={handleUpload}
-              disabled={uploading}
-              className="hidden"
-              id="csv-upload"
-            />
-            <label
-              htmlFor="csv-upload"
-              className={`flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-outline-variant bg-surface-container-low px-6 py-4 transition-colors hover:bg-surface-container-high ${
-                uploading ? "opacity-50" : ""
-              }`}
-            >
-              <span className="material-symbols-outlined text-[24px] text-primary">
-                upload_file
-              </span>
-              <span className="font-label text-sm font-semibold text-on-surface">
-                {uploading ? "Uploading..." : "Choose CSV file"}
-              </span>
-            </label>
-          </div>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".csv"
+          onChange={handleUpload}
+          disabled={uploading}
+          className="hidden"
+          id="csv-upload"
+        />
+        <label
+          htmlFor="csv-upload"
+          className={`flex cursor-pointer items-center gap-2 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90 ${
+            uploading ? "opacity-50" : ""
+          }`}
+        >
+          <span className="material-symbols-outlined text-[18px]">upload_file</span>
+          {uploading ? "Uploading..." : "Upload CSV"}
+        </label>
+      </div>
 
-          {uploadResult && (
-            <div className="mt-4 space-y-2">
+      {uploadResult && (
+        <div className="rounded-2xl border border-outline-variant/40 bg-surface-container-lowest p-4">
+          <div className="flex items-center gap-4">
+            <span className="material-symbols-outlined text-primary text-[24px]">check_circle</span>
+            <div>
               <div className="font-label text-sm font-bold text-on-surface">
                 Import complete
               </div>
               <div className="font-body text-xs text-on-surface-variant">
                 Inserted: {uploadResult.inserted}, Skipped: {uploadResult.skipped}
               </div>
-              {uploadResult.errors.length > 0 && (
-                <div className="mt-2 space-y-1">
-                  {uploadResult.errors.slice(0, 5).map((err, i) => (
-                    <div key={i} className="rounded-lg bg-error-container px-3 py-2 font-body text-xs text-on-error-container">
-                      {err}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          <a
-            href="/api/admin/campaigns/template.csv"
-            className="mt-4 flex items-center gap-2 font-label text-sm font-semibold text-primary underline"
-          >
-            <span className="material-symbols-outlined text-[18px]">download</span>
-            Download CSV Template
-          </a>
-        </section>
-
-        <section className="rounded-3xl border border-outline-variant/40 bg-surface-container-low/60 p-6">
-          <h2 className="font-headline text-lg font-bold text-on-surface">Summary</h2>
-          <div className="mt-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="font-body text-sm text-on-surface-variant">Total Tasks</span>
-              <span className="font-label text-lg font-bold text-on-surface">{tasks.length}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="font-body text-sm text-on-surface-variant">Avg. Progress</span>
-              <span className="font-label text-lg font-bold text-on-surface">
-                {tasks.length > 0
-                  ? Math.round(tasks.reduce((s, t) => s + t.pct, 0) / tasks.length)
-                  : 0}
-                %
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="font-body text-sm text-on-surface-variant">Needs Attention</span>
-              <span className="font-label text-lg font-bold text-on-surface">
-                {tasks.filter((t) => t.pct < 100).length}
-              </span>
             </div>
           </div>
-        </section>
-      </div>
+          {uploadResult.errors.length > 0 && (
+            <div className="mt-3 space-y-1">
+              {uploadResult.errors.slice(0, 10).map((err, i) => (
+                <div key={i} className="rounded-lg bg-error-container px-3 py-2 font-body text-xs text-on-error-container">
+                  {err}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <section className="rounded-3xl border border-outline-variant/40 bg-surface-container-lowest shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
         <div className="border-b border-outline-variant/30 px-6 py-4">

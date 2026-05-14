@@ -28,7 +28,7 @@ export async function GET(
       id: true,
       prompt: true,
       responseTarget: true,
-      _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
+      _count: { select: { submissions: true } },
     },
   });
 
