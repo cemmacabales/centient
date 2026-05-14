@@ -4,6 +4,6 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "preDeployCommand": "pnpm prisma migrate deploy"
+    "preDeployCommand": "npx prisma migrate deploy"
   }
 }
