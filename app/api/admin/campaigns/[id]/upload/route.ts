@@ -154,33 +154,35 @@ export async function POST(
     });
   }
 
-  const upsertOperations = rows.map((row) =>
-    prisma.task.upsert({
-      where: {
-        campaignId_prompt: {
-          campaignId: campaign.id,
-          prompt: row.prompt,
-        },
-      },
-      update: {
-        responseA: row.responseA,
-        responseB: row.responseB,
-        responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
-      },
-      create: {
-        id: randomUUID(),
+  const upsertArgs = rows.map((row) => ({
+    where: {
+      campaignId_prompt: {
         campaignId: campaign.id,
         prompt: row.prompt,
-        responseA: row.responseA,
-        responseB: row.responseB,
-        responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
       },
-    })
-  );
+    },
+    update: {
+      responseA: row.responseA,
+      responseB: row.responseB,
+      responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
+    },
+    create: {
+      id: randomUUID(),
+      campaignId: campaign.id,
+      prompt: row.prompt,
+      responseA: row.responseA,
+      responseB: row.responseB,
+      responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
+    },
+  }));
 
   let inserted = 0;
   try {
-    await prisma.$transaction(upsertOperations);
+    await prisma.$transaction(async (tx) => {
+      for (const args of upsertArgs) {
+        await tx.task.upsert(args);
+      }
+    }, { timeout: 120_000 });
     inserted = rows.length;
   } catch (err) {
     allErrors.push("Transaction failed, rolling back all changes");
