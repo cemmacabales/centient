@@ -26,6 +26,39 @@ model User {
   @@map("users")
 }
 
+model AdminUser {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  role         AdminRole
+  companyName  String?
+  createdAt    DateTime  @default(now())
+
+  campaigns Campaign[]
+
+  @@map("admin_users")
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  CUSTOMER
+}
+
+model Campaign {
+  id                    String   @id @default(uuid())
+  adminUserId           String
+  name                  String
+  defaultResponseTarget Int
+  csvFileName           String?
+  createdAt             DateTime @default(now())
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
+  tasks     Task[]
+
+  @@index([adminUserId])
+  @@map("campaigns")
+}
+
 model Task {
   id             String   @id @default(uuid())
   prompt         String
@@ -69,37 +102,4 @@ model Submission {
   @@index([walletAddress])
   @@index([payoutStatus])
   @@map("submissions")
-}
-
-enum AdminRole {
-  SUPER_ADMIN
-  CUSTOMER
-}
-
-model AdminUser {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  passwordHash String
-  role         AdminRole
-  companyName  String?
-  createdAt    DateTime  @default(now())
-
-  campaigns Campaign[]
-
-  @@map("admin_users")
-}
-
-model Campaign {
-  id                    String   @id @default(uuid())
-  adminUserId           String
-  name                  String
-  defaultResponseTarget Int
-  csvFileName           String?
-  createdAt             DateTime @default(now())
-
-  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
-  tasks     Task[]
-
-  @@index([adminUserId])
-  @@map("campaigns")
 }
