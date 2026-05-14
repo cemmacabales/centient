@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getAdminSession } from "@/lib/admin-auth";
+import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 
 export async function GET(
   _req: Request,
@@ -13,8 +13,10 @@ export async function GET(
 
   const { id } = await params;
 
+  const where = session.role === "SUPER_ADMIN" ? { id } : { id, adminUserId: session.sub };
+
   const campaign = await prisma.campaign.findFirst({
-    where: { id, adminUserId: session.sub },
+    where,
     select: {
       id: true,
       name: true,

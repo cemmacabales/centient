@@ -13,8 +13,10 @@ export async function GET(
 
   const { id } = await params;
 
+  const where = session.role === "SUPER_ADMIN" ? { id } : { id, adminUserId: session.sub };
+
   const campaign = await prisma.campaign.findFirst({
-    where: { id, adminUserId: session.sub },
+    where,
     select: { defaultResponseTarget: true },
   });
 
@@ -28,7 +30,7 @@ export async function GET(
       id: true,
       prompt: true,
       responseTarget: true,
-      _count: { select: { submissions: true } },
+      _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
     },
   });
 

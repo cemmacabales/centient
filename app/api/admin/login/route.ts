@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   }
 
   const form = await req.formData();
-  const email = (form.get("email") ?? "").toString().trim();
+  const email = (form.get("email") ?? "").toString().trim().toLowerCase();
   const password = (form.get("password") ?? "").toString();
 
   if (!email || !password) {
