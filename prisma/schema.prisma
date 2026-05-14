@@ -76,6 +76,7 @@ model Task {
   submissions Submission[]
   campaign    Campaign?    @relation(fields: [campaignId], references: [id])
 
+  @@unique([campaignId, prompt])
   @@index([isGold])
   @@index([campaignId])
   @@map("tasks")
