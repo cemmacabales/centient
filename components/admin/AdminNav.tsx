@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
 
 const TABS_SUPER_ADMIN = [
   { href: "/admin/tasks", label: "Tasks" },
@@ -15,26 +14,13 @@ const TABS_CUSTOMER = [
   { href: "/admin/wallets", label: "Wallets" },
 ];
 
-export default function AdminNav() {
+interface AdminNavProps {
+  role: "SUPER_ADMIN" | "CUSTOMER";
+}
+
+export default function AdminNav({ role }: AdminNavProps) {
   const pathname = usePathname();
-  const [tabs, setTabs] = useState<typeof TABS_SUPER_ADMIN>([]);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/admin/auth/me")
-      .then((res) => res.ok ? res.json() : null)
-      .then((data) => {
-        if (data?.role === "CUSTOMER") {
-          setTabs(TABS_CUSTOMER);
-        } else {
-          setTabs(TABS_SUPER_ADMIN);
-        }
-        setLoaded(true);
-      })
-      .catch(() => setLoaded(true));
-  }, []);
-
-  if (!loaded) return null;
+  const tabs = role === "CUSTOMER" ? TABS_CUSTOMER : TABS_SUPER_ADMIN;
 
   return (
     <nav className="flex items-center gap-1">

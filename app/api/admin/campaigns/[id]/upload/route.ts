@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getAdminSession } from "@/lib/admin-auth";
+import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 import { randomUUID } from "crypto";
 
 type TaskRow = {
@@ -10,8 +10,11 @@ type TaskRow = {
   responseTarget?: number;
 };
 
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_ROWS = 10000;
+
 function parseCSV(text: string): { rows: TaskRow[]; errors: string[] } {
-  const lines = text.trim().split("\n");
+  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim().split("\n");
   if (lines.length < 2) return { rows: [], errors: [] };
 
   const headerLine = lines[0];
@@ -32,6 +35,11 @@ function parseCSV(text: string): { rows: TaskRow[]; errors: string[] } {
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
     if (!line.trim()) continue;
+
+    if (rows.length >= MAX_ROWS) {
+      errors.push(`Row limit of ${MAX_ROWS} reached, truncating import`);
+      break;
+    }
 
     const values = parseCSVLine(line);
     const prompt = values[promptIdx]?.trim() ?? "";
@@ -56,11 +64,14 @@ function parseCSV(text: string): { rows: TaskRow[]; errors: string[] } {
       continue;
     }
 
+    const parsedTarget = responseTargetStr ? parseInt(responseTargetStr, 10) : NaN;
+    const responseTarget = Number.isFinite(parsedTarget) && parsedTarget > 0 ? parsedTarget : undefined;
+
     rows.push({
       prompt,
       responseA,
       responseB,
-      responseTarget: responseTargetStr ? parseInt(responseTargetStr, 10) : undefined,
+      responseTarget,
     });
   }
 
@@ -102,6 +113,9 @@ export async function POST(
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  const forbidden = await requireRoleForRoute("CUSTOMER", session);
+  if (forbidden) return forbidden;
+
   const { id } = await params;
 
   const campaign = await prisma.campaign.findFirst({
@@ -118,39 +132,58 @@ export async function POST(
     return NextResponse.json({ error: "missing_file" }, { status: 400 });
   }
 
+  const fileName = file.name.toLowerCase();
+  if (!fileName.endsWith(".csv")) {
+    return NextResponse.json({ error: "invalid_file_type" }, { status: 400 });
+  }
+
+  if (file.size > MAX_FILE_BYTES) {
+    return NextResponse.json({ error: "file_too_large" }, { status: 413 });
+  }
+
   const text = await file.text();
   const { rows, errors: parseErrors } = parseCSV(text);
 
   const allErrors: string[] = [...parseErrors];
-  let inserted = 0;
 
-  for (const row of rows) {
-    try {
-      await prisma.task.upsert({
-        where: {
-          campaignId_prompt: {
-            campaignId: campaign.id,
-            prompt: row.prompt,
-          },
-        },
-        update: {
-          responseA: row.responseA,
-          responseB: row.responseB,
-          responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
-        },
-        create: {
-          id: randomUUID(),
+  if (rows.length === 0 && parseErrors.length > 0) {
+    return NextResponse.json({
+      inserted: 0,
+      skipped: 0,
+      errors: allErrors.slice(0, 10),
+    });
+  }
+
+  const upsertOperations = rows.map((row) =>
+    prisma.task.upsert({
+      where: {
+        campaignId_prompt: {
           campaignId: campaign.id,
           prompt: row.prompt,
-          responseA: row.responseA,
-          responseB: row.responseB,
-          responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
         },
-      });
-      inserted++;
-    } catch (err) {
-      allErrors.push(`Row ${rows.indexOf(row) + 2}: failed to upsert`);
-    }
+      },
+      update: {
+        responseA: row.responseA,
+        responseB: row.responseB,
+        responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
+      },
+      create: {
+        id: randomUUID(),
+        campaignId: campaign.id,
+        prompt: row.prompt,
+        responseA: row.responseA,
+        responseB: row.responseB,
+        responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
+      },
+    })
+  );
+
+  let inserted = 0;
+  try {
+    await prisma.$transaction(upsertOperations);
+    inserted = rows.length;
+  } catch (err) {
+    allErrors.push("Transaction failed, rolling back all changes");
   }
 
   await prisma.campaign.update({
