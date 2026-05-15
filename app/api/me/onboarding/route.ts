@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const validCountryCodes = COUNTRIES.map((c) => c.code);
+  const validCountryCodes = COUNTRIES.map((c) => c.code) as string[];
   if (!validCountryCodes.includes(country.toUpperCase())) {
     return NextResponse.json({ error: "invalid_country" }, { status: 400 });
   }
