@@ -1,7 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-export default function VerifyEmailPage(){
+import { useEffect, useState } from "react";
+
+function VerifyEmailContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const token = searchParams.get("token");
@@ -58,5 +60,22 @@ export default function VerifyEmailPage(){
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
             <p className="mt-4 text-on-surface-variant">Verifying your email...</p>
         </div>
+    );
+}
+
+function Loading() {
+    return (
+        <div className="flex min-h-screen flex-col items-center justify-center bg-surface">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+            <p className="mt-4 text-on-surface-variant">Loading...</p>
+        </div>
+    );
+}
+
+export default function VerifyEmailPage() {
+    return (
+        <Suspense fallback={<Loading />}>
+            <VerifyEmailContent />
+        </Suspense>
     );
 }
