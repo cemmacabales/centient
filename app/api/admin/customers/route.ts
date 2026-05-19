@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
+import { verifyDomainExists } from "@/lib/email-validation";
+import { sendVerificationEmail } from "@/lib/email";
+import { randomBytes } from "crypto";
 
 export async function GET() {
   const session = await getAdminSession();
@@ -20,6 +23,7 @@ export async function GET() {
       email: true,
       companyName: true,
       createdAt: true,
+      isVerified: true,
     },
   });
 
@@ -43,18 +47,28 @@ export async function POST(req: NextRequest) {
   }
 
   const normalizedEmail = email.toLowerCase().trim();
+  const domain = normalizedEmail.split("@")[1];
+  const domainValid = await verifyDomainExists(domain);
 
   const existing = await prisma.adminUser.findUnique({ where: { email: normalizedEmail } });
   if (existing) {
     return NextResponse.json({ error: "email_exists" }, { status: 409 });
   }
-
+  if (!domainValid){
+    return NextResponse.json({ error: "invalid_domain"}, {status: 400});
+  }
+  const verificationToken = randomBytes(32).toString("hex");
+  console.log("[customer-create] Creating customer:", { email: normalizedEmail, tokenLength: verificationToken.length, tokenPrefix: verificationToken.slice(0, 8) });
+  
   const customer = await prisma.adminUser.create({
     data: {
       email: normalizedEmail,
       passwordHash: await bcrypt.hash(password, 12),
       role: "CUSTOMER",
       companyName: companyName || null,
+      isVerified: false,
+      verificationToken,
+      verificationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
     },
     select: {
       id: true,
@@ -63,6 +77,7 @@ export async function POST(req: NextRequest) {
       createdAt: true,
     },
   });
-
+  sendVerificationEmail(normalizedEmail, verificationToken, companyName).catch(console.error);
+  console.log("[customer-create] Customer created with verification token. Token expiry:", new Date(Date.now() + 24 * 60 * 60 * 1000));
   return NextResponse.json(customer, { status: 201 });
 }
