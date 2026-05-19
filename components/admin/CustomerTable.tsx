@@ -7,6 +7,7 @@ interface Customer {
   email: string;
   companyName: string | null;
   createdAt: string;
+  isVerified: boolean;
 }
 
 interface CustomerTableProps {
@@ -50,6 +51,9 @@ export default function CustomerTable({ customers, onDelete }: CustomerTableProp
             <th className="px-6 py-4 text-left font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
               Created
             </th>
+            <th className="px-6 py-4 text-left font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
+              Verified
+            </th>
             <th className="px-6 py-4 text-right font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
               Actions
             </th>
@@ -69,6 +73,19 @@ export default function CustomerTable({ customers, onDelete }: CustomerTableProp
               </td>
               <td className="px-6 py-4 font-body text-sm text-on-surface-variant">
                 {new Date(c.createdAt).toLocaleDateString()}
+              </td>
+              <td className="px-6 py-4">
+                {c.isVerified ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 font-label text-xs font-semibold text-green-700">
+                    <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                    Verified
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2.5 py-1 font-label text-xs font-semibold text-yellow-700">
+                    <span className="material-symbols-outlined text-[14px]">schedule</span>
+                    Pending
+                  </span>
+                )}
               </td>
               <td className="px-6 py-4 text-right">
                 {confirmId === c.id ? (

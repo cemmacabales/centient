@@ -13,8 +13,16 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
   const [companyName, setCompanyName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [emailError, setEmailError] = useState("")
+  const [passwordError, setPasswordError] = useState("")
+  const canSubmit = email && password && isValidEmail(email) && isValidPassword(password);
 
-  const canSubmit = email && password;
+  function isValidPassword(password: string): boolean {
+    if (password.length < 8 || password.length > 12) return false;
+    const hasNumber = /\d/.test(password);
+    const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+    return hasNumber && hasSpecial;
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -27,6 +35,8 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
     } catch (err: any) {
       if (err.message === "email_exists") {
         setError("A customer with this email already exists.");
+      } else if (err.message === "invalid_domain"){
+        setError("Email domain does not exist or can't receive email")
       } else {
         setError("Something went wrong. Please try again.");
       }
@@ -34,6 +44,21 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
       setSubmitting(false);
     }
   }
+  function isValidEmail(email: string): boolean {
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(email)) return false;
+    const domain = email.split("@")[1];
+    const domainParts = domain.split(".");
+    const domainName = domainParts[0];
+    const tld = domainParts[domainParts.length - 1];
+    if (domainName.length < 2 || /^\d+$/.test(domainName)) return false;
+    const validTlds = ['com', 'org', 'net', 'io', 'co', 'ai', 'app', 'dev', 'info', 'biz', 'us', 'uk', 'ca', 'au', 'de', 'fr', 'jp', 'cn', 'in'];
+    if (!validTlds.includes(tld.toLowerCase())) return false;
+    const suspiciousPatterns = [/^[a-z]{10,}$/, /(.)\1{4,}/, /^[a-z0-9]{15,}$/];
+    if (suspiciousPatterns.some(p => p.test(domainName))) return false;
+    return true;
+  }
+  
 
   return (
     <div
@@ -78,11 +103,23 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
             <input
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setEmail(value);
+                if (value && !isValidEmail(value)){
+                  setEmailError("Please enter a valid email address")
+                }
+                else {
+                  setEmailError("")
+                }
+              }}
               placeholder="acme@example.com"
               required
               className="mt-1 w-full rounded-lg border-none bg-surface-container-highest px-4 py-3 font-body text-sm text-on-surface placeholder-on-surface-variant/50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
             />
+            {emailError && (
+              <p className="text-error text-sm">{emailError}</p>
+            )}
           </div>
 
           <div>
@@ -92,11 +129,22 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
             <input
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setPassword(value);
+                if (value && !isValidPassword(value)) {
+                  setPasswordError("Password must be 8-12 characters with at least one number and one special character");
+                } else {
+                  setPasswordError("");
+                }
+              }}
               placeholder="••••••••"
               required
               className="mt-1 w-full rounded-lg border-none bg-surface-container-highest px-4 py-3 font-body text-sm text-on-surface placeholder-on-surface-variant/50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
             />
+            {passwordError && (
+              <p className="text-error text-sm">{passwordError}</p>
+            )}
           </div>
 
           {error && (

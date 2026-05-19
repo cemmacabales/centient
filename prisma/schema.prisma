@@ -27,12 +27,16 @@ model User {
 }
 
 model AdminUser {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  passwordHash String
-  role         AdminRole
-  companyName  String?
-  createdAt    DateTime  @default(now())
+  id                          String    @id @default(uuid())
+  email                       String    @unique
+  passwordHash                String
+  role                        AdminRole
+  companyName                 String?
+  createdAt                   DateTime  @default(now())
+  isVerified                  Boolean   @default(false)
+  verificationToken           String?
+  verificationTokenExpires    DateTime?
+  verifiedAt                  DateTime?
 
   campaigns Campaign[]
 
