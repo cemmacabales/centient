@@ -41,7 +41,7 @@ Do NOT use: Supabase, wagmi, RainbowKit, WalletConnect, Prisma Postgres managed.
 **Next.js 16 rules the coding agent MUST follow:**
 - `params` and `searchParams` are async. Always `await props.params` / `await props.searchParams`.
 - Turbopack is default — do NOT pass `--turbopack` flag, do NOT ship a `webpack` config.
-- Middleware is `proxy.ts` not `middleware.ts` (not used in this MVP).
+- Middleware is `middleware.ts` at the project root.
 - `next.config.ts` must set `output: "standalone"` for Railway.
 
 **Prisma 7 rules (many things changed from Prisma 6):**

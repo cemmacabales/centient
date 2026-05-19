@@ -7,7 +7,7 @@ export default async function ProtectedAdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  await requireAdmin();
+  const session = await requireAdmin();
 
   return (
     <div className="min-h-dvh bg-surface">
@@ -28,7 +28,7 @@ export default async function ProtectedAdminLayout({
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <AdminNav />
+            <AdminNav role={session.role} />
             <form action="/api/admin/logout" method="post">
               <button
                 type="submit"
