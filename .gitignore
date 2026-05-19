@@ -8,3 +8,6 @@ next-env.d.ts
 *.tsbuildinfo
 assets/logo-source.png
 AGENTS.md
+.env
+ngrok.exe
+*.exe

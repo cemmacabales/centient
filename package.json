@@ -2,6 +2,9 @@
   "name": "centient",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
@@ -16,7 +19,7 @@
     "@prisma/adapter-pg": "^7.0.0",
     "@prisma/client": "^7.0.0",
     "bcryptjs": "^3.0.3",
-    "iron-session": "^8.0.4",
+    "jose": "^6.2.3",
     "next": "^16.2.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

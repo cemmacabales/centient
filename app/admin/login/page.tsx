@@ -10,8 +10,7 @@ interface LoginPageProps {
 
 export default async function AdminLoginPage(props: LoginPageProps) {
   const session = await getAdminSession();
-  if (session.adminId) redirect("/admin");
-
+  if (session) redirect("/admin");
   const { error } = await props.searchParams;
   const showError = error === "invalid";
 
@@ -35,30 +34,28 @@ export default async function AdminLoginPage(props: LoginPageProps) {
             Sign in with your operator credentials.
           </p>
         </div>
-
         {showError ? (
           <div
             role="alert"
             className="mt-6 rounded-lg bg-error-container px-4 py-3 font-label text-sm font-semibold text-on-error-container"
           >
-            Invalid username or password.
+            Invalid email or password.
           </div>
         ) : null}
-
         <form action="/api/admin/login" method="post" className="mt-6 space-y-4">
           <div>
             <label
-              htmlFor="username"
+              htmlFor="email"
               className="block font-headline text-sm font-bold text-on-surface"
             >
-              Username
+              Email
             </label>
             <input
-              id="username"
-              name="username"
-              type="text"
+              id="email"
+              name="email"
+              type="email"
               required
-              autoComplete="username"
+              autoComplete="email"
               className="mt-1 w-full rounded-lg border-none bg-surface-container-highest px-4 py-3 font-body text-sm text-on-surface placeholder-on-surface-variant/50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
             />
           </div>

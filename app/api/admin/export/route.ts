@@ -1,26 +1,65 @@
 import { NextRequest, NextResponse } from "next/server";
-import { formatUnits } from "viem";
 import prisma from "@/lib/prisma";
+import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 
-const SPLITS = {
-  train: 0.8,
-  test: 0.1,
-  validation: 0.1,
-} as const;
+type ExportFormat = "json" | "csv" | "txt";
+type SplitValue = "train" | "test" | "validation" | "all";
 
-type Split = keyof typeof SPLITS;
+function hashForSplit(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    const char = id.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash = hash & hash;
+  }
+  return Math.abs(hash);
+}
+
+function assignSplit(id: string): "train" | "test" | "validation" {
+  const h = hashForSplit(id);
+  const r = h % 100;
+  if (r < 80) return "train";
+  if (r < 90) return "test";
+  return "validation";
+}
+
+function escapeCsv(value: string): string {
+  if (value.includes(",") || value.includes('"') || value.includes("\n") || value.includes("\r")) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
 
 export async function GET(req: NextRequest) {
-  const key = req.nextUrl.searchParams.get("key");
-  if (!key || key !== process.env.ADMIN_SESSION_PASSWORD) {
+  const session = await getAdminSession();
+  if (!session) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const splitParam = (req.nextUrl.searchParams.get("split") ?? "train") as Split | "all";
+  const forbidden = await requireRoleForRoute("SUPER_ADMIN", session);
+  if (forbidden) return forbidden;
+
+  const rawFormat = req.nextUrl.searchParams.get("format");
+  const format: ExportFormat = (rawFormat as ExportFormat) ?? "json";
+  if (!["json", "csv", "txt"].includes(format)) {
+    return NextResponse.json(
+      { error: "invalid_format", message: "?format must be json, csv, or txt" },
+      { status: 400 }
+    );
+  }
+
+  const splitParam = (req.nextUrl.searchParams.get("split") ?? "all") as SplitValue;
+  if (!["train", "test", "validation", "all"].includes(splitParam)) {
+    return NextResponse.json(
+      { error: "invalid_split", message: "?split must be train, test, validation, or all" },
+      { status: 400 }
+    );
+  }
+
   const category = req.nextUrl.searchParams.get("category");
   const limit = Math.min(Number(req.nextUrl.searchParams.get("limit") ?? "50000"), 50000);
 
-  const all = await prisma.submission.findMany({
+  const records = await prisma.submission.findMany({
     where: {
       payoutStatus: "sent",
       isGoldCheck: false,
@@ -42,21 +81,76 @@ export async function GET(req: NextRequest) {
     take: limit,
   });
 
-  const trainEnd = Math.floor(all.length * SPLITS.train);
-  const testEnd = trainEnd + Math.floor(all.length * SPLITS.test);
+  const filtered = splitParam === "all"
+    ? records
+    : records.filter((s) => assignSplit(s.id) === splitParam);
 
-  function getSplit(idx: number): Split {
-    if (idx < trainEnd) return "train";
-    if (idx < testEnd) return "test";
-    return "validation";
+  const dateStr = new Date().toISOString().slice(0, 10);
+
+  if (format === "csv") {
+    const headers = [
+      "id", "prompt", "chosen", "rejected", "category", "chosen_side",
+      "reason", "model_chosen", "model_rejected", "labeler", "tx_hash", "created_at",
+    ];
+    const rows = filtered.map((s) => {
+      const chosen = s.choice === "A" ? s.task.responseA : s.task.responseB;
+      const rejected = s.choice === "A" ? s.task.responseB : s.task.responseA;
+      const chosenModel = s.choice === "A" ? s.task.modelA : s.task.modelB;
+      const rejectedModel = s.choice === "A" ? s.task.modelB : s.task.modelA;
+      return [
+        s.id,
+        s.task.prompt,
+        chosen,
+        rejected,
+        s.task.category ?? "",
+        s.choice,
+        s.reason,
+        chosenModel ?? "",
+        rejectedModel ?? "",
+        s.walletAddress,
+        s.payoutTxHash ?? "",
+        s.createdAt.toISOString(),
+      ].map(escapeCsv).join(",");
+    });
+    const csv = [headers.join(","), ...rows].join("\n");
+    return new NextResponse(csv, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv",
+        "Content-Disposition": `attachment; filename="centient_${dateStr}.csv"`,
+        "X-Total-Records": String(filtered.length),
+      },
+    });
   }
 
-  const records =
-    splitParam === "all"
-      ? all
-      : all.filter((_, i) => getSplit(i) === splitParam);
+  if (format === "txt") {
+    const sections = filtered.map((s, i) => {
+      const chosen = s.choice === "A" ? s.task.responseA : s.task.responseB;
+      const rejected = s.choice === "A" ? s.task.responseB : s.task.responseA;
+      return `--- Record ${i + 1} ---
+ID: ${s.id}
+Prompt: ${s.task.prompt}
+Chosen (${s.choice}): ${chosen}
+Rejected: ${rejected}
+Reason: ${s.reason}
+Category: ${s.task.category ?? "N/A"}
+Labeler: ${s.walletAddress}
+Created: ${s.createdAt.toISOString()}
+`;
+    });
+    const txt = sections.join("\n");
+    return new NextResponse(txt, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/plain",
+        "Content-Disposition": `attachment; filename="centient_${dateStr}.txt"`,
+        "X-Total-Records": String(filtered.length),
+      },
+    });
+  }
 
-  const lines = records.map((s, i) => {
+  // JSON (default)
+  const lines = filtered.map((s) => {
     const chosen = s.choice === "A" ? s.task.responseA : s.task.responseB;
     const rejected = s.choice === "A" ? s.task.responseB : s.task.responseA;
     const chosenModel = s.choice === "A" ? s.task.modelA : s.task.modelB;
@@ -67,7 +161,6 @@ export async function GET(req: NextRequest) {
       chosen,
       rejected,
       id: s.id,
-      split: splitParam === "all" ? getSplit(i) : splitParam,
       category: s.task.category ?? null,
       chosen_side: s.choice,
       reason: s.reason,
@@ -76,23 +169,18 @@ export async function GET(req: NextRequest) {
       labeler: s.walletAddress,
       tx_hash: s.payoutTxHash ?? null,
       created_at: s.createdAt.toISOString(),
+      split: assignSplit(s.id),
     });
   });
 
   const jsonl = lines.join("\n");
 
-  const filename =
-    splitParam === "all"
-      ? `centient_full_${new Date().toISOString().slice(0, 10)}.jsonl`
-      : `${splitParam}.jsonl`;
-
   return new NextResponse(jsonl, {
     status: 200,
     headers: {
       "Content-Type": "application/x-ndjson",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "X-Total-Records": String(records.length),
-      "X-Split": splitParam,
+      "Content-Disposition": `attachment; filename="centient_${dateStr}.jsonl"`,
+      "X-Total-Records": String(filtered.length),
     },
   });
 }
