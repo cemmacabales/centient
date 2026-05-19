@@ -17,6 +17,39 @@ interface TaskCardProps {
   tokenSymbol?: string;
 }
 
+/**
+ * Validates text against keyboard mashing, character spamming, and character minimums.
+ * Exported so that our custom script can access it for testing.
+ */
+export function validateReason(text: string): boolean {
+  const trimmed = text.trim();
+  
+  // 1. Basic length check
+  if (trimmed.length < 10) return false;
+
+  // 2. Word count check (Requires at least 3 separate words)
+  const words = trimmed.split(/\s+/).filter(word => word.length > 0);
+  if (words.length < 3) return false;
+
+  // 3. Spam character detection (Fails if any single character takes up > 50% of the text)
+  const charCounts: Record<string, number> = {};
+  const cleanText = trimmed.toLowerCase().replace(/\s/g, '');
+  
+  for (const char of cleanText) {
+    charCounts[char] = (charCounts[char] || 0) + 1;
+  }
+  
+  for (const char in charCounts) {
+    if (charCounts[char] / cleanText.length > 0.5) return false;
+  }
+
+  // 4. Gibberish / Consonant Cluster Detection (Flags 5+ consonants in a row)
+  const consonantStreakRegex = /[^aeiouy\s]{5,}/i;
+  if (consonantStreakRegex.test(trimmed)) return false;
+
+  return true;
+}
+
 export default function TaskCard({
   task,
   onSubmit,
@@ -27,10 +60,12 @@ export default function TaskCard({
   const [choice, setChoice] = useState<"A" | "B" | null>(null);
   const [reason, setReason] = useState("");
 
-  const canSubmit = choice !== null && reason.trim().length >= 10 && !loading;
+  // Run our zero-dependency heuristic validation
+  const isReasonValid = validateReason(reason);
+  const canSubmit = choice !== null && isReasonValid && !loading;
 
   function handleSubmit() {
-    if (!choice) return;
+    if (!choice || !isReasonValid) return;
     onSubmit(choice, reason.trim());
   }
 
@@ -130,6 +165,12 @@ export default function TaskCard({
             placeholder="Explain your reasoning for selecting the better response..."
             className="w-full resize-none rounded-lg border-none bg-surface-container-highest px-4 py-3 font-body text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:ring-0 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
           />
+          
+          {reason.trim().length >= 10 && !isReasonValid && (
+            <p className="mt-2 text-xs font-medium text-red-500">
+              Please enter a meaningful explanation. Avoid spam characters or keyboard mashing.
+            </p>
+          )}
         </section>
       )}
 
