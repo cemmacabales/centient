@@ -44,17 +44,20 @@ export async function POST(req: NextRequest) {
     select: { onboardingCompleted: true },
   });
 
-  if (!existing) {
-    return NextResponse.json({ error: "user_not_found" }, { status: 404 });
-  }
-
-  if (existing.onboardingCompleted) {
+  if (existing?.onboardingCompleted) {
     return NextResponse.json({ error: "onboarding_already_completed" }, { status: 409 });
   }
 
-  await prisma.user.update({
+  await prisma.user.upsert({
     where: { walletAddress: wallet },
-    data: {
+    create: {
+      walletAddress: wallet,
+      country: country.toUpperCase(),
+      ageRange,
+      gender: gender ? gender.toLowerCase() : null,
+      onboardingCompleted: true,
+    },
+    update: {
       country: country.toUpperCase(),
       ageRange,
       gender: gender ? gender.toLowerCase() : null,

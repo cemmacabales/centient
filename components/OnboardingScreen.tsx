@@ -14,7 +14,11 @@ interface OnboardingScreenProps {
 }
 
 const AGE_RANGES = ["18-24", "25-34", "35-44", "45-54", "55+"];
-const GENDERS = ["Male", "Female", "Prefer not to say"];
+const GENDERS = [
+  { label: "Male", value: "male" },
+  { label: "Female", value: "female" },
+  { label: "Prefer not to say", value: "prefer_not_to_say" },
+];
 
 export default function OnboardingScreen({ wallet, onComplete }: OnboardingScreenProps) {
   const [country, setCountry] = useState<string | null>(null);
@@ -40,7 +44,7 @@ export default function OnboardingScreen({ wallet, onComplete }: OnboardingScree
         body: JSON.stringify({
           country,
           ageRange,
-          ...(gender && { gender: gender.toLowerCase() }),
+          ...(gender && { gender }),
         }),
       });
 
