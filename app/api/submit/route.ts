@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { payReward, rewardInWei } from "@/lib/payout";
 import { isRateLimited, isSpamReason } from "@/lib/quality";
+import { validateReason } from "@/lib/validators";
 
 const EXPLORER_URL = process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://celoscan.io";
 
@@ -36,7 +37,8 @@ export async function POST(req: NextRequest) {
   if (choice !== "A" && choice !== "B") {
     return errorResponse("invalid_choice", 400, { walletAddress, taskId, choice });
   }
-  if (typeof reason !== "string" || isSpamReason(reason)) {
+  
+  if (typeof reason !== "string" || isSpamReason(reason) || !validateReason(reason)) {
     return errorResponse("invalid_reason", 400, { walletAddress, taskId });
   }
 
