@@ -3,6 +3,7 @@
 import { useState } from "react";
 import SubmitButton from "./SubmitButton";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { validateReason } from "@/lib/validators";
 
 interface TaskCardProps {
   task: {
@@ -17,43 +18,6 @@ interface TaskCardProps {
   tokenSymbol?: string;
 }
 
-/**
- * Validates text against keyboard mashing, character spamming, and character minimums.
- * Securely adjusted to isolate consonant checking to individual words, eliminating 
- * false positives across sentences containing words like "strengths".
- * Exported so that our custom script can access it for testing.
- */
-export function validateReason(text: string): boolean {
-  const trimmed = text.trim();
-  
-  // 1. Basic length check
-  if (trimmed.length < 10) return false;
-
-  // 2. Word count check (Requires at least 3 separate words)
-  const words = trimmed.split(/\s+/).filter(word => word.length > 0);
-  if (words.length < 3) return false;
-
-  // 3. Spam character detection (Fails if any single character takes up > 50% of the text)
-  const charCounts: Record<string, number> = {};
-  const cleanText = trimmed.toLowerCase().replace(/\s/g, '');
-  
-  for (const char of cleanText) {
-    charCounts[char] = (charCounts[char] || 0) + 1;
-  }
-  
-  for (const char in charCounts) {
-    if (charCounts[char] / cleanText.length > 0.5) return false;
-  }
-
-  // 4. Word-Isolated Gibberish Detection
-  const consonantStreakRegex = /[bcdfghjklmnpqrstvwxz]{6,}/i;
-  for (const word of words) {
-    if (consonantStreakRegex.test(word)) return false;
-  }
-
-  return true;
-}
-
 export default function TaskCard({
   task,
   onSubmit,
@@ -64,6 +28,7 @@ export default function TaskCard({
   const [choice, setChoice] = useState<"A" | "B" | null>(null);
   const [reason, setReason] = useState("");
 
+  // Run the shared validation logic locally for immediate user feedback
   const isReasonValid = validateReason(reason);
   const canSubmit = choice !== null && isReasonValid && !loading;
 
