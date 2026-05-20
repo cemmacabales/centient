@@ -4,8 +4,6 @@ import prisma from "@/lib/prisma";
 export async function POST(req: NextRequest) {
     const { token } = await req.json();
     
-    console.log("[verify-email] Received token:", token);
-    
     if (!token) {
         return NextResponse.json({ error: "missing_token" }, { status: 400 });
     }
@@ -13,11 +11,6 @@ export async function POST(req: NextRequest) {
     // Debug: Find any customer with this token (regardless of expiry/verified status)
     const anyCustomerWithToken = await prisma.adminUser.findFirst({
         where: { verificationToken: token },
-    });
-    console.log("[verify-email] Found customer with token:", anyCustomerWithToken?.email, {
-        isVerified: anyCustomerWithToken?.isVerified,
-        tokenExpires: anyCustomerWithToken?.verificationTokenExpires,
-        now: new Date(),
     });
 
     const customer = await prisma.adminUser.findFirst({
@@ -49,6 +42,5 @@ export async function POST(req: NextRequest) {
         },
     });
 
-    console.log("[verify-email] Successfully verified:", customer.email);
     return NextResponse.json({ success: true, message: "Email verified successfully" });
 }
