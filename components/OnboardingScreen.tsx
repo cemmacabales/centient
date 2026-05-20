@@ -38,10 +38,11 @@ export default function OnboardingScreen({ wallet, onComplete }: OnboardingScree
 
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/me/onboarding?wallet=${wallet}`, {
+      const res = await fetch("/api/me/onboarding", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          wallet,
           country,
           ageRange,
           ...(gender && { gender }),

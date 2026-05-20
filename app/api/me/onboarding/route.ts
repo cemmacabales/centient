@@ -3,16 +3,16 @@ import prisma from "@/lib/prisma";
 import { COUNTRIES } from "@/lib/countries";
 
 export async function POST(req: NextRequest) {
-  const wallet = req.nextUrl.searchParams.get("wallet")?.toLowerCase();
-  if (!wallet || !/^0x[a-f0-9]{40}$/.test(wallet)) {
-    return NextResponse.json({ error: "invalid_wallet" }, { status: 400 });
-  }
-
-  let body: { country?: string; ageRange?: string; gender?: string };
+  let body: { wallet?: string; country?: string; ageRange?: string; gender?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
+  }
+
+  const wallet = body.wallet?.toLowerCase();
+  if (!wallet || !/^0x[a-f0-9]{40}$/.test(wallet)) {
+    return NextResponse.json({ error: "invalid_wallet" }, { status: 400 });
   }
 
   const { country, ageRange, gender } = body;
