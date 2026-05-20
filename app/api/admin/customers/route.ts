@@ -6,7 +6,7 @@ import { verifyDomainExists } from "@/lib/email-validation";
 import { sendVerificationEmail } from "@/lib/email";
 import { randomBytes } from "crypto";
 function isValidPassword(password: string): boolean{
-  if (password.length < 8 || password.length >= 64) return false;
+  if (password.length < 8 || password.length >= 128) return false;
   if (!/\d/.test(password)) return false;
   if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) return false;
   return true;
