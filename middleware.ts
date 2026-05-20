@@ -6,7 +6,7 @@ const PUBLIC_PATHS = ["/admin/login", "/api/admin/login", "/api/admin/logout"];
 function getJwtSecret(): Uint8Array {
   const secret = process.env.ADMIN_JWT_SECRET;
   if (!secret || secret.length < 32) {
-    return new TextEncoder().encode("");
+    throw new Error("ADMIN_JWT_SECRET must be at least 32 characters")
   }
   return new TextEncoder().encode(secret);
 }

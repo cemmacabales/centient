@@ -5,7 +5,12 @@ import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 import { verifyDomainExists } from "@/lib/email-validation";
 import { sendVerificationEmail } from "@/lib/email";
 import { randomBytes } from "crypto";
-
+function isValidPassword(password: string): boolean{
+  if (password.length < 8 || password.length >= 64) return false;
+  if (!/\d/.test(password)) return false;
+  if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) return false;
+  return true;
+}
 export async function GET() {
   const session = await getAdminSession();
   if (!session) {
@@ -45,21 +50,28 @@ export async function POST(req: NextRequest) {
   if (!email || !password) {
     return NextResponse.json({ error: "missing_fields" }, { status: 400 });
   }
-
+  if (!isValidPassword(password)){
+    return NextResponse.json({ error: "weak_password" }, {status: 400})
+  }
+  if (password.length < 8){
+    return NextResponse.json({ error: "password_too_short"}, {status: 400});
+  }
+  if (!/[0-9]/.test(password) || !/[^a-zA-Z0-9]/.test(password)){
+    return NextResponse.json({ error: "password_too_weak"}, {status: 400});
+  }
   const normalizedEmail = email.toLowerCase().trim();
   const domain = normalizedEmail.split("@")[1];
   const domainValid = await verifyDomainExists(domain);
 
   const existing = await prisma.adminUser.findUnique({ where: { email: normalizedEmail } });
-  if (existing) {
-    return NextResponse.json({ error: "email_exists" }, { status: 409 });
-  }
   if (!domainValid){
     return NextResponse.json({ error: "invalid_domain"}, {status: 400});
   }
+  if (existing) {
+    return NextResponse.json({ error: "email_exists" }, { status: 409 });
+  }
   const verificationToken = randomBytes(32).toString("hex");
-  console.log("[customer-create] Creating customer:", { email: normalizedEmail, tokenLength: verificationToken.length, tokenPrefix: verificationToken.slice(0, 8) });
-  
+  console.log("[customer-create] Creating customer:", { email: normalizedEmail, tokenLength: verificationToken.length });
   const customer = await prisma.adminUser.create({
     data: {
       email: normalizedEmail,

@@ -18,7 +18,7 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
   const canSubmit = email && password && isValidEmail(email) && isValidPassword(password);
 
   function isValidPassword(password: string): boolean {
-    if (password.length < 8 || password.length > 12) return false;
+    if (password.length < 8 || password.length >= 128) return false;
     const hasNumber = /\d/.test(password);
     const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(password);
     return hasNumber && hasSpecial;
@@ -50,10 +50,7 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
     const domain = email.split("@")[1];
     const domainParts = domain.split(".");
     const domainName = domainParts[0];
-    const tld = domainParts[domainParts.length - 1];
     if (domainName.length < 2 || /^\d+$/.test(domainName)) return false;
-    const validTlds = ['com', 'org', 'net', 'io', 'co', 'ai', 'app', 'dev', 'info', 'biz', 'us', 'uk', 'ca', 'au', 'de', 'fr', 'jp', 'cn', 'in'];
-    if (!validTlds.includes(tld.toLowerCase())) return false;
     const suspiciousPatterns = [/^[a-z]{10,}$/, /(.)\1{4,}/, /^[a-z0-9]{15,}$/];
     if (suspiciousPatterns.some(p => p.test(domainName))) return false;
     return true;
@@ -133,7 +130,7 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
                 const value = e.target.value;
                 setPassword(value);
                 if (value && !isValidPassword(value)) {
-                  setPasswordError("Password must be 8-12 characters with at least one number and one special character");
+                  setPasswordError("Password must be 8-128 characters with at least one number and one special character");
                 } else {
                   setPasswordError("");
                 }
