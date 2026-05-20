@@ -19,6 +19,8 @@ interface TaskCardProps {
 
 /**
  * Validates text against keyboard mashing, character spamming, and character minimums.
+ * Securely adjusted to isolate consonant checking to individual words, eliminating 
+ * false positives across sentences containing words like "strengths".
  * Exported so that our custom script can access it for testing.
  */
 export function validateReason(text: string): boolean {
@@ -43,9 +45,11 @@ export function validateReason(text: string): boolean {
     if (charCounts[char] / cleanText.length > 0.5) return false;
   }
 
-  // 4. Gibberish / Consonant Cluster Detection (Flags 5+ consonants in a row)
-  const consonantStreakRegex = /[^aeiouy\s]{5,}/i;
-  if (consonantStreakRegex.test(trimmed)) return false;
+  // 4. Word-Isolated Gibberish Detection
+  const consonantStreakRegex = /[bcdfghjklmnpqrstvwxz]{6,}/i;
+  for (const word of words) {
+    if (consonantStreakRegex.test(word)) return false;
+  }
 
   return true;
 }
@@ -60,7 +64,6 @@ export default function TaskCard({
   const [choice, setChoice] = useState<"A" | "B" | null>(null);
   const [reason, setReason] = useState("");
 
-  // Run our zero-dependency heuristic validation
   const isReasonValid = validateReason(reason);
   const canSubmit = choice !== null && isReasonValid && !loading;
 
