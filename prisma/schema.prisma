@@ -34,7 +34,7 @@ model AdminUser {
   companyName                 String?
   createdAt                   DateTime  @default(now())
   isVerified                  Boolean   @default(false)
-  verificationToken           String?
+  verificationToken           String?   @unique
   verificationTokenExpires    DateTime?
   verifiedAt                  DateTime?
 

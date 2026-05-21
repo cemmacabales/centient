@@ -5,12 +5,7 @@ import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 import { verifyDomainExists } from "@/lib/email-validation";
 import { sendVerificationEmail } from "@/lib/email";
 import { randomBytes } from "crypto";
-function isValidPassword(password: string): boolean{
-  if (password.length < 8 || password.length >= 128) return false;
-  if (!/\d/.test(password)) return false;
-  if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) return false;
-  return true;
-}
+import { isValidEmail, isValidPassword } from "@/lib/validation";
 export async function GET() {
   const session = await getAdminSession();
   if (!session) {
@@ -54,9 +49,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "weak_password" }, {status: 400})
   }
   const normalizedEmail = email.toLowerCase().trim();
-  const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-  if (!emailRegex.test(normalizedEmail)) {
-    return NextResponse.json({ error: "invalid_email" }, { status: 400 });
+  if (!isValidEmail(normalizedEmail)){
+    return NextResponse.json({ error: "invalid_email"}, {status: 400});
   }
   const domain = normalizedEmail.split("@")[1];
   const domainValid = await verifyDomainExists(domain);
