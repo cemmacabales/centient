@@ -51,8 +51,6 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
     const domainParts = domain.split(".");
     const domainName = domainParts[0];
     if (domainName.length < 2 || /^\d+$/.test(domainName)) return false;
-    const suspiciousPatterns = [/^[a-z]{10,}$/, /(.)\1{4,}/, /^[a-z0-9]{15,}$/];
-    if (suspiciousPatterns.some(p => p.test(domainName))) return false;
     return true;
   }
   

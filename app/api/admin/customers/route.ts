@@ -69,7 +69,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "email_exists" }, { status: 409 });
   }
   const verificationToken = randomBytes(32).toString("hex");
-  console.log("[customer-create] Creating customer:", { email: normalizedEmail, tokenLength: verificationToken.length });
   const customer = await prisma.adminUser.create({
     data: {
       email: normalizedEmail,
@@ -88,6 +87,5 @@ export async function POST(req: NextRequest) {
     },
   });
   sendVerificationEmail(normalizedEmail, verificationToken, companyName).catch(console.error);
-  console.log("[customer-create] Customer created with verification token. Token expiry:", new Date(Date.now() + 24 * 60 * 60 * 1000));
   return NextResponse.json(customer, { status: 201 });
 }
