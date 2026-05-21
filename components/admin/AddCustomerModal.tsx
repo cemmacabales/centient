@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { isValidEmail, isValidPassword } from "@/lib/validation";
 
 interface AddCustomerModalProps {
   onAdd: (data: { email: string; password: string; companyName: string }) => Promise<void>;
@@ -16,13 +17,6 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
   const [emailError, setEmailError] = useState("")
   const [passwordError, setPasswordError] = useState("")
   const canSubmit = email && password && isValidEmail(email) && isValidPassword(password);
-
-  function isValidPassword(password: string): boolean {
-    if (password.length < 8 || password.length >= 128) return false;
-    const hasNumber = /\d/.test(password);
-    const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(password);
-    return hasNumber && hasSpecial;
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -44,17 +38,6 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
       setSubmitting(false);
     }
   }
-  function isValidEmail(email: string): boolean {
-    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$/;
-    if (!emailRegex.test(email)) return false;
-    const domain = email.split("@")[1];
-    const domainParts = domain.split(".");
-    const domainName = domainParts[0];
-    if (domainName.length < 2 || /^\d+$/.test(domainName)) return false;
-    return true;
-  }
-  
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
