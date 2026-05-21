@@ -8,11 +8,6 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "missing_token" }, { status: 400 });
     }
 
-    // Debug: Find any customer with this token (regardless of expiry/verified status)
-    const anyCustomerWithToken = await prisma.adminUser.findFirst({
-        where: { verificationToken: token },
-    });
-
     const customer = await prisma.adminUser.findFirst({
         where: {
             verificationToken: token,

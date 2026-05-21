@@ -53,13 +53,11 @@ export async function POST(req: NextRequest) {
   if (!isValidPassword(password)){
     return NextResponse.json({ error: "weak_password" }, {status: 400})
   }
-  if (password.length < 8){
-    return NextResponse.json({ error: "password_too_short"}, {status: 400});
-  }
-  if (!/[0-9]/.test(password) || !/[^a-zA-Z0-9]/.test(password)){
-    return NextResponse.json({ error: "password_too_weak"}, {status: 400});
-  }
   const normalizedEmail = email.toLowerCase().trim();
+  const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+  if (!emailRegex.test(normalizedEmail)) {
+    return NextResponse.json({ error: "invalid_email" }, { status: 400 });
+  }
   const domain = normalizedEmail.split("@")[1];
   const domainValid = await verifyDomainExists(domain);
 
