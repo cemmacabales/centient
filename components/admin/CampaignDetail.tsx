@@ -11,17 +11,32 @@ interface TaskProgress {
   pct: number;
 }
 
+interface EditingRow {
+  taskId: string | null;
+  prompt: string;
+  responseTarget: number;
+}
+
 interface CampaignDetailProps {
   campaignId: string;
   campaignName: string;
   defaultResponseTarget: number;
 }
 
+type DeleteConfirm = {
+  taskId: string;
+  anchor: HTMLButtonElement;
+} | null;
+
 export default function CampaignDetail({ campaignId, campaignName, defaultResponseTarget }: CampaignDetailProps) {
   const [tasks, setTasks] = useState<TaskProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<{ inserted: number; skipped: number; errors: string[] } | null>(null);
+  const [editing, setEditing] = useState<EditingRow | null>(null);
+  const [addingNew, setAddingNew] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirm>(null);
+  const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -72,6 +87,138 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
       a.download = "campaign_template.csv";
       a.click();
       window.URL.revokeObjectURL(url);
+    }
+  }
+
+  function handleEdit(task: TaskProgress) {
+    setEditing({ taskId: task.taskId, prompt: task.prompt, responseTarget: task.responseTarget });
+    setError(null);
+  }
+
+  function handleCancelEdit() {
+    setEditing(null);
+    setError(null);
+  }
+
+  async function handleSaveEdit() {
+    if (!editing) return;
+    if (editing.prompt.trim().length === 0) {
+      setError("Prompt cannot be empty");
+      return;
+    }
+    if (!Number.isInteger(editing.responseTarget) || editing.responseTarget < 1) {
+      setError("Target must be a positive integer");
+      return;
+    }
+
+    const original = tasks.find(t => t.taskId === editing.taskId);
+    setTasks(prev => prev.map(t =>
+      t.taskId === editing.taskId
+        ? { ...t, prompt: editing.prompt.trim(), responseTarget: editing.responseTarget, pct: Math.min(100, Math.floor((t.responseCount / editing.responseTarget) * 100)) }
+        : t
+    ));
+    setEditing(null);
+    setError(null);
+
+    const res = await fetch(`/api/admin/campaigns/${campaignId}/tasks/${editing.taskId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: editing.prompt.trim(), responseTarget: editing.responseTarget }),
+    });
+
+    if (!res.ok) {
+      if (original) {
+        setTasks(prev => prev.map(t => t.taskId === editing.taskId ? original : t));
+      }
+      setError("Failed to save changes");
+    }
+  }
+
+  function handleStartAdd() {
+    setAddingNew(true);
+    setEditing({ taskId: null, prompt: "", responseTarget: defaultResponseTarget });
+    setError(null);
+  }
+
+  function handleCancelAdd() {
+    setAddingNew(false);
+    setEditing(null);
+    setError(null);
+  }
+
+  async function handleSaveNew() {
+    if (!editing || editing.taskId !== null) return;
+    if (editing.prompt.trim().length === 0) {
+      setError("Prompt cannot be empty");
+      return;
+    }
+    if (!Number.isInteger(editing.responseTarget) || editing.responseTarget < 1) {
+      setError("Target must be a positive integer");
+      return;
+    }
+
+    const tempId = `new-${Date.now()}`;
+    const tempRow: TaskProgress = {
+      taskId: tempId,
+      prompt: editing.prompt.trim(),
+      responseTarget: editing.responseTarget,
+      responseCount: 0,
+      pct: 0,
+    };
+    setTasks(prev => [...prev, tempRow]);
+    setAddingNew(false);
+    setEditing(null);
+    setError(null);
+
+    const res = await fetch(`/api/admin/campaigns/${campaignId}/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: editing.prompt.trim(), responseTarget: editing.responseTarget }),
+    });
+
+    if (res.ok) {
+      const created = await res.json();
+      setTasks(prev => prev.map(t => t.taskId === tempId ? {
+        taskId: created.taskId,
+        prompt: created.prompt,
+        responseTarget: created.responseTarget,
+        responseCount: 0,
+        pct: 0,
+      } : t));
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      if (errData.error === "duplicate_prompt") {
+        setError("This prompt already exists in the campaign");
+      } else {
+        setError("Failed to add task");
+      }
+      setTasks(prev => prev.filter(t => t.taskId !== tempId));
+    }
+  }
+
+  function handleDeleteClick(taskId: string, e: React.MouseEvent<HTMLButtonElement>) {
+    setDeleteConfirm({ taskId, anchor: e.currentTarget });
+  }
+
+  function handleCancelDelete() {
+    setDeleteConfirm(null);
+  }
+
+  async function handleConfirmDelete() {
+    if (!deleteConfirm) return;
+    const { taskId } = deleteConfirm;
+    const original = tasks.find(t => t.taskId === taskId);
+    setTasks(prev => prev.filter(t => t.taskId !== taskId));
+    setDeleteConfirm(null);
+
+    const res = await fetch(`/api/admin/campaigns/${campaignId}/tasks/${taskId}`, {
+      method: "DELETE",
+    });
+
+    if (!res.ok) {
+      if (original) {
+        setTasks(prev => [...prev, original]);
+      }
     }
   }
 
@@ -153,20 +300,29 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
       )}
 
       <section className="rounded-3xl border border-outline-variant/40 bg-surface-container-lowest shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
-        <div className="border-b border-outline-variant/30 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-outline-variant/30 px-6 py-4">
           <h2 className="font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
             Task Progress — sorted by lowest completion first
           </h2>
+          {!addingNew && (
+            <button
+              onClick={handleStartAdd}
+              className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 font-label text-xs font-bold text-on-primary transition-opacity hover:opacity-90"
+            >
+              <span className="material-symbols-outlined text-[16px]">add</span>
+              Add Prompt
+            </button>
+          )}
         </div>
 
         {loading ? (
           <div className="p-12 text-center font-body text-sm text-on-surface-variant">
             Loading...
           </div>
-        ) : tasks.length === 0 ? (
+        ) : tasks.length === 0 && !addingNew ? (
           <div className="p-12 text-center">
             <p className="font-body text-sm text-on-surface-variant">
-              No tasks yet. Upload a CSV to get started.
+              No tasks yet. Upload a CSV or add one manually.
             </p>
           </div>
         ) : (
@@ -176,51 +332,208 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
                 <th className="px-6 py-3 text-left font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
                   Prompt
                 </th>
-                <th className="px-6 py-3 text-right font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
+                <th className="px-6 py-3 text-right font-label text-xs font-bold uppercase tracking-[0.15em] text-outline w-24">
                   Target
                 </th>
-                <th className="px-6 py-3 text-right font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
+                <th className="px-6 py-3 text-right font-label text-xs font-bold uppercase tracking-[0.15em] text-outline w-24">
                   Responses
                 </th>
-                <th className="px-6 py-3 text-right font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
+                <th className="px-6 py-3 text-right font-label text-xs font-bold uppercase tracking-[0.15em] text-outline w-20">
                   %
                 </th>
+                <th className="px-6 py-3 w-24" />
               </tr>
             </thead>
             <tbody>
-              {sorted.map((t) => (
-                <tr
-                  key={t.taskId}
-                  className="border-b border-outline-variant/10 last:border-0 transition-colors hover:bg-surface-container-low/40"
-                >
-                  <td className="px-6 py-3 font-body text-sm text-on-surface">
-                    {t.prompt.length > 80 ? t.prompt.slice(0, 80) + "..." : t.prompt}
+              {sorted.map((t) => {
+                const isEditing = editing?.taskId === t.taskId;
+                return (
+                  <tr
+                    key={t.taskId}
+                    className={`border-b border-outline-variant/10 last:border-0 transition-colors ${
+                      isEditing ? "bg-surface-container-low" : "hover:bg-surface-container-low/40"
+                    }`}
+                  >
+                    <td className="px-6 py-3">
+                      {isEditing ? (
+                        <textarea
+                          className="w-full rounded-lg border border-outline-variant bg-surface-container px-3 py-2 font-body text-sm text-on-surface focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                          value={editing.prompt}
+                          onChange={e => setEditing({ ...editing, prompt: e.target.value })}
+                          rows={2}
+                          autoFocus
+                        />
+                      ) : (
+                        <span className="font-body text-sm text-on-surface">
+                          {t.prompt.length > 80 ? t.prompt.slice(0, 80) + "..." : t.prompt}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-6 py-3">
+                      {isEditing ? (
+                        <input
+                          type="number"
+                          min="1"
+                          className="w-full rounded-lg border border-outline-variant bg-surface-container px-3 py-2 text-right font-body text-sm text-on-surface focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                          value={editing.responseTarget}
+                          onChange={e => setEditing({ ...editing, responseTarget: parseInt(e.target.value) || 0 })}
+                        />
+                      ) : (
+                        <span className="block text-right font-body text-sm text-on-surface-variant">
+                          {t.responseTarget}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-6 py-3 text-right font-body text-sm text-on-surface-variant">
+                      {t.responseCount}
+                    </td>
+                    <td className="px-6 py-3 text-right">
+                      <span
+                        className={`rounded-full px-2 py-0.5 font-label text-xs font-bold ${
+                          t.pct >= 100
+                            ? "bg-secondary-container text-on-secondary-container"
+                            : t.pct >= 50
+                            ? "bg-tertiary-container text-on-tertiary-container"
+                            : "bg-error-container text-on-error-container"
+                        }`}
+                      >
+                        {t.pct}%
+                      </span>
+                    </td>
+                    <td className="px-6 py-3">
+                      {isEditing ? (
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={handleSaveEdit}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-primary transition-colors hover:bg-primary-container"
+                            title="Save"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">check</span>
+                          </button>
+                          <button
+                            onClick={handleCancelEdit}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container-high"
+                            title="Cancel"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">close</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => handleEdit(t)}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container-high"
+                            title="Edit"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">edit</span>
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteClick(t.taskId, e)}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-error-container hover:text-on-error-container"
+                            title="Delete"
+                          >
+                            <span className="material-symbols-outlined text-[18px]">delete</span>
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {addingNew && editing && (
+                <tr className="border-b border-outline-variant/10 bg-surface-container-low">
+                  <td className="px-6 py-3">
+                    <textarea
+                      className="w-full rounded-lg border border-outline-variant bg-surface-container px-3 py-2 font-body text-sm text-on-surface focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                      value={editing.prompt}
+                      onChange={e => setEditing({ ...editing, prompt: e.target.value })}
+                      rows={2}
+                      placeholder="Enter prompt text..."
+                      autoFocus
+                    />
                   </td>
-                  <td className="px-6 py-3 text-right font-body text-sm text-on-surface-variant">
-                    {t.responseTarget}
+                  <td className="px-6 py-3">
+                    <input
+                      type="number"
+                      min="1"
+                      className="w-full rounded-lg border border-outline-variant bg-surface-container px-3 py-2 text-right font-body text-sm text-on-surface focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                      value={editing.responseTarget}
+                      onChange={e => setEditing({ ...editing, responseTarget: parseInt(e.target.value) || 0 })}
+                    />
                   </td>
-                  <td className="px-6 py-3 text-right font-body text-sm text-on-surface-variant">
-                    {t.responseCount}
-                  </td>
+                  <td className="px-6 py-3 text-right font-body text-sm text-on-surface-variant">0</td>
                   <td className="px-6 py-3 text-right">
-                    <span
-                      className={`rounded-full px-2 py-0.5 font-label text-xs font-bold ${
-                        t.pct >= 100
-                          ? "bg-secondary-container text-on-secondary-container"
-                          : t.pct >= 50
-                          ? "bg-tertiary-container text-on-tertiary-container"
-                          : "bg-error-container text-on-error-container"
-                      }`}
-                    >
-                      {t.pct}%
-                    </span>
+                    <span className="rounded-full bg-error-container px-2 py-0.5 font-label text-xs font-bold text-on-error-container">0%</span>
+                  </td>
+                  <td className="px-6 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        onClick={handleSaveNew}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-primary transition-colors hover:bg-primary-container"
+                        title="Save"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">check</span>
+                      </button>
+                      <button
+                        onClick={handleCancelAdd}
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container-high"
+                        title="Cancel"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">close</span>
+                      </button>
+                    </div>
                   </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         )}
       </section>
+
+      {error && (
+        <div className="rounded-2xl bg-error-container px-4 py-3 font-body text-sm text-on-error-container">
+          {error}
+        </div>
+      )}
+
+      {deleteConfirm && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={handleCancelDelete}
+          />
+          <div
+            className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-outline-variant/40 bg-surface-container-lowest p-6 shadow-[0_24px_48px_rgba(25,28,30,0.24)]"
+            style={{ top: deleteConfirm.anchor.getBoundingClientRect().top + window.scrollY + 40 }}
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-error-container">
+                <span className="material-symbols-outlined text-[20px] text-on-error-container">delete</span>
+              </div>
+              <div>
+                <div className="font-label text-sm font-bold text-on-surface">Remove prompt?</div>
+                <div className="font-body text-xs text-on-surface-variant">
+                  This action cannot be undone.
+                </div>
+              </div>
+            </div>
+            <div className="mt-5 flex gap-3">
+              <button
+                onClick={handleCancelDelete}
+                className="flex-1 rounded-xl border border-outline-variant bg-surface-container-low px-4 py-2.5 font-label text-sm font-semibold text-on-surface transition-colors hover:bg-surface-container-high"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="flex-1 rounded-xl bg-error-container px-4 py-2.5 font-label text-sm font-semibold text-on-error-container transition-colors hover:opacity-90"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
