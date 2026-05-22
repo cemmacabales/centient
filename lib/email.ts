@@ -30,8 +30,7 @@ export async function sendVerificationEmail(
         return null;
     }
     if (APP_URL.includes("localhost") && process.env.NODE_ENV == "production"){
-        console.error ("[email] FATAL: NEXT_PUBLIC_APP_URL is not set. Verification links will not point to localhost.");
-        return null;
+        throw new Error("[email] Fatal: APP_URL contains 'localhost' in production. Set NEXT_PUBLIC_APP_URL to your deployed URL.")
     } 
     const verificationUrl = `${APP_URL}/verify-email?token=${token}`;
     try {
