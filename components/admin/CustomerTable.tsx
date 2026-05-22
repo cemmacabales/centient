@@ -17,6 +17,29 @@ interface CustomerTableProps {
 
 export default function CustomerTable({ customers, onDelete }: CustomerTableProps) {
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  async function handleResend(id: string) {
+    const res = await fetch(`/api/admin/customers/${id}/resend-verification`, { method: "POST" });
+    const body = await res.json();
+    if (body.emailDelivered === false) {
+      setFeedback({ type: "error", text: body.warning || "Could not resend verification email." });
+    } else {
+      setFeedback({ type: "success", text: "Verification email sent." });
+    }
+    setTimeout(() => setFeedback(null), 5000);
+  }
+
+  async function handleVerify(id: string) {
+    const res = await fetch(`/api/admin/customers/${id}/verify`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setFeedback({ type: "error", text: body.error === "already_verified" ? "Already verified." : "Failed to verify." });
+    } else {
+      setFeedback({ type: "success", text: "Customer manually verified." });
+    }
+    setTimeout(() => { setFeedback(null); window.location.reload(); }, 1500);
+  }
 
   if (customers.length === 0) {
     return (
@@ -38,7 +61,19 @@ export default function CustomerTable({ customers, onDelete }: CustomerTableProp
   }
 
   return (
-    <div className="overflow-hidden rounded-3xl border border-outline-variant/40 bg-surface-container-lowest shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
+    <>
+      {feedback && (
+        <div
+          className={`mb-3 rounded-lg px-4 py-3 font-label text-sm font-semibold ${
+            feedback.type === "success"
+              ? "bg-green-100 text-green-800"
+              : "bg-yellow-100 text-yellow-800"
+          }`}
+        >
+          {feedback.text}
+        </div>
+      )}
+      <div className="overflow-hidden rounded-3xl border border-outline-variant/40 bg-surface-container-lowest shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
       <table className="w-full">
         <thead>
           <tr className="border-b border-outline-variant/30">
@@ -114,15 +149,37 @@ export default function CustomerTable({ customers, onDelete }: CustomerTableProp
                     </button>
                   </div>
                 ) : (
-                  <button
-                    onClick={() => setConfirmId(c.id)}
-                    className="rounded-full p-2 text-outline transition-colors hover:bg-error-container hover:text-on-error-container"
-                    aria-label="Delete customer"
-                  >
-                    <span className="material-symbols-outlined text-[20px]">
-                      delete
-                    </span>
-                  </button>
+                  <div className="flex items-center justify-end gap-1">
+                    {!c.isVerified && (
+                      <>
+                        <button
+                          onClick={() => handleResend(c.id)}
+                          className="rounded-full p-2 text-outline transition-colors hover:bg-primary-container hover:text-on-primary-container"
+                          aria-label="Resend verification email"
+                          title="Resend verification email"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">mail</span>
+                        </button>
+                        <button
+                          onClick={() => handleVerify(c.id)}
+                          className="rounded-full p-2 text-outline transition-colors hover:bg-green-100 hover:text-green-700"
+                          aria-label="Mark as verified"
+                          title="Mark as verified"
+                        >
+                          <span className="material-symbols-outlined text-[18px]">check_circle</span>
+                        </button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => setConfirmId(c.id)}
+                      className="rounded-full p-2 text-outline transition-colors hover:bg-error-container hover:text-on-error-container"
+                      aria-label="Delete customer"
+                    >
+                      <span className="material-symbols-outlined text-[20px]">
+                        delete
+                      </span>
+                    </button>
+                  </div>
                 )}
               </td>
             </tr>
@@ -130,5 +187,6 @@ export default function CustomerTable({ customers, onDelete }: CustomerTableProp
         </tbody>
       </table>
     </div>
+    </>
   );
 }
