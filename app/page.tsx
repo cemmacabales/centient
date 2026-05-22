@@ -12,6 +12,7 @@ import AccountSheet from "@/components/AccountSheet";
 import InAppLanding from "@/components/InAppLanding";
 import OutsideMiniPayPage from "@/components/OutsideMiniPayPage";
 import Toast, { type ToastKind, type ToastMessage } from "@/components/Toast";
+import OnboardingScreen from "@/components/OnboardingScreen";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
 const MIN_LOADING_MS = 1500;
@@ -20,6 +21,7 @@ type Screen =
   | "checking"
   | "not_minipay"
   | "loading"
+  | "onboarding"
   | "landing"
   | "task"
   | "no_tasks"
@@ -82,6 +84,7 @@ export default function Home() {
   const [submissionCount, setSubmissionCount] = useState(0);
   const [accountOpen, setAccountOpen] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
+  const [onboardingCompleted, setOnboardingCompleted] = useState(false);
 
   const showToast = useCallback((message: string, kind: ToastKind = "info") => {
     setToast({ id: Date.now(), message, kind });
@@ -94,6 +97,8 @@ export default function Home() {
     const data = await res.json();
     setEarnings(data.totalEarned ?? "0");
     setSubmissionCount(data.submissionCount ?? 0);
+    setOnboardingCompleted(data.onboardingCompleted ?? false);
+    return data;
   }, []);
 
   const fetchTask = useCallback(async (addr: string) => {
@@ -115,11 +120,18 @@ export default function Home() {
     setScreen("loading");
     const connect = connectMiniPay().then(async (addr) => {
       setWallet(addr);
-      await fetchUserData(addr);
+      const userData = await fetchUserData(addr);
+      return userData;
     });
     const minDelay = new Promise<void>((resolve) => setTimeout(resolve, MIN_LOADING_MS));
     Promise.all([connect, minDelay])
-      .then(() => setScreen("landing"))
+      .then(([userData]) => {
+        if (userData?.onboardingCompleted) {
+          setScreen("landing");
+        } else {
+          setScreen("onboarding");
+        }
+      })
       .catch(() => setScreen("wallet_error"));
   }, [fetchUserData]);
 
@@ -128,6 +140,11 @@ export default function Home() {
     setScreen("loading");
     fetchTask(wallet);
   }, [wallet, fetchTask]);
+
+  const handleOnboardingComplete = useCallback(() => {
+    setOnboardingCompleted(true);
+    setScreen("landing");
+  }, []);
 
   async function handleSubmit(choice: "A" | "B", reason: string) {
     if (!wallet || !task) return;
@@ -187,6 +204,12 @@ export default function Home() {
     body = <LoadingScreen />;
   } else if (screen === "not_minipay") {
     body = <OutsideMiniPayPage />;
+  } else if (screen === "onboarding") {
+    body = wallet ? (
+      <OnboardingScreen wallet={wallet} onComplete={handleOnboardingComplete} />
+    ) : (
+      <LoadingScreen />
+    );
   } else if (screen === "landing") {
     body = (
       <InAppLanding
