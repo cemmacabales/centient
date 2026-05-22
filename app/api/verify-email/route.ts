@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
         data: {
             isVerified: true,
             verifiedAt: new Date(),
+            verificationToken: null,
             verificationTokenExpires: null,
         },
     });
