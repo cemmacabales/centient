@@ -42,14 +42,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "missing_fields" }, { status: 400 });
   }
 
-  const existing = await prisma.adminUser.findUnique({ where: { email } });
+  const normalizedEmail = email.toLowerCase().trim();
+
+  const existing = await prisma.adminUser.findUnique({ where: { email: normalizedEmail } });
   if (existing) {
     return NextResponse.json({ error: "email_exists" }, { status: 409 });
   }
 
   const customer = await prisma.adminUser.create({
     data: {
-      email,
+      email: normalizedEmail,
       passwordHash: await bcrypt.hash(password, 12),
       role: "CUSTOMER",
       companyName: companyName || null,
