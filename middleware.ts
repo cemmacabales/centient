@@ -3,10 +3,11 @@ import { jwtVerify } from "jose";
 
 const PUBLIC_PATHS = ["/admin/login", "/api/admin/login", "/api/admin/logout"];
 
-function getJwtSecret(): Uint8Array {
+function getJwtSecret(): Uint8Array | null {
   const secret = process.env.ADMIN_JWT_SECRET;
   if (!secret || secret.length < 32) {
     throw new Error("ADMIN_JWT_SECRET must be at least 32 characters")
+    return null;
   }
   return new TextEncoder().encode(secret);
 }
@@ -29,9 +30,12 @@ export async function middleware(req: NextRequest) {
   if (!token) {
     return NextResponse.redirect(new URL("/admin/login", req.url));
   }
-
+  const jwtsecret = getJwtSecret();
+  if (!jwtsecret){
+    return NextResponse.json({error: "Server misconfigured - Contact Administrator"}, {status: 500});
+  }
   try {
-    await jwtVerify(token, getJwtSecret());
+    await jwtVerify(token, jwtsecret);
   } catch {
     const res = NextResponse.redirect(new URL("/admin/login", req.url));
     res.cookies.delete("admin_session");

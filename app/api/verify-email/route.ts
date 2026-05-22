@@ -11,28 +11,23 @@ export async function POST(req: NextRequest) {
     const customer = await prisma.adminUser.findFirst({
         where: {
             verificationToken: token,
-            verificationTokenExpires: { gt: new Date() },
-            isVerified: false,
         },
     });
 
     if (!customer) {
-        // Check if already verified
-        const alreadyVerified = await prisma.adminUser.findFirst({
-            where: { verificationToken: token, isVerified: true },
-        });
-        if (alreadyVerified) {
-            return NextResponse.json({ success: true, message: "Email already verified" });
-        }
         return NextResponse.json({ error: "invalid_token" }, { status: 400 });
     }
-
+    if (customer.isVerified){
+        return NextResponse.json({ success: true, message: "Email already verified"});
+    }
+    if (customer.verificationTokenExpires && customer.verificationTokenExpires < new Date()){
+        return NextResponse.json({ error: "invalid_token"}, {status: 400});
+    }
     await prisma.adminUser.update({
         where: { id: customer.id },
         data: {
             isVerified: true,
             verifiedAt: new Date(),
-            verificationToken: null,
             verificationTokenExpires: null,
         },
     });

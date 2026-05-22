@@ -29,17 +29,21 @@ export async function sendVerificationEmail(
         console.log("[email] RESEND_API_KEY not set, skipping verification email");
         return null;
     }
+    if (APP_URL.includes("localhost") && process.env.NODE_ENV == "production"){
+        console.error ("[email] FATAL: NEXT_PUBLIC_APP_URL is not set. Verification links will not point to localhost.");
+        return null;
+    } 
     const verificationUrl = `${APP_URL}/verify-email?token=${token}`;
     try {
         const result = await resend.emails.send({
-            from: "Centient <onboarding@resend.dev>",
+            from: process.env.RESEND_EMAIL_FROM ?? "Centient <onboarding@resend.dev>",
             to: email,
-            subject: "Verify your Centient Account",
+            subject: "Verify your email - Centient",
             html: `
-                <h1>Welcome to Centient!</h1>
+                <h1>Verify your email</h1>
                 <p>Hi ${escapeHtml (companyName || "there")},</p>
-                <p>Please verify your email address by clicking the link below:</p>
-                <a href="${safeUrl(verificationUrl)}">Verify Email</a>
+                <p>Confirm your email to start labeling and earning.</p>
+                <a href="${safeUrl(verificationUrl)}">Verify Email →</a>
                 <p>This link expires in 24 hours.</p>
             `,
         });

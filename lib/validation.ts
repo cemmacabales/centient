@@ -1,7 +1,7 @@
 export function isValidPassword(password: string): boolean {
-    if (password.length < 8 || password.length >= 128) return false;
+    if (password.length < 8 || password.length > 128) return false;
     if (!/\d/.test(password)) return false;
-    if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) return false;
+    if (!/\W/.test(password)) return false;
     return true;
 }
 export function isValidEmail (email: string): boolean {

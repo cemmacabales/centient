@@ -31,6 +31,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  let emailDelivered = true;
+  let warning: string | undefined;
   const session = await getAdminSession();
   if (!session) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -53,12 +55,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_email"}, {status: 400});
   }
   const domain = normalizedEmail.split("@")[1];
-  const domainValid = await verifyDomainExists(domain);
-
-  const existing = await prisma.adminUser.findUnique({ where: { email: normalizedEmail } });
-  if (!domainValid){
+  const dnsResult = await verifyDomainExists(domain);
+  if (dnsResult === "no_mx"){
     return NextResponse.json({ error: "invalid_domain"}, {status: 400});
   }
+  if (dnsResult === "error"){
+    return NextResponse.json({ error: "dns_check_failed"}, {status: 502});
+  }
+  const existing = await prisma.adminUser.findUnique({ where: { email: normalizedEmail } });
   if (existing) {
     return NextResponse.json({ error: "email_exists" }, { status: 409 });
   }
@@ -78,8 +82,19 @@ export async function POST(req: NextRequest) {
       email: true,
       companyName: true,
       createdAt: true,
+      isVerified: true,
     },
   });
-  sendVerificationEmail(normalizedEmail, verificationToken, companyName).catch(console.error);
-  return NextResponse.json(customer, { status: 201 });
+  try{
+    const result = await sendVerificationEmail(normalizedEmail, verificationToken, companyName);
+    if (!result) {
+      emailDelivered = false;
+      warning = "Customer created but verification email could not be sent. Verify that RESEND_EMAIL_FROM is set to a verified domain in Resend.";
+    }
+  }
+  catch{
+      emailDelivered = false;
+      warning = "Customer created but verification email could not be sent. Verify that RESEND_EMAIL_FROM is set to a verified domain in Resend.";
+    }
+  return NextResponse.json({customer, emailDelivered, warning}, { status: 201 });
 }
