@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
+import { error } from "console";
 
 const PUBLIC_PATHS = ["/admin/login", "/api/admin/login", "/api/admin/logout"];
 
@@ -29,12 +30,14 @@ export async function middleware(req: NextRequest) {
   if (!token) {
     return NextResponse.redirect(new URL("/admin/login", req.url));
   }
-  const jwtsecret = getJwtSecret();
-  if (!jwtsecret){
-    return NextResponse.json({error: "Server misconfigured - Contact Administrator"}, {status: 500});
+  let jwtSecret: Uint8Array;
+  try{
+    jwtSecret = getJwtSecret();
+  } catch {
+    return NextResponse.json({ error: "Server misconfigured - Contact Administrator"}, { status: 500 });
   }
   try {
-    await jwtVerify(token, jwtsecret);
+    await jwtVerify(token, jwtSecret);
   } catch {
     const res = NextResponse.redirect(new URL("/admin/login", req.url));
     res.cookies.delete("admin_session");

@@ -2,8 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
 export async function POST(req: NextRequest) {
-    const { token } = await req.json();
-    
+    let token: string | undefined;
+    try{
+        ({ token } = await req.json());
+    } catch {
+        return NextResponse.json({ error: "invalid_body"}, {status: 400});
+    }
     if (!token) {
         return NextResponse.json({ error: "missing_token" }, { status: 400 });
     }
