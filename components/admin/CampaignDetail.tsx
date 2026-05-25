@@ -23,10 +23,7 @@ interface CampaignDetailProps {
   defaultResponseTarget: number;
 }
 
-type DeleteConfirm = {
-  taskId: string;
-  anchor: HTMLButtonElement;
-} | null;
+type DeleteConfirm = { taskId: string } | null;
 
 export default function CampaignDetail({ campaignId, campaignName, defaultResponseTarget }: CampaignDetailProps) {
   const [tasks, setTasks] = useState<TaskProgress[]>([]);
@@ -196,8 +193,8 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
     }
   }
 
-  function handleDeleteClick(taskId: string, e: React.MouseEvent<HTMLButtonElement>) {
-    setDeleteConfirm({ taskId, anchor: e.currentTarget });
+  function handleDeleteClick(taskId: string) {
+    setDeleteConfirm({ taskId });
   }
 
   function handleCancelDelete() {
@@ -428,7 +425,7 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
                             <span className="material-symbols-outlined text-[18px]">edit</span>
                           </button>
                           <button
-                            onClick={(e) => handleDeleteClick(t.taskId, e)}
+                            onClick={() => handleDeleteClick(t.taskId)}
                             className="flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-error-container hover:text-on-error-container"
                             title="Delete"
                           >
@@ -504,7 +501,6 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
           />
           <div
             className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-outline-variant/40 bg-surface-container-lowest p-6 shadow-[0_24px_48px_rgba(25,28,30,0.24)]"
-            style={{ top: deleteConfirm.anchor.getBoundingClientRect().top + window.scrollY + 40 }}
           >
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-error-container">

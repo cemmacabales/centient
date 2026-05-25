@@ -73,7 +73,7 @@ export async function POST(
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
 
-  const body = await req.json();
+  const body = await req.json().catch(() => ({}));
   const { prompt, responseTarget } = body;
 
   if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
