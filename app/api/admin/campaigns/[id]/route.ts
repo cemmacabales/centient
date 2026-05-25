@@ -61,38 +61,40 @@ export async function PATCH(
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
 
-  if (campaign.adminUserId !== session.sub) {
+  if (session.role !== "SUPER_ADMIN" && campaign.adminUserId !== session.sub) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
+  let body;
   try {
-    const body = await req.json();
-    const { name, defaultResponseTarget } = body;
-    const updateData: { name?: string; defaultResponseTarget?: number } = {};
-
-    if (name !== undefined) {
-      if (typeof name !== "string" || name.trim().length < 1 || name.length > 200) {
-        return NextResponse.json({ error: "invalid_name" }, { status: 400 });
-      }
-      updateData.name = name.trim();
-    }
-
-    if (defaultResponseTarget !== undefined) {
-      if (typeof defaultResponseTarget !== "number" || defaultResponseTarget < 1) {
-        return NextResponse.json({ error: "invalid_target" }, { status: 400 });
-      }
-      updateData.defaultResponseTarget = defaultResponseTarget;
-    }
-
-    const updatedCampaign = await prisma.campaign.update({
-      where: { id },
-      data: updateData,
-    });
-
-    return NextResponse.json(updatedCampaign, { status: 200 });
+    body = await req.json();
   } catch (error) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
+
+  const { name, defaultResponseTarget } = body;
+  const updateData: { name?: string; defaultResponseTarget?: number } = {};
+
+  if (name !== undefined) {
+    if (typeof name !== "string" || name.trim().length < 1 || name.length > 200) {
+      return NextResponse.json({ error: "invalid_name" }, { status: 400 });
+    }
+    updateData.name = name.trim();
+  }
+
+  if (defaultResponseTarget !== undefined) {
+    if (typeof defaultResponseTarget !== "number" || defaultResponseTarget < 1) {
+      return NextResponse.json({ error: "invalid_target" }, { status: 400 });
+    }
+    updateData.defaultResponseTarget = defaultResponseTarget;
+  }
+
+  const updatedCampaign = await prisma.campaign.update({
+    where: { id },
+    data: updateData,
+  });
+
+  return NextResponse.json(updatedCampaign, { status: 200 });
 }
 
 // delete
@@ -118,7 +120,7 @@ export async function DELETE(
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
 
-  if (campaign.adminUserId !== session.sub) {
+  if (session.role !== "SUPER_ADMIN" && campaign.adminUserId !== session.sub) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
