@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
-import { error } from "console";
 
 const PUBLIC_PATHS = ["/admin/login", "/api/admin/login", "/api/admin/logout"];
 

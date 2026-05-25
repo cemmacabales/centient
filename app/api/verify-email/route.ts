@@ -22,6 +22,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "invalid_token" }, { status: 400 });
     }
     if (customer.isVerified){
+        await prisma.adminUser.update({
+            where: { id: customer.id},
+            data: {verificationToken: null, verificationTokenExpires: null},
+        });
         return NextResponse.json({ success: true, message: "Email already verified"});
     }
     if (customer.verificationTokenExpires && customer.verificationTokenExpires < new Date()){
