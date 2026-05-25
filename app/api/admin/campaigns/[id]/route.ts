@@ -83,7 +83,11 @@ export async function PATCH(
   }
 
   if (defaultResponseTarget !== undefined) {
-    if (typeof defaultResponseTarget !== "number" || defaultResponseTarget < 1) {
+    if (
+      typeof defaultResponseTarget !== "number" ||
+      defaultResponseTarget < 1 ||
+      !Number.isInteger(defaultResponseTarget)
+    ) {
       return NextResponse.json({ error: "invalid_target" }, { status: 400 });
     }
     updateData.defaultResponseTarget = defaultResponseTarget;
