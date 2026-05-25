@@ -31,4 +31,5 @@ export interface MeResponse {
   totalEarned: string;
   rewardSymbol: string;
   submissionCount: number;
+  onboardingCompleted: boolean;
 }

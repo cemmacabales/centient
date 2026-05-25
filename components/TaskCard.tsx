@@ -3,6 +3,7 @@
 import { useState } from "react";
 import SubmitButton from "./SubmitButton";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { validateReason } from "@/lib/validators";
 
 interface TaskCardProps {
   task: {
@@ -27,10 +28,12 @@ export default function TaskCard({
   const [choice, setChoice] = useState<"A" | "B" | null>(null);
   const [reason, setReason] = useState("");
 
-  const canSubmit = choice !== null && reason.trim().length >= 10 && !loading;
+  // Run the shared validation logic locally for immediate user feedback
+  const isReasonValid = validateReason(reason);
+  const canSubmit = choice !== null && isReasonValid && !loading;
 
   function handleSubmit() {
-    if (!choice) return;
+    if (!choice || !isReasonValid) return;
     onSubmit(choice, reason.trim());
   }
 
@@ -130,6 +133,12 @@ export default function TaskCard({
             placeholder="Explain your reasoning for selecting the better response..."
             className="w-full resize-none rounded-lg border-none bg-surface-container-highest px-4 py-3 font-body text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:ring-0 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
           />
+          
+          {reason.trim().length >= 10 && !isReasonValid && (
+            <p className="mt-2 text-xs font-medium text-red-500">
+              Please enter a meaningful explanation. Avoid spam characters or keyboard mashing.
+            </p>
+          )}
         </section>
       )}
 
