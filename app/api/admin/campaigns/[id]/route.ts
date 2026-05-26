@@ -76,7 +76,7 @@ export async function PATCH(
   const updateData: { name?: string; defaultResponseTarget?: number } = {};
 
   if (name !== undefined) {
-    if (typeof name !== "string" || name.trim().length < 1 || name.length > 200) {
+    if (typeof name !== "string" || name.trim().length < 1 || name.trim().length > 200) {
       return NextResponse.json({ error: "invalid_name" }, { status: 400 });
     }
     updateData.name = name.trim();
@@ -91,6 +91,10 @@ export async function PATCH(
       return NextResponse.json({ error: "invalid_target" }, { status: 400 });
     }
     updateData.defaultResponseTarget = defaultResponseTarget;
+  }
+
+  if (Object.keys(updateData).length === 0) {
+    return NextResponse.json({ error: "no_fields_to_update" }, { status: 400 });
   }
 
   const updatedCampaign = await prisma.campaign.update({
