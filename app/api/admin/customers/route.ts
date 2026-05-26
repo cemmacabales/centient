@@ -92,6 +92,7 @@ export async function POST(req: NextRequest) {
     adminUserId: session.sub,
     action: "customer.create",
     targetType: "adminUser",
+    targetId: customer.id,
     req,
     metadata: {
       email: customer.email,
