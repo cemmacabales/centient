@@ -11,7 +11,6 @@ const TABS_SUPER_ADMIN = [
 
 const TABS_CUSTOMER = [
   { href: "/admin/campaigns", label: "Campaigns" },
-  { href: "/admin/wallets", label: "Wallets" },
 ];
 
 interface AdminNavProps {
