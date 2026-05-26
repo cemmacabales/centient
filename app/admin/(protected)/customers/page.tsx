@@ -11,7 +11,7 @@ export default async function AdminCustomersPage() {
   const customers = await prisma.adminUser.findMany({
     where: { role: "CUSTOMER" },
     orderBy: { createdAt: "asc" },
-    select: { id: true, email: true, companyName: true, createdAt: true },
+    select: { id: true, email: true, companyName: true, createdAt: true, isVerified: true },
   }).then((rows) =>
     rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }))
   );

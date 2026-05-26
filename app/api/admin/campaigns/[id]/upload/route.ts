@@ -176,26 +176,51 @@ export async function POST(
     },
   }));
 
+  // Chunking Implementation (#130)
+  const CHUNK_SIZE = 500;
   let inserted = 0;
+  let chunksCommitted = 0;
+  let processingFailed = false;
+
   try {
-    await prisma.$transaction(async (tx) => {
-      for (const args of upsertArgs) {
-        await tx.task.upsert(args);
-      }
-    }, { timeout: 120_000 });
-    inserted = rows.length;
-  } catch (err) {
-    allErrors.push("Transaction failed, rolling back all changes");
+    for (let i = 0; i < upsertArgs.length; i += CHUNK_SIZE) {
+      const chunk = upsertArgs.slice(i, i + CHUNK_SIZE);
+
+      // Interactive callback syntax handles custom timeouts safely
+      await prisma.$transaction(
+        async (tx) => {
+          await Promise.all(chunk.map((args) => tx.task.upsert(args)));
+        },
+        { timeout: 30_000 }
+      );
+
+      chunksCommitted++;
+      inserted += chunk.length;
+    }
+  } catch (err: any) {
+    processingFailed = true;
+    allErrors.push(`Transaction failed on chunk ${chunksCommitted + 1}: ${err.message || "Rolling back current batch"}`);
   }
 
+  // Record tracked uploaded file parameters 
   await prisma.campaign.update({
     where: { id: campaign.id },
     data: { csvFileName: file.name },
   });
 
-  return NextResponse.json({
-    inserted,
-    skipped: rows.length - inserted + parseErrors.length,
-    errors: allErrors.slice(0, 10),
-  });
+  const totalChunks = Math.ceil(upsertArgs.length / CHUNK_SIZE);
+
+  return NextResponse.json(
+    {
+      inserted,
+      skipped: rows.length - inserted + parseErrors.length,
+      errors: allErrors.slice(0, 10),
+      meta: {
+        chunks_committed: chunksCommitted,
+        chunks_failed: processingFailed ? totalChunks - chunksCommitted : 0,
+        last_error: processingFailed ? allErrors[allErrors.length - 1] : null,
+      },
+    },
+    { status: processingFailed ? 422 : 200 }
+  );
 }
