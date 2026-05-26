@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { isValidEmail, isValidPassword } from "@/lib/validation";
 
 interface AddCustomerModalProps {
-  onAdd: (data: { email: string; password: string; companyName: string }) => Promise<void>;
+  onAdd: (data: { email: string; password: string; companyName: string }) => Promise<{emailDelivered: boolean; warning?: string}>;
   onClose: () => void;
 }
 
@@ -13,8 +14,10 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
   const [companyName, setCompanyName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-
-  const canSubmit = email && password;
+  const [warning, setWarning] = useState("");
+  const [emailError, setEmailError] = useState("")
+  const [passwordError, setPasswordError] = useState("")
+  const canSubmit = email && password && isValidEmail(email) && isValidPassword(password);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -22,11 +25,19 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
     setSubmitting(true);
     setError("");
     try {
-      await onAdd({ email, password, companyName });
-      onClose();
+      const result = await onAdd({ email, password, companyName });
+      if (result.emailDelivered) {
+        onClose();
+      } else {
+        setWarning(result.warning || "Verification email could not be sent.");
+      }
     } catch (err: any) {
       if (err.message === "email_exists") {
         setError("A customer with this email already exists.");
+      } else if (err.message === "invalid_domain"){
+        setError("Email domain does not exist or can't receive email")
+      } else if (err.message === "dns_check_failed"){
+        setError("Could not verify this email domain. Please try again.")
       } else {
         setError("Something went wrong. Please try again.");
       }
@@ -34,7 +45,6 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
       setSubmitting(false);
     }
   }
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
@@ -78,11 +88,23 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
             <input
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setEmail(value);
+                if (value && !isValidEmail(value)){
+                  setEmailError("Please enter a valid email address")
+                }
+                else {
+                  setEmailError("")
+                }
+              }}
               placeholder="acme@example.com"
               required
               className="mt-1 w-full rounded-lg border-none bg-surface-container-highest px-4 py-3 font-body text-sm text-on-surface placeholder-on-surface-variant/50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
             />
+            {emailError && (
+              <p className="text-error text-sm">{emailError}</p>
+            )}
           </div>
 
           <div>
@@ -92,16 +114,32 @@ export default function AddCustomerModal({ onAdd, onClose }: AddCustomerModalPro
             <input
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setPassword(value);
+                if (value && !isValidPassword(value)) {
+                  setPasswordError("Password must be 8-128 characters with at least one number and one special character");
+                } else {
+                  setPasswordError("");
+                }
+              }}
               placeholder="••••••••"
               required
               className="mt-1 w-full rounded-lg border-none bg-surface-container-highest px-4 py-3 font-body text-sm text-on-surface placeholder-on-surface-variant/50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
             />
+            {passwordError && (
+              <p className="text-error text-sm">{passwordError}</p>
+            )}
           </div>
 
           {error && (
             <div className="rounded-lg bg-error-container px-4 py-3 font-label text-sm font-semibold text-on-error-container">
               {error}
+            </div>
+          )}
+          {warning && (
+            <div className="rounded-lg bg-yellow-100 px-4 py-3 font-label text-sm font-semibold text-yellow-800">
+              {warning}
             </div>
           )}
 
