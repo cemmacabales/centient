@@ -74,7 +74,7 @@ model Task {
   responseTarget Int?
 
   submissions Submission[]
-  campaign    Campaign?    @relation(fields: [campaignId], references: [id])
+  campaign    Campaign?    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
   @@unique([campaignId, prompt])
   @@index([isGold])
