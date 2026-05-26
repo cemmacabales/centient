@@ -27,12 +27,16 @@ model User {
 }
 
 model AdminUser {
-  id           String    @id @default(uuid())
-  email        String    @unique
-  passwordHash String
-  role         AdminRole
-  companyName  String?
-  createdAt    DateTime  @default(now())
+  id                          String    @id @default(uuid())
+  email                       String    @unique
+  passwordHash                String
+  role                        AdminRole
+  companyName                 String?
+  createdAt                   DateTime  @default(now())
+  isVerified                  Boolean   @default(false)
+  verificationToken           String?   @unique
+  verificationTokenExpires    DateTime?
+  verifiedAt                  DateTime?
 
   campaigns Campaign[]
 
@@ -74,7 +78,7 @@ model Task {
   responseTarget Int?
 
   submissions Submission[]
-  campaign    Campaign?    @relation(fields: [campaignId], references: [id])
+  campaign    Campaign?    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
   @@unique([campaignId, prompt])
   @@index([isGold])
