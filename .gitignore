@@ -1,10 +1,11 @@
 node_modules/
+.env
 .env.local
 app/generated/
 .next/
 next-env.d.ts
 *.tsbuildinfo
 assets/logo-source.png
-.env
+AGENTS.md
 ngrok.exe
 *.exe

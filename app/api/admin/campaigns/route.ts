@@ -47,13 +47,13 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const { name, defaultResponseTarget } = body;
 
-  if (!name || defaultResponseTarget === undefined) {
+  if (!name?.trim() || defaultResponseTarget === undefined) {
     return NextResponse.json({ error: "missing_fields" }, { status: 400 });
   }
 
   const campaign = await prisma.campaign.create({
     data: {
-      name,
+      name: name.trim(),
       defaultResponseTarget: Number(defaultResponseTarget),
       adminUserId: session.sub,
     },

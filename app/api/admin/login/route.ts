@@ -52,6 +52,9 @@ export async function POST(req: NextRequest) {
     console.warn("[admin] login_fail", { ip, email, reason: "unknown_user" });
     return redirectToLogin(req, "invalid");
   }
+  if (!admin.isVerified) {
+    return redirectToLogin(req, "not_verified")
+  }
 
   const ok = await bcrypt.compare(password, admin.passwordHash);
   if (!ok) {
