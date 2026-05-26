@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
+import { auditLog } from "@/lib/audit";
 
 export async function GET(
   _req: Request,
@@ -102,12 +103,30 @@ export async function PATCH(
     data: updateData,
   });
 
+  auditLog({
+    adminUserId: session.sub,
+    action: "campaign.update",
+    targetType: "campaign",
+    targetId: id,
+    req,
+    metadata: {
+      before: {
+        name: campaign.name,
+        defaultResponseTarget: campaign.defaultResponseTarget,
+      },
+      after: {
+        name: updatedCampaign.name,
+        defaultResponseTarget: updatedCampaign.defaultResponseTarget,
+      }
+    },
+  });
+
   return NextResponse.json(updatedCampaign, { status: 200 });
 }
 
 // delete
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getAdminSession();
@@ -149,6 +168,18 @@ export async function DELETE(
 
   await prisma.campaign.delete({
     where: { id },
+  });
+
+  auditLog({
+    adminUserId: session.sub,
+    action: "campaign.delete",
+    targetType: "campaign",
+    targetId: id,
+    req,
+    metadata: {
+      name: campaign.name,
+      defaultResponseTarget: campaign.defaultResponseTarget,
+    },
   });
 
   return new NextResponse(null, { status: 204 });
