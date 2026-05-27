@@ -8,17 +8,28 @@ interface Campaign {
   name: string;
   defaultResponseTarget: number;
   taskCount: number;
+  totalResponses: number;
+  completionPct: number;
   createdAt: string;
+}
+
+interface AggregateStats {
+  totalCampaigns: number;
+  totalTasks: number;
+  totalResponses: number;
+  overallCompletionPct: number;
 }
 
 interface CampaignListProps {
   initialCampaigns: Campaign[];
+  aggregate: AggregateStats;
 }
 
-export default function CampaignList({ initialCampaigns }: CampaignListProps) {
+export default function CampaignList({ initialCampaigns, aggregate }: CampaignListProps) {
   const [campaigns, setCampaigns] = useState(initialCampaigns);
   const [showNewModal, setShowNewModal] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState<string | null>(null);
 
   async function handleCreate(name: string, defaultResponseTarget: number) {
     setLoading(true);
@@ -29,28 +40,41 @@ export default function CampaignList({ initialCampaigns }: CampaignListProps) {
     });
     if (res.ok) {
       const newCampaign = await res.json();
-      setCampaigns([...campaigns, newCampaign]);
+      setCampaigns([...campaigns, { ...newCampaign, totalResponses: 0, completionPct: 0 }]);
       setShowNewModal(false);
     }
     setLoading(false);
   }
 
-  if (campaigns.length === 0) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h1 className="font-headline text-3xl font-extrabold tracking-tight text-on-surface">
-            Campaigns
-          </h1>
-          <button
-            onClick={() => setShowNewModal(true)}
-            className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90 active:scale-[0.97]"
-          >
-            <span className="material-symbols-outlined text-[18px]">add</span>
-            New Campaign
-          </button>
-        </div>
+  async function handleExport(campaignId: string, format: string = "json") {
+    setExporting(campaignId);
+    window.location.href = `/api/admin/campaigns/${campaignId}/export?format=${format}`;
+    setTimeout(() => setExporting(null), 1000);
+  }
 
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="font-headline text-3xl font-extrabold tracking-tight text-on-surface">
+          Dashboard
+        </h1>
+        <button
+          onClick={() => setShowNewModal(true)}
+          className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90 active:scale-[0.97]"
+        >
+          <span className="material-symbols-outlined text-[18px]">add</span>
+          New Campaign
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard label="Campaigns" value={String(aggregate.totalCampaigns)} />
+        <StatCard label="Tasks" value={String(aggregate.totalTasks)} />
+        <StatCard label="Responses" value={String(aggregate.totalResponses)} />
+        <StatCard label="Completion" value={`${aggregate.overallCompletionPct}%`} subline="overall" />
+      </div>
+
+      {campaigns.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-3xl border border-outline-variant/40 bg-surface-container-low/60 p-12 text-center">
           <span className="material-symbols-outlined text-[48px] text-outline" aria-hidden="true">
             campaign
@@ -68,79 +92,91 @@ export default function CampaignList({ initialCampaigns }: CampaignListProps) {
             Create Campaign
           </button>
         </div>
-
-        {showNewModal && (
-          <NewCampaignModal
-            onSubmit={handleCreate}
-            onClose={() => setShowNewModal(false)}
-            loading={loading}
-          />
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="font-headline text-3xl font-extrabold tracking-tight text-on-surface">
-          Campaigns
-        </h1>
-        <button
-          onClick={() => setShowNewModal(true)}
-          className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90 active:scale-[0.97]"
-        >
-          <span className="material-symbols-outlined text-[18px]">add</span>
-          New Campaign
-        </button>
-      </div>
-
-      <div className="overflow-hidden rounded-3xl border border-outline-variant/40 bg-surface-container-lowest shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-outline-variant/30">
-              <th className="px-6 py-4 text-left font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
-                Campaign Name
-              </th>
-              <th className="px-6 py-4 text-left font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
-                Tasks Uploaded
-              </th>
-              <th className="px-6 py-4 text-left font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
-                Created
-              </th>
-              <th className="px-6 py-4 text-right font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {campaigns.map((c) => (
-              <tr
-                key={c.id}
-                className="border-b border-outline-variant/20 last:border-0 transition-colors hover:bg-surface-container-low/40"
-              >
-                <td className="px-6 py-4 font-body text-sm font-semibold text-on-surface">
-                  {c.name}
-                </td>
-                <td className="px-6 py-4 font-body text-sm text-on-surface-variant">
-                  {c.taskCount}
-                </td>
-                <td className="px-6 py-4 font-body text-sm text-on-surface-variant">
-                  {new Date(c.createdAt).toLocaleDateString()}
-                </td>
-                <td className="px-6 py-4 text-right">
-                  <Link
-                    href={`/admin/campaigns/${c.id}`}
-                    className="rounded-full px-4 py-2 font-label text-sm font-semibold text-primary transition-opacity hover:opacity-80"
-                  >
-                    View
-                  </Link>
-                </td>
+      ) : (
+        <div className="overflow-hidden rounded-3xl border border-outline-variant/40 bg-surface-container-lowest shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-outline-variant/30">
+                <th className="px-6 py-4 text-left font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
+                  Campaign
+                </th>
+                <th className="px-6 py-4 text-center font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
+                  Tasks
+                </th>
+                <th className="px-6 py-4 text-center font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
+                  Responses
+                </th>
+                <th className="px-6 py-4 text-center font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
+                  Completion
+                </th>
+                <th className="px-6 py-4 text-center font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
+                  Created
+                </th>
+                <th className="px-6 py-4 text-right font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
+                  Actions
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {campaigns.map((c) => (
+                <tr
+                  key={c.id}
+                  className="border-b border-outline-variant/20 last:border-0 transition-colors hover:bg-surface-container-low/40"
+                >
+                  <td className="px-6 py-4">
+                    <div className="font-body text-sm font-semibold text-on-surface">{c.name}</div>
+                  </td>
+                  <td className="px-6 py-4 text-center font-body text-sm text-on-surface-variant">
+                    {c.taskCount}
+                  </td>
+                  <td className="px-6 py-4 text-center font-body text-sm text-on-surface-variant">
+                    {c.totalResponses}
+                  </td>
+                  <td className="px-6 py-4 text-center">
+                    <span
+                      className={`inline-flex rounded-full px-2.5 py-0.5 font-label text-xs font-bold ${
+                        c.completionPct >= 100
+                          ? "bg-secondary-container text-on-secondary-container"
+                          : c.completionPct >= 50
+                          ? "bg-tertiary-container text-on-tertiary-container"
+                          : "bg-error-container text-on-error-container"
+                      }`}
+                    >
+                      {c.completionPct}%
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-center font-body text-sm text-on-surface-variant">
+                    {new Date(c.createdAt).toLocaleDateString()}
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      {c.totalResponses > 0 && (
+                        <div className="relative">
+                          <button
+                            onClick={() => handleExport(c.id)}
+                            disabled={exporting === c.id}
+                            className="flex items-center gap-1 rounded-full px-3 py-1.5 font-label text-xs font-semibold text-primary transition-opacity hover:opacity-80 disabled:opacity-40"
+                            title="Export campaign data"
+                          >
+                            <span className="material-symbols-outlined text-[16px]">download</span>
+                            {exporting === c.id ? "..." : "Export"}
+                          </button>
+                        </div>
+                      )}
+                      <Link
+                        href={`/admin/campaigns/${c.id}`}
+                        className="rounded-full px-3 py-1.5 font-label text-xs font-semibold text-primary transition-opacity hover:opacity-80"
+                      >
+                        View
+                      </Link>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {showNewModal && (
         <NewCampaignModal
@@ -150,6 +186,28 @@ export default function CampaignList({ initialCampaigns }: CampaignListProps) {
         />
       )}
     </div>
+  );
+}
+
+interface StatCardProps {
+  label: string;
+  value: string;
+  subline?: string;
+}
+
+function StatCard({ label, value, subline }: StatCardProps) {
+  return (
+    <section className="rounded-2xl bg-surface-container-lowest p-5 shadow-[0_8px_24px_rgba(25,28,30,0.06)]">
+      <div className="font-label text-[11px] font-bold uppercase tracking-[0.2em] text-outline">
+        {label}
+      </div>
+      <div className="mt-2 font-headline text-2xl font-extrabold tracking-tight text-on-surface">
+        {value}
+      </div>
+      {subline ? (
+        <div className="mt-1 font-body text-xs text-on-surface-variant">{subline}</div>
+      ) : null}
+    </section>
   );
 }
 

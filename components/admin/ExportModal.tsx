@@ -8,12 +8,23 @@ const FORMATS = [
   { label: "Plain text", type: "txt", description: "Human-readable text (.txt)", icon: "☰" },
 ];
 
-export default function ExportModal() {
+interface ExportModalProps {
+  campaignId?: string;
+}
+
+export default function ExportModal({ campaignId }: ExportModalProps) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState("json");
 
+  function getExportUrl() {
+    if (campaignId) {
+      return `/api/admin/campaigns/${campaignId}/export?format=${selected}`;
+    }
+    return `/api/admin/export?format=${selected}`;
+  }
+
   function download() {
-    window.location.href = `/api/admin/export?format=${selected}`;
+    window.location.href = getExportUrl();
     setOpen(false);
   }
 
@@ -21,9 +32,10 @@ export default function ExportModal() {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90 active:scale-[0.97]"
+        className="flex items-center gap-2 rounded-xl border border-outline-variant bg-surface-container-low px-4 py-2 font-label text-sm font-semibold text-on-surface transition-colors hover:bg-surface-container-high"
       >
-        Export Dataset
+        <span className="material-symbols-outlined text-[18px]">download</span>
+        Export
       </button>
 
       {open && (
