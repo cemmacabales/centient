@@ -86,3 +86,12 @@ export async function requireRoleForPage(role: AdminRole): Promise<AdminJWTPaylo
   }
   return session;
 }
+
+// Authorization seam for export endpoints — drop in payment/billing gate here
+export function assertExportAllowed(session: AdminJWTPayload, campaignId: string): void {
+  if (session.role === "CUSTOMER") {
+    return;
+  }
+  // TODO: add billing/entitlement check here before allowing SUPER_ADMIN export
+  // e.g.: if (!await hasExportEntitlement(session.sub)) throw new Error("export_not_allowed");
+}

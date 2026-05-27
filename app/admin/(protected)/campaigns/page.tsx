@@ -4,28 +4,77 @@ import CampaignList from "@/components/admin/CampaignList";
 
 export const dynamic = "force-dynamic";
 
+interface CampaignWithProgress {
+  id: string;
+  name: string;
+  defaultResponseTarget: number;
+  taskCount: number;
+  totalResponses: number;
+  completionPct: number;
+  createdAt: string;
+}
+
+interface AggregateStats {
+  totalCampaigns: number;
+  totalTasks: number;
+  totalResponses: number;
+  overallCompletionPct: number;
+}
+
 export default async function AdminCampaignsPage() {
   const session = await requireRoleForPage("CUSTOMER");
 
   const campaigns = await prisma.campaign.findMany({
     where: { adminUserId: session.sub },
     orderBy: { createdAt: "asc" },
-    select: {
-      id: true,
-      name: true,
-      defaultResponseTarget: true,
-      createdAt: true,
-      _count: { select: { tasks: true } },
+    include: {
+      tasks: {
+        select: {
+          responseTarget: true,
+          _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
+        },
+      },
     },
-  }).then((rows) =>
-    rows.map((c) => ({
+  });
+
+  const campaignsWithProgress: CampaignWithProgress[] = campaigns.map((c) => {
+    const taskCount = c.tasks.length;
+    const totalTarget = c.tasks.reduce((sum, t) => sum + (t.responseTarget ?? c.defaultResponseTarget), 0);
+    const totalResponses = c.tasks.reduce((sum, t) => sum + t._count.submissions, 0);
+    const completionPct = totalTarget > 0 ? Math.min(100, Math.round((totalResponses / totalTarget) * 100)) : 0;
+    return {
       id: c.id,
       name: c.name,
       defaultResponseTarget: c.defaultResponseTarget,
-      taskCount: c._count.tasks,
+      taskCount,
+      totalResponses,
+      completionPct,
       createdAt: c.createdAt.toISOString(),
-    }))
-  );
+    };
+  });
 
-  return <CampaignList initialCampaigns={campaigns} />;
+  const aggregate: AggregateStats = {
+    totalCampaigns: campaigns.length,
+    totalTasks: campaignsWithProgress.reduce((sum, c) => sum + c.taskCount, 0),
+    totalResponses: campaignsWithProgress.reduce((sum, c) => sum + c.totalResponses, 0),
+    overallCompletionPct: 0,
+  };
+
+  const totalTarget = campaignsWithProgress.reduce(
+    (sum, c) => sum + c.taskCount * c.defaultResponseTarget,
+    0
+  );
+  if (totalTarget > 0) {
+    aggregate.overallCompletionPct = Math.min(
+      100,
+      Math.round((aggregate.totalResponses / totalTarget) * 100)
+    );
+  }
+
+  return (
+    <CampaignList
+      initialCampaigns={campaignsWithProgress}
+      aggregate={aggregate}
+    />
+  );
 }
