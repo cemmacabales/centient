@@ -78,7 +78,6 @@ export async function GET(
 
   const records = await prisma.submission.findMany({
     where: {
-      payoutStatus: "sent",
       isGoldCheck: false,
       task: { campaignId: id },
     },
