@@ -9,6 +9,9 @@ type TaskRow = {
   responseA: string;
   responseB: string;
   responseTarget?: number;
+  category?: string | null;
+  isGold?: boolean;
+  goldAnswer?: string | null;
 };
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -25,6 +28,9 @@ function parseCSV(text: string): { rows: TaskRow[]; errors: string[] } {
   const responseAIdx = headers.indexOf("responsea");
   const responseBIdx = headers.indexOf("responseb");
   const responseTargetIdx = headers.indexOf("responsetarget");
+  const categoryIdx = headers.indexOf("category");
+  const isGoldIdx = headers.indexOf("isgold");
+  const goldAnswerIdx = headers.indexOf("goldanswer");
 
   if (promptIdx === -1 || responseAIdx === -1 || responseBIdx === -1) {
     return { rows: [], errors: ["CSV must have prompt, responseA, responseB columns"] };
@@ -68,11 +74,20 @@ function parseCSV(text: string): { rows: TaskRow[]; errors: string[] } {
     const parsedTarget = responseTargetStr ? parseInt(responseTargetStr, 10) : NaN;
     const responseTarget = Number.isFinite(parsedTarget) && parsedTarget > 0 ? parsedTarget : undefined;
 
+    const category = categoryIdx >= 0 ? (values[categoryIdx]?.trim() || undefined) : undefined;
+    const isGoldStr = isGoldIdx >= 0 ? values[isGoldIdx]?.trim().toLowerCase() : undefined;
+    const isGold = isGoldStr === "true" || isGoldStr === "1" || isGoldStr === "yes";
+    const goldAnswerRaw = goldAnswerIdx >= 0 ? values[goldAnswerIdx]?.trim() : undefined;
+    const goldAnswer = goldAnswerRaw === "A" || goldAnswerRaw === "B" ? goldAnswerRaw : undefined;
+
     rows.push({
       prompt,
       responseA,
       responseB,
       responseTarget,
+      category,
+      isGold,
+      goldAnswer,
     });
   }
 
@@ -180,6 +195,9 @@ export async function POST(
       responseA: row.responseA,
       responseB: row.responseB,
       responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
+      category: row.category ?? null,
+      isGold: row.isGold ?? false,
+      goldAnswer: row.goldAnswer ?? null,
     },
     create: {
       id: randomUUID(),
@@ -188,6 +206,9 @@ export async function POST(
       responseA: row.responseA,
       responseB: row.responseB,
       responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
+      category: row.category ?? null,
+      isGold: row.isGold ?? false,
+      goldAnswer: row.goldAnswer ?? null,
     },
   }));
 
