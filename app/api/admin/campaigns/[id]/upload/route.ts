@@ -77,9 +77,14 @@ function parseCSV(text: string): { rows: TaskRow[]; errors: string[] } {
     const category = categoryIdx >= 0 ? (values[categoryIdx]?.trim() || undefined) : undefined;
     const isGoldStr = isGoldIdx >= 0 ? values[isGoldIdx]?.trim().toLowerCase() : undefined;
     const isGold = isGoldStr === "true" || isGoldStr === "1" || isGoldStr === "yes";
-    const goldAnswerRaw = goldAnswerIdx >= 0 ? values[goldAnswerIdx]?.trim() : undefined;
-    const goldAnswer = goldAnswerRaw === "A" || goldAnswerRaw === "B" ? goldAnswerRaw : undefined;
+    const goldAnswerRaw = goldAnswerIdx >= 0 ? values[goldAnswerIdx]?.trim().toUpperCase() : undefined;
+    const parsedGoldAnswer = goldAnswerRaw === "A" || goldAnswerRaw === "B" ? goldAnswerRaw : undefined;
+    const goldAnswer = isGold ? parsedGoldAnswer : undefined;
 
+    if (isGold && !goldAnswer) {
+      errors.push(`Row ${i + 1}: isGold is true but goldAnswer is missing or invalid (expected "A" or "B")`);
+      continue;
+    }
     rows.push({
       prompt,
       responseA,
