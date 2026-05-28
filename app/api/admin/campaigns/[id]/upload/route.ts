@@ -50,10 +50,6 @@ export async function POST(
   const allErrors: string[] = [...parseErrors];
 
   if (rows.length === 0 && parseErrors.length > 0) {
-    const hasGoldError = parseErrors.some((e) =>
-      e.startsWith("CSV must not contain isGold")
-    );
-
     auditLog({
       adminUserId: session.sub,
       action: "tasks.upload",
@@ -73,7 +69,7 @@ export async function POST(
         skipped: 0,
         errors: allErrors.slice(0, 10),
       },
-      { status: hasGoldError ? 400 : 200 }
+      { status: 200 }
     );
   }
 
@@ -89,8 +85,8 @@ export async function POST(
       responseB: row.responseB,
       responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
       category: row.category ?? null,
-      isGold: false,
-      goldAnswer: null,
+      isGold: row.isGold ?? false,
+      goldAnswer: row.goldAnswer ?? null,
     },
     create: {
       id: randomUUID(),
@@ -100,8 +96,8 @@ export async function POST(
       responseB: row.responseB,
       responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
       category: row.category ?? null,
-      isGold: false,
-      goldAnswer: null,
+      isGold: row.isGold ?? false,
+      goldAnswer: row.goldAnswer ?? null,
     },
   }));
 

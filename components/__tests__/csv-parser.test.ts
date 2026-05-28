@@ -35,18 +35,26 @@ describe("parseCSV", () => {
     assert.strictEqual(rows[2].responseA, "Plants making food from sunlight.");
   });
 
-  it("rejects CSV containing isGold header", () => {
+  it("parses isGold and goldAnswer from CSV headers", () => {
     const { rows, errors } = parseCSV(csvWithGoldHeaders);
-    assert.strictEqual(rows.length, 0);
-    assert.strictEqual(errors.length, 1);
-    assert.match(errors[0], /must not contain isGold/);
+    assert.strictEqual(errors.length, 0);
+    assert.strictEqual(rows.length, 2);
+
+    assert.strictEqual(rows[0].isGold, true);
+    assert.strictEqual(rows[0].goldAnswer, "A");
+    assert.strictEqual(rows[1].isGold, false);
+    assert.strictEqual(rows[1].goldAnswer, undefined);
   });
 
-  it("rejects CSV containing goldAnswer header", () => {
+  it("parses goldAnswer-only CSV without error", () => {
     const { rows, errors } = parseCSV(csvWithGoldAnswerOnly);
-    assert.strictEqual(rows.length, 0);
-    assert.strictEqual(errors.length, 1);
-    assert.match(errors[0], /must not contain isGold/);
+    assert.strictEqual(errors.length, 0);
+    assert.strictEqual(rows.length, 2);
+
+    assert.strictEqual(rows[0].isGold, false);
+    assert.strictEqual(rows[0].goldAnswer, undefined);
+    assert.strictEqual(rows[1].isGold, false);
+    assert.strictEqual(rows[1].goldAnswer, undefined);
   });
 
   it("returns empty rows for CSV with no data rows", () => {
@@ -62,13 +70,46 @@ describe("parseCSV", () => {
     assert.match(errors[0], /must have prompt, responseA, responseB/);
   });
 
-  it("isGold/goldAnswer check is case-insensitive", () => {
-    const csv = `prompt,responseA,responseB,ISGOLD
-What is the capital of France?,Paris,Lyon,True
+  it("isGold/goldAnswer headers are case-insensitive", () => {
+    const csv = `prompt,responseA,responseB,ISGOLD,GOLDANSWER
+What is the capital of France?,Paris,Lyon,True,A
+`;
+    const { rows, errors } = parseCSV(csv);
+    assert.strictEqual(errors.length, 0);
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].isGold, true);
+    assert.strictEqual(rows[0].goldAnswer, "A");
+  });
+
+  it("rejects rows with isGold=true but invalid goldAnswer", () => {
+    const csv = `prompt,responseA,responseB,isGold,goldAnswer
+What is the capital of France?,Paris,Lyon,True,C
 `;
     const { rows, errors } = parseCSV(csv);
     assert.strictEqual(rows.length, 0);
     assert.strictEqual(errors.length, 1);
-    assert.match(errors[0], /must not contain isGold/);
+    assert.match(errors[0], /isGold is true but goldAnswer is missing or invalid/);
+  });
+
+  it("rejects rows with isGold=true but missing goldAnswer", () => {
+    const csv = `prompt,responseA,responseB,isGold,goldAnswer
+What is the capital of France?,Paris,Lyon,True,
+`;
+    const { rows, errors } = parseCSV(csv);
+    assert.strictEqual(rows.length, 0);
+    assert.strictEqual(errors.length, 1);
+    assert.match(errors[0], /isGold is true but goldAnswer is missing or invalid/);
+  });
+
+  it("accepts isGold=1 and isGold=yes as true", () => {
+    const csv = `prompt,responseA,responseB,isGold,goldAnswer
+Which is bigger?,Sun,Moon,1,A
+What color is the sky?,Blue,Red,yes,B
+`;
+    const { rows, errors } = parseCSV(csv);
+    assert.strictEqual(errors.length, 0);
+    assert.strictEqual(rows.length, 2);
+    assert.strictEqual(rows[0].isGold, true);
+    assert.strictEqual(rows[1].isGold, true);
   });
 });

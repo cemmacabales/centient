@@ -4,6 +4,8 @@ export type TaskRow = {
   responseB: string;
   responseTarget?: number;
   category?: string | null;
+  isGold?: boolean;
+  goldAnswer?: "A" | "B" | null;
 };
 
 export function parseCSVLine(line: string): string[] {
@@ -53,10 +55,6 @@ export function parseCSV(text: string): { rows: TaskRow[]; errors: string[] } {
     return { rows: [], errors: ["CSV must have prompt, responseA, responseB columns"] };
   }
 
-  if (isGoldIdx !== -1 || goldAnswerIdx !== -1) {
-    return { rows: [], errors: ["CSV must not contain isGold or goldAnswer columns"] };
-  }
-
   const rows: TaskRow[] = [];
   const errors: string[] = [];
 
@@ -96,6 +94,16 @@ export function parseCSV(text: string): { rows: TaskRow[]; errors: string[] } {
     const responseTarget = Number.isFinite(parsedTarget) && parsedTarget > 0 ? parsedTarget : undefined;
 
     const category = categoryIdx >= 0 ? (values[categoryIdx]?.trim() || undefined) : undefined;
+    const isGoldStr = isGoldIdx >= 0 ? values[isGoldIdx]?.trim().toLowerCase() : undefined;
+    const isGold = isGoldStr === "true" || isGoldStr === "1" || isGoldStr === "yes";
+    const goldAnswerRaw = goldAnswerIdx >= 0 ? values[goldAnswerIdx]?.trim().toUpperCase() : undefined;
+    const parsedGoldAnswer = goldAnswerRaw === "A" || goldAnswerRaw === "B" ? goldAnswerRaw : undefined;
+    const goldAnswer = isGold ? parsedGoldAnswer : undefined;
+
+    if (isGold && !goldAnswer) {
+      errors.push(`Row ${i + 1}: isGold is true but goldAnswer is missing or invalid (expected "A" or "B")`);
+      continue;
+    }
 
     rows.push({
       prompt,
@@ -103,6 +111,8 @@ export function parseCSV(text: string): { rows: TaskRow[]; errors: string[] } {
       responseB,
       responseTarget,
       category,
+      isGold,
+      goldAnswer,
     });
   }
 
