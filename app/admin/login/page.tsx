@@ -12,7 +12,11 @@ export default async function AdminLoginPage(props: LoginPageProps) {
   const session = await getAdminSession();
   if (session) redirect("/admin");
   const { error } = await props.searchParams;
-  const showError = error === "invalid";
+  const errorMessages: Record<string, string> = {
+    invalid: "Invalid email or password",
+    not_verified: "This account has not been verified yet. Please check your email for the verification link or contact your administrator.",
+  };
+  const errorMessage = error ? errorMessages[error] : null;
 
   return (
     <div className="flex min-h-dvh items-center justify-center bg-surface p-6">
@@ -34,12 +38,12 @@ export default async function AdminLoginPage(props: LoginPageProps) {
             Sign in with your operator credentials.
           </p>
         </div>
-        {showError ? (
+        {errorMessage ? (
           <div
             role="alert"
             className="mt-6 rounded-lg bg-error-container px-4 py-3 font-label text-sm font-semibold text-on-error-container"
           >
-            Invalid email or password.
+            { errorMessage }
           </div>
         ) : null}
         <form action="/api/admin/login" method="post" className="mt-6 space-y-4">
