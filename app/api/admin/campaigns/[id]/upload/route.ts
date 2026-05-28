@@ -11,7 +11,7 @@ type TaskRow = {
   responseTarget?: number;
   category?: string | null;
   isGold?: boolean;
-  goldAnswer?: string | null;
+  goldAnswer?: "A" | "B" | null;
 };
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
