@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
+import { auditLog } from "@/lib/audit";
 
 type ExportFormat = "json" | "csv" | "txt";
 type SplitValue = "train" | "test" | "validation" | "all";
@@ -84,6 +85,18 @@ export async function GET(req: NextRequest) {
   const filtered = splitParam === "all"
     ? records
     : records.filter((s) => assignSplit(s.id) === splitParam);
+  
+    auditLog({
+      adminUserId: session.sub,
+      action: "export.download",
+      targetType: "submission",
+      req,
+      metadata: {
+        format: format,
+        split: splitParam,
+        recordCount: filtered.length,
+      },
+    });
 
   const dateStr = new Date().toISOString().slice(0, 10);
 

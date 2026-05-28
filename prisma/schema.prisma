@@ -39,6 +39,7 @@ model AdminUser {
   verifiedAt                  DateTime?
 
   campaigns Campaign[]
+  auditLogs AdminAuditLog[]
 
   @@map("admin_users")
 }
@@ -106,4 +107,22 @@ model Submission {
   @@index([walletAddress])
   @@index([payoutStatus])
   @@map("submissions")
+}
+
+model AdminAuditLog {
+  id           String   @id @default(uuid())
+  adminUserId  String
+  action       String   // "campaign.create", "campaign.update", "campaign.delete", "customer.create", "customer.delete", "tasks.upload", "export.download"
+  targetType   String   // "campaign", "adminUser", "submission"
+  targetId     String?  // nullable for bulk actions like "tasks.upload"
+  metadata     Json?    // shape depends on action; capture diff for updates, count for bulk
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id])
+
+  @@index([adminUserId, createdAt])
+  @@index([action, createdAt])
+  @@map("admin_audit_log")
 }

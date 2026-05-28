@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 import { randomUUID } from "crypto";
+import { auditLog } from "@/lib/audit";
 
 type TaskRow = {
   prompt: string;
@@ -147,6 +148,20 @@ export async function POST(
   const allErrors: string[] = [...parseErrors];
 
   if (rows.length === 0 && parseErrors.length > 0) {
+
+    auditLog({
+      adminUserId: session.sub,
+      action: "tasks.upload",
+      targetType: "campaign",
+      targetId: campaign.id,
+      req,
+      metadata: {
+        rowCount: 0,
+        inserted: 0,
+        errors: allErrors,
+      }
+    })
+
     return NextResponse.json({
       inserted: 0,
       skipped: 0,
@@ -206,6 +221,19 @@ export async function POST(
   await prisma.campaign.update({
     where: { id: campaign.id },
     data: { csvFileName: file.name },
+  });
+
+  auditLog({
+    adminUserId: session.sub,
+    action: "tasks.upload",
+    targetType: "campaign",
+    targetId: campaign.id,
+    req,
+    metadata: {
+      rowCount: rows.length,
+      inserted: inserted,
+      errors: allErrors,
+    },
   });
 
   const totalChunks = Math.ceil(upsertArgs.length / CHUNK_SIZE);
