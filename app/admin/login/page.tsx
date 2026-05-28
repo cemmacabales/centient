@@ -41,7 +41,7 @@ export default async function AdminLoginPage(props: LoginPageProps) {
         {errorMessage ? (
           <div
             role="alert"
-            className="mt-6 rounded-lg bg-error-container px-4 py-3 font-label text-sm font-semibold text-on-error-container"
+            className="mt-6 rounded-lg bg-error-container px-4 py-3 font-label text-xs font-semibold text-on-error-container text-center"
           >
             { errorMessage }
           </div>
