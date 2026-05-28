@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
+import { auditLog } from "@/lib/audit";
 
 export async function GET() {
   const session = await getAdminSession();
@@ -63,6 +64,18 @@ export async function POST(req: NextRequest) {
       defaultResponseTarget: true,
       createdAt: true,
     },
+  });
+
+  auditLog({
+    adminUserId: session.sub,
+    action: "campaign.create",
+    targetType: "campaign",
+    targetId: campaign.id,
+    req,
+    metadata: {
+      name: campaign.name,
+      defaultResponseTarget: campaign.defaultResponseTarget,
+    }
   });
 
   return NextResponse.json(
