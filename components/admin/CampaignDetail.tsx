@@ -65,11 +65,9 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
       body: formData,
     });
 
-    if (res.ok) {
-      const result = await res.json();
-      setUploadResult(result);
-      fetchTasks();
-    }
+    const result = await res.json();
+    setUploadResult(result);
+    if (res.ok) fetchTasks();
     setUploading(false);
     if (fileRef.current) fileRef.current.value = "";
   }
