@@ -10,6 +10,7 @@ interface CampaignWithProgress {
   defaultResponseTarget: number;
   taskCount: number;
   totalResponses: number;
+  totalTarget: number;
   completionPct: number;
   createdAt: string;
 }
@@ -48,6 +49,7 @@ export default async function AdminCampaignsPage() {
       defaultResponseTarget: c.defaultResponseTarget,
       taskCount,
       totalResponses,
+      totalTarget,
       completionPct,
       createdAt: c.createdAt.toISOString(),
     };
@@ -60,14 +62,14 @@ export default async function AdminCampaignsPage() {
     overallCompletionPct: 0,
   };
 
-  const totalTarget = campaignsWithProgress.reduce(
-    (sum, c) => sum + c.taskCount * c.defaultResponseTarget,
+  const grandTotalTarget = campaignsWithProgress.reduce(
+    (sum, c) => sum + c.totalTarget,
     0
   );
-  if (totalTarget > 0) {
+  if (grandTotalTarget > 0) {
     aggregate.overallCompletionPct = Math.min(
       100,
-      Math.round((aggregate.totalResponses / totalTarget) * 100)
+      Math.round((aggregate.totalResponses / grandTotalTarget) * 100)
     );
   }
 

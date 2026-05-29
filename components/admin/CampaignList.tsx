@@ -48,15 +48,30 @@ export default function CampaignList({ initialCampaigns, aggregate }: CampaignLi
 
   async function handleExport(campaignId: string, format: string = "json") {
     setExporting(campaignId);
-    window.location.href = `/api/admin/campaigns/${campaignId}/export?format=${format}`;
-    setTimeout(() => setExporting(null), 1000);
+    try {
+      const res = await fetch(`/api/admin/campaigns/${campaignId}/export?format=${format}`);
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${campaignId}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      // silently ignore — user sees no spinner
+    } finally {
+      setExporting(null);
+    }
   }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="font-headline text-3xl font-extrabold tracking-tight text-on-surface">
-          Dashboard
+          Campaigns
         </h1>
         <button
           onClick={() => setShowNewModal(true)}
