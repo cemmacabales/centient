@@ -1064,6 +1064,30 @@ async function main() {
   } else {
     console.log("Admin user already exists — leaving untouched");
   }
+
+  const centientEmail = "centient@centient.work";
+  const existingCentient = await prisma.adminUser.findUnique({
+    where: { email: centientEmail },
+  });
+  if (!existingCentient) {
+    const password = process.env.INTERNAL_CUSTOMER_PASSWORD;
+    if (!password) {
+      console.warn("Skipping Centient customer seed — INTERNAL_CUSTOMER_PASSWORD not set");
+    } else {
+      await prisma.adminUser.create({
+        data: {
+          email: centientEmail,
+          passwordHash: await bcrypt.hash(password, 10),
+          role: "CUSTOMER",
+          companyName: "Centient",
+          isVerified: true,
+        },
+      });
+      console.log("Seeded Centient customer 'centient@centient.work'");
+    }
+  } else {
+    console.log("Centient customer already exists — leaving untouched");
+  }
 }
 
 main()
