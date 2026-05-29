@@ -7,6 +7,9 @@ const TABS_SUPER_ADMIN = [
   { href: "/admin/tasks", label: "Tasks" },
   { href: "/admin/wallets", label: "Wallets" },
   { href: "/admin/customers", label: "Customers" },
+  { href: "/admin/campaigns", label: "Campaigns" },
+  { href: "/admin/users", label: "Users" },
+  { href: "/admin/status-health", label: "Status-Health" },
 ];
 
 const TABS_CUSTOMER = [
