@@ -6,6 +6,8 @@ import { verifyDomainExists } from "@/lib/email-validation";
 import { sendVerificationEmail } from "@/lib/email";
 import { randomBytes } from "crypto";
 import { isValidEmail, isValidPassword } from "@/lib/validation";
+import { auditLog } from "@/lib/audit";
+
 export async function GET() {
   const session = await getAdminSession();
   if (!session) {
@@ -85,6 +87,19 @@ export async function POST(req: NextRequest) {
       isVerified: true,
     },
   });
+
+  auditLog({
+    adminUserId: session.sub,
+    action: "customer.create",
+    targetType: "adminUser",
+    targetId: customer.id,
+    req,
+    metadata: {
+      email: customer.email,
+      companyName: customer.companyName,
+    },
+  });
+  
   try{
     const result = await sendVerificationEmail(normalizedEmail, verificationToken, companyName);
     if (!result) {

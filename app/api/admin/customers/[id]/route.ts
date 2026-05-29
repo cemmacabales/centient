@@ -1,9 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
+import { auditLog } from "@/lib/audit";
 
 export async function DELETE(
-  _req: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getAdminSession();
@@ -25,6 +26,18 @@ export async function DELETE(
   }
 
   await prisma.adminUser.delete({ where: { id } });
+
+  auditLog({
+    adminUserId: session.sub,
+    action: "customer.delete",
+    targetType: "adminUser",
+    targetId: id,
+    req,
+    metadata: {
+      email: customer.email,
+      companyName: customer.companyName,
+    }
+  });
 
   return NextResponse.json({ ok: true });
 }
