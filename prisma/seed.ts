@@ -1,10 +1,92 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
+import { readFileSync } from "node:fs";
 import { PrismaClient } from "../app/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
 const prisma = new PrismaClient({ adapter });
+
+function parseCSVLine(line: string): string[] {
+  const values: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    const nextChar = line[i + 1];
+
+    if (char === '"' && inQuotes && nextChar === '"') {
+      current += '"';
+      i++;
+    } else if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === "," && !inQuotes) {
+      values.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  values.push(current);
+  return values;
+}
+
+async function seedCSV(path: string) {
+  const text = readFileSync(path, "utf-8");
+  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim().split("\n");
+  if (lines.length < 2) return;
+
+  const headers = parseCSVLine(lines[0]).map((h) => h.trim().toLowerCase());
+  const idIdx         = headers.indexOf("id");
+  const promptIdx     = headers.indexOf("prompt");
+  const responseAIdx  = headers.indexOf("responsea");
+  const responseBIdx  = headers.indexOf("responseb");
+  const categoryIdx   = headers.indexOf("category");
+  const isGoldIdx     = headers.indexOf("isgold");
+  const goldAnswerIdx = headers.indexOf("goldanswer");
+
+  if ([idIdx, promptIdx, responseAIdx, responseBIdx, categoryIdx, isGoldIdx, goldAnswerIdx].some((i) => i === -1)) {
+    console.warn(`Skipping ${path}: missing required columns`);
+    return;
+  }
+
+  let count = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+
+    const values = parseCSVLine(line);
+    const id        = (values[idIdx] ?? "").trim();
+    const prompt    = (values[promptIdx] ?? "").trim();
+    const responseA = (values[responseAIdx] ?? "").trim();
+    const responseB = (values[responseBIdx] ?? "").trim();
+    const category  = (values[categoryIdx] ?? "").trim();
+    const isGoldStr = (values[isGoldIdx] ?? "").trim().toLowerCase();
+    const goldAnswer = (values[goldAnswerIdx] ?? "").trim();
+
+    if (!id || !prompt || !responseA || !responseB) continue;
+
+    const isGold = isGoldStr === "true" || isGoldStr === "1" || isGoldStr === "yes";
+
+    await prisma.task.upsert({
+      where: { id },
+      update: {},
+      create: {
+        id,
+        prompt,
+        responseA,
+        responseB,
+        category,
+        isGold,
+        goldAnswer: goldAnswer || null,
+      },
+    });
+    count++;
+  }
+
+  console.log(`Seeded ${count} tasks from ${path}`);
+}
 
 type TaskSeed = {
   id: string;
@@ -957,6 +1039,9 @@ async function main() {
       },
     });
   }
+
+  await seedCSV("docs/campaigns/centient/question_bank.csv");
+  await seedCSV("docs/campaigns/centient/question_bank_fallback.csv");
 
   const total = await prisma.task.count();
   const gold = await prisma.task.count({ where: { isGold: true } });

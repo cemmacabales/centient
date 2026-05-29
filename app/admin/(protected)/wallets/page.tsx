@@ -1,10 +1,12 @@
 import WalletTable, { type WalletTableItem } from "@/components/admin/WalletTable";
 import { getWalletRows } from "@/lib/admin-data";
 import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { requireRoleForPage } from "@/lib/admin-auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminWalletsPage() {
+  await requireRoleForPage("SUPER_ADMIN");
   const rows = await getWalletRows();
   const serialized: WalletTableItem[] = rows.map((r) => ({
     walletAddress: r.walletAddress,
