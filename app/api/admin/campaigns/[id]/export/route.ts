@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getAdminSession, type AdminJWTPayload } from "@/lib/admin-auth";
-import { assertExportAllowed } from "@/lib/admin-auth";
+import { getAdminSession, assertExportAllowed, type AdminJWTPayload } from "@/lib/admin-auth";
 
 type ExportFormat = "json" | "csv" | "txt";
 type SplitValue = "train" | "test" | "validation" | "all";
@@ -96,6 +95,20 @@ export async function GET(
     orderBy: { createdAt: "asc" },
     take: limit,
   });
+
+  console.log("[export] campaignId:", id, "| role:", session.role, "| records found:", records.length);
+
+  if (req.nextUrl.searchParams.get("debug") === "1") {
+    return NextResponse.json({
+      campaignId: id,
+      role: session.role,
+      adminUserId: session.sub,
+      recordsFound: records.length,
+      tasksWithSubs: await prisma.task.count({ where: { campaignId: id } }),
+      totalSubs: await prisma.submission.count({ where: { isGoldCheck: false, task: { campaignId: id } } }),
+      totalSubsAny: await prisma.submission.count({ where: { task: { campaignId: id } } }),
+    });
+  }
 
   const filtered = splitParam === "all"
     ? records
