@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { GOLD_TASK_RATIO } from "@/lib/constants";
 
 export async function GET(req: NextRequest) {
   const wallet = req.nextUrl.searchParams.get("wallet")?.toLowerCase();
@@ -7,18 +8,44 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "invalid_wallet" }, { status: 400 });
   }
 
-  const useGold = Math.random() < 0.1;
-
   const done = await prisma.submission.findMany({
     where: { walletAddress: wallet },
     select: { taskId: true },
   });
   const doneIds = done.map((s) => s.taskId);
 
-  const task = await prisma.task.findFirst({
-    where: { isGold: useGold, id: { notIn: doneIds } },
-    orderBy: { createdAt: "asc" },
-  });
+  const useGold = Math.random() < GOLD_TASK_RATIO;
+
+  let task = null;
+
+  if (useGold) {
+    task = await prisma.task.findFirst({
+      where: {
+        isGold: true,
+        campaignId: null,
+        goldAnswer: { not: null },
+        id: { notIn: doneIds },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    if (!task) {
+      console.warn(`[task] gold pool exhausted for wallet ${wallet}, falling back to non-gold`);
+    }
+  }
+
+  if (!task) {
+    task = await prisma.task.findFirst({
+      where: {
+        OR: [
+          { isGold: false },
+          { isGold: true, campaignId: { not: null } },
+        ],
+        id: { notIn: doneIds },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+  }
 
   if (!task) {
     return NextResponse.json({ task: null, message: "No more tasks available" });
