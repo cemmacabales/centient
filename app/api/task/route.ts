@@ -36,7 +36,13 @@ export async function GET(req: NextRequest) {
 
   if (!task) {
     task = await prisma.task.findFirst({
-      where: { isGold: false, id: { notIn: doneIds } },
+      where: {
+        OR: [
+          { isGold: false },
+          { isGold: true, campaignId: { not: null } },
+        ],
+        id: { notIn: doneIds },
+      },
       orderBy: { createdAt: "asc" },
     });
   }
