@@ -45,6 +45,15 @@ export async function POST(
   }
 
   const text = await file.text();
+
+  const firstLine = text.split(/\r?\n/)[0].toLowerCase();
+  if (firstLine.includes("isgold") || firstLine.includes("goldanswer")) {
+    return NextResponse.json(
+      { error: "gold_columns_not_allowed" },
+      { status: 400 }
+    );
+  }
+
   const { rows, errors: parseErrors } = parseCSV(text);
 
   const allErrors: string[] = [...parseErrors];
@@ -85,8 +94,8 @@ export async function POST(
       responseB: row.responseB,
       responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
       category: row.category ?? null,
-      isGold: row.isGold ?? false,
-      goldAnswer: row.goldAnswer ?? null,
+      isGold: false,
+      goldAnswer: null,
     },
     create: {
       id: randomUUID(),
@@ -96,8 +105,8 @@ export async function POST(
       responseB: row.responseB,
       responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
       category: row.category ?? null,
-      isGold: row.isGold ?? false,
-      goldAnswer: row.goldAnswer ?? null,
+      isGold: false,
+      goldAnswer: null,
     },
   }));
 
