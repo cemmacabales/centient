@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
-import { randomUUID } from "crypto";
 import { auditLog } from "@/lib/audit";
 import { parseCSV } from "@/lib/csv-parser";
 
@@ -23,6 +22,7 @@ export async function POST(
 
   const campaign = await prisma.campaign.findFirst({
     where: { id, adminUserId: session.sub },
+    select: { id: true },
   });
 
   if (!campaign) {
@@ -56,9 +56,7 @@ export async function POST(
 
   const { rows, errors: parseErrors } = parseCSV(text);
 
-  const allErrors: string[] = [...parseErrors];
-
-  if (rows.length === 0 && parseErrors.length > 0) {
+  if (rows.length === 0) {
     auditLog({
       adminUserId: session.sub,
       action: "tasks.upload",
@@ -68,106 +66,59 @@ export async function POST(
       metadata: {
         rowCount: 0,
         inserted: 0,
-        errors: allErrors,
+        errors: parseErrors,
       },
     });
 
     return NextResponse.json(
       {
         inserted: 0,
-        skipped: 0,
-        errors: allErrors.slice(0, 10),
+        skipped: parseErrors.length,
+        errors: parseErrors.slice(0, 10),
       },
       { status: 200 }
     );
   }
 
-  const upsertArgs = rows.map((row) => ({
-    where: {
-      campaignId_prompt: {
-        campaignId: campaign.id,
-        prompt: row.prompt,
-      },
-    },
-    update: {
-      responseA: row.responseA,
-      responseB: row.responseB,
-      responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
-      category: row.category ?? null,
-      isGold: false,
-      goldAnswer: null,
-    },
-    create: {
-      id: randomUUID(),
+  const job = await prisma.uploadJob.create({
+    data: {
       campaignId: campaign.id,
-      prompt: row.prompt,
-      responseA: row.responseA,
-      responseB: row.responseB,
-      responseTarget: row.responseTarget ?? campaign.defaultResponseTarget,
-      category: row.category ?? null,
-      isGold: false,
-      goldAnswer: null,
+      adminUserId: session.sub,
+      fileName: file.name,
+      fileSize: file.size,
+      status: "queued",
+      totalRows: rows.length,
+      chunksTotal: Math.ceil(rows.length / 500),
+      rawText: text,
+      errorSamples: parseErrors.slice(0, 10),
+      errorRows: parseErrors.length,
+      skippedRows: parseErrors.length,
     },
-  }));
-
-  // Chunking Implementation (#130)
-  const CHUNK_SIZE = 500;
-  let inserted = 0;
-  let chunksCommitted = 0;
-  let processingFailed = false;
-
-  try {
-    for (let i = 0; i < upsertArgs.length; i += CHUNK_SIZE) {
-      const chunk = upsertArgs.slice(i, i + CHUNK_SIZE);
-
-      // Interactive callback syntax handles custom timeouts safely
-      await prisma.$transaction(
-        async (tx) => {
-          await Promise.all(chunk.map((args) => tx.task.upsert(args)));
-        },
-        { timeout: 30_000 }
-      );
-
-      chunksCommitted++;
-      inserted += chunk.length;
-    }
-  } catch (err: any) {
-    processingFailed = true;
-    allErrors.push(`Transaction failed on chunk ${chunksCommitted + 1}: ${err.message || "Rolling back current batch"}`);
-  }
-
-  // Record tracked uploaded file parameters 
-  await prisma.campaign.update({
-    where: { id: campaign.id },
-    data: { csvFileName: file.name },
+    select: { id: true, status: true, totalRows: true, createdAt: true },
   });
 
   auditLog({
     adminUserId: session.sub,
-    action: "tasks.upload",
+    action: "tasks.upload.queued",
     targetType: "campaign",
     targetId: campaign.id,
     req,
     metadata: {
-      rowCount: rows.length,
-      inserted: inserted,
-      errors: allErrors,
+      jobId: job.id,
+      fileName: file.name,
+      fileSize: file.size,
+      totalRows: rows.length,
+      parseErrors: parseErrors.length,
     },
   });
 
-  const totalChunks = Math.ceil(upsertArgs.length / CHUNK_SIZE);
-
   return NextResponse.json(
     {
-      inserted,
-      skipped: rows.length - inserted + parseErrors.length,
-      errors: allErrors.slice(0, 10),
-      meta: {
-        chunks_committed: chunksCommitted,
-        chunks_failed: processingFailed ? totalChunks - chunksCommitted : 0,
-        last_error: processingFailed ? allErrors[allErrors.length - 1] : null,
-      },
+      jobId: job.id,
+      status: job.status,
+      totalRows: job.totalRows,
+      createdAt: job.createdAt,
     },
-    { status: processingFailed ? 422 : 200 }
+    { status: 202 }
   );
 }
