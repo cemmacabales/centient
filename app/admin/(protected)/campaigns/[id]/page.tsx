@@ -20,11 +20,12 @@ export default async function AdminCampaignDetailPage({
     where,
     select: {
       id: true,
+      adminUserId: true,
       name: true,
       defaultResponseTarget: true,
       pausedAt: true,
       createdAt: true,
-      adminUser: { select: { email: true, companyName: true } },
+      adminUser: { select: { companyName: true } },
       _count: { select: { tasks: true } },
     },
   });
@@ -39,8 +40,13 @@ export default async function AdminCampaignDetailPage({
     );
   }
 
-  const isOwner = campaign.adminUser.email === session.email;
+  // Compare the stable adminUserId from the JWT (`session.sub`) rather than the
+  // mutable email — emails can change post-issue, and case/whitespace handling
+  // diverges between the JWT and the DB. campaign.adminUserId is the source of truth.
+  const isOwner = campaign.adminUserId === session.sub;
   const isReadOnly = session.role === "SUPER_ADMIN" && !isOwner;
+  // Operator (SUPER_ADMIN) can manage any campaign; the customer can manage their own.
+  const canManage = isOwner || session.role === "SUPER_ADMIN";
 
   return (
     <CampaignDetail
@@ -48,8 +54,9 @@ export default async function AdminCampaignDetailPage({
       campaignName={campaign.name}
       defaultResponseTarget={campaign.defaultResponseTarget}
       pausedAt={campaign.pausedAt?.toISOString() ?? null}
-      ownerEmail={campaign.adminUser.companyName ?? campaign.adminUser.email}
+      ownerEmail={campaign.adminUser.companyName ?? null}
       isReadOnly={isReadOnly}
+      canManage={canManage}
     />
   );
 }

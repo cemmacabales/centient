@@ -37,7 +37,7 @@ export default async function AdminUsersPage() {
           Users
         </h1>
         <p className="mt-2 font-body text-sm text-on-surface-variant">
-          {rows.length} wallet{rows.length === 1 ? "" : "s"} have submitted at least one task.
+          {rows.length} wallet{rows.length === 1 ? "" : "s"} on record.
           Demographics, gold accuracy, and ban state per wallet. Click a row for the full profile
           (submissions + payout history).
         </p>

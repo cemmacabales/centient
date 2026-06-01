@@ -26,9 +26,15 @@ interface CampaignListProps {
   initialCampaigns: Campaign[];
   aggregate: AggregateStats;
   showOwner?: boolean;
+  hideNewButton?: boolean;
 }
 
-export default function CampaignList({ initialCampaigns, aggregate, showOwner = false }: CampaignListProps) {
+export default function CampaignList({
+  initialCampaigns,
+  aggregate,
+  showOwner = false,
+  hideNewButton = false,
+}: CampaignListProps) {
   const [campaigns, setCampaigns] = useState(initialCampaigns);
   const [showNewModal, setShowNewModal] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -76,13 +82,15 @@ export default function CampaignList({ initialCampaigns, aggregate, showOwner = 
         <h1 className="font-headline text-3xl font-extrabold tracking-tight text-on-surface">
           Campaigns
         </h1>
-        <button
-          onClick={() => setShowNewModal(true)}
-          className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90 active:scale-[0.97]"
-        >
-          <span className="material-symbols-outlined text-[18px]">add</span>
-          New Campaign
-        </button>
+        {!hideNewButton && (
+          <button
+            onClick={() => setShowNewModal(true)}
+            className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90 active:scale-[0.97]"
+          >
+            <span className="material-symbols-outlined text-[18px]">add</span>
+            New Campaign
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -101,14 +109,18 @@ export default function CampaignList({ initialCampaigns, aggregate, showOwner = 
             No campaigns yet
           </h3>
           <p className="mt-1 font-body text-sm text-on-surface-variant">
-            Create one to start uploading tasks.
+            {hideNewButton
+              ? "This customer hasn't created any campaigns yet."
+              : "Create one to start uploading tasks."}
           </p>
-          <button
-            onClick={() => setShowNewModal(true)}
-            className="mt-4 rounded-full bg-primary px-6 py-2.5 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90"
-          >
-            Create Campaign
-          </button>
+          {!hideNewButton && (
+            <button
+              onClick={() => setShowNewModal(true)}
+              className="mt-4 rounded-full bg-primary px-6 py-2.5 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90"
+            >
+              Create Campaign
+            </button>
+          )}
         </div>
       ) : (
         <div className="overflow-hidden rounded-3xl border border-outline-variant/40 bg-surface-container-lowest shadow-[0_4px_24px_rgba(25,28,30,0.04)]">

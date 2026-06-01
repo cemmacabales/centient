@@ -103,13 +103,20 @@ export async function PATCH(
       return NextResponse.json({ error: "invalid_paused" }, { status: 400 });
     }
     const nextPausedAt = paused ? (campaign.pausedAt ?? new Date()) : null;
-    if (nextPausedAt?.getTime() !== (campaign.pausedAt?.getTime() ?? null)) {
+    const currentMs = campaign.pausedAt ? campaign.pausedAt.getTime() : null;
+    const nextMs = nextPausedAt ? nextPausedAt.getTime() : null;
+    if (nextMs !== currentMs) {
       updateData.pausedAt = nextPausedAt;
     }
   }
 
-  if (Object.keys(updateData).length === 0) {
+  const hasAnyField =
+    name !== undefined || defaultResponseTarget !== undefined || paused !== undefined;
+  if (!hasAnyField) {
     return NextResponse.json({ error: "no_fields_to_update" }, { status: 400 });
+  }
+  if (Object.keys(updateData).length === 0) {
+    return NextResponse.json(campaign, { status: 200 });
   }
 
   const updatedCampaign = await prisma.campaign.update({
