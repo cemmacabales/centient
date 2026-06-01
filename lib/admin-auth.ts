@@ -86,3 +86,13 @@ export async function requireRoleForPage(role: AdminRole): Promise<AdminJWTPaylo
   }
   return session;
 }
+
+// Authorization seam for export endpoints — placeholder for payment/billing gate.
+// Currently a no-op: authorization is enforced by the WHERE clause in the DB query.
+// The campaignId parameter is reserved for future per-campaign entitlement checks
+// (e.g., verifying the customer has export credits for a specific campaign).
+export function assertExportAllowed(session: AdminJWTPayload, campaignId: string): void {
+  // Authorization handled at DB query level — no IDOR risk here.
+  // TODO: add async billing/entitlement check before allowing export:
+  // e.g.: if (!await hasExportEntitlement(session.sub, campaignId)) throw new Error("export_not_allowed");
+}

@@ -25,6 +25,10 @@ describe("parseGoldRatio", () => {
     assert.throws(() => parseGoldRatio("1.5"), /GOLD_TASK_RATIO must be between 0 and 1/);
   });
 
+  it("returns default 0.1 for empty string", () => {
+    assert.strictEqual(parseGoldRatio(""), 0.1);
+  });
+
   it("throws for non-numeric strings", () => {
     assert.throws(() => parseGoldRatio("abc"), /GOLD_TASK_RATIO must be between 0 and 1/);
   });
