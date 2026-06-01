@@ -269,3 +269,33 @@ Single clarification thread, not a cluster. Decide before coding.
   - No integration test harness yet (#102). The new pure helpers have unit coverage; the routes do not.
 - **Docs updated:** `docs/features.md`, `ROADMAP.md`.
 -->
+
+<!--
+## Session — Issue #156 follow-up: customer drill-down + campaign rename/delete
+
+**Goal:** close the remaining gaps from the original #156 review: a per-customer drill-down on `/admin/customers`, plus operator-side rename and delete on `/admin/campaigns/[id]`. Wallets page stays as a legacy view.
+
+**What landed:**
+- `app/admin/(protected)/customers/[id]/page.tsx` — new SUPER_ADMIN page listing a customer's campaigns (reuses `CampaignList` with the "New Campaign" button hidden since creating campaigns for a specific customer isn't in scope for #156). Header shows email, customer-since date, verified/pending chip, and a `Delete customer` button.
+- `components/admin/DeleteCustomerButton.tsx` — confirmation modal that calls `DELETE /api/admin/customers/[id]`, redirects to `/admin/customers` on success.
+- `components/admin/CustomerTable.tsx` — wraps the company + email cells in a `Link` to `/admin/customers/[id]` so the drill-down is one click away.
+- `components/admin/CampaignDetail.tsx`:
+  - New `canManage` prop. Operator (SUPER_ADMIN) can manage any campaign; the customer can manage their own. The existing `isReadOnly` flag stays for the CSV upload (operator shouldn't re-upload tasks on a customer's behalf).
+  - Click-to-rename pencil next to the campaign name. Enter saves, Esc cancels, PATCH `{ name }` to the existing endpoint; optimistic update rolls back on error.
+  - "Delete" button in the actions row with a confirmation modal. Calls `DELETE /api/admin/campaigns/[id]`, redirects to `/admin/campaigns` on success. Surfaces the backend's `409 has_submissions` as an inline error suggesting "pause instead".
+- `app/admin/(protected)/campaigns/[id]/page.tsx` — passes the new `canManage` prop.
+- `components/admin/CampaignList.tsx` — `hideNewButton` prop so the customer detail page can render the same list without the "New Campaign" button.
+- `app/admin/(protected)/wallets/page.tsx` — kept as a legacy view per the user direction; copy now points operators to the `/admin/users` tab.
+- `docs/features.md` — added the follow-up entry.
+- `ROADMAP.md` — this session log.
+
+**Decisions made:**
+- Operator-side campaign rename/delete and the customer-side ones share the same `canManage` gate (vs. a separate `isOperator` flag) so the page header is one set of buttons regardless of who is acting.
+- New-campaign creation is intentionally not wired to the customer detail page. The existing `POST /api/admin/campaigns` always attributes the new campaign to the caller (`session.sub`), so creating a campaign "on behalf of" a customer needs an explicit `adminUserId` field and a server-side guard that only SUPER_ADMIN can pass it. Out of scope for this follow-up; called out in the issue body.
+- No new test cases. The new flows are HTTP-driven; the existing 8-test pure-helper suite doesn't cover them, and the project still has no integration test harness (#102). The pure helpers (`evaluateBanRule`, `isStuckPending`) and the existing PATCH/DELETE endpoints are unchanged.
+
+**Open follow-ups:**
+- Add a `adminUserId` body field to `POST /api/admin/campaigns` (SUPER_ADMIN only) so the operator can create a campaign attributed to a specific customer from the drill-down page.
+- The legacy `/admin/wallets` page can probably be removed once operators have used the `/admin/users` tab for a release cycle.
+-->
+-->
