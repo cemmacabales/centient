@@ -40,7 +40,7 @@ export const REWARD_TOKEN_DECIMALS = Number(process.env.NEXT_PUBLIC_REWARD_TOKEN
 export const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
 export function parseGoldRatio(raw: string | undefined): number {
-  const value = Number(raw ?? "0.1");
+  const value = Number(raw?.trim() || "0.1");
   if (value < 0 || value > 1 || Number.isNaN(value)) {
     throw new Error(`GOLD_TASK_RATIO must be between 0 and 1, got "${raw}"`);
   }
