@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import ExportModal from "@/components/admin/ExportModal";
 
 interface TaskProgress {
   taskId: string;
@@ -267,6 +268,8 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
           <span className="material-symbols-outlined text-[18px]">upload_file</span>
           {uploading ? "Uploading..." : "Upload CSV"}
         </label>
+
+        <ExportModal campaignId={campaignId} />
       </div>
 
       {uploadResult && (
