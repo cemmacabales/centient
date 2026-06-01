@@ -13,13 +13,18 @@ export default async function AdminCampaignDetailPage({
 
   const { id } = await params;
 
+  // SUPER_ADMIN can view any campaign; CUSTOMER only their own.
+  const where = session.role === "SUPER_ADMIN" ? { id } : { id, adminUserId: session.sub };
+
   const campaign = await prisma.campaign.findFirst({
-    where: { id, adminUserId: session.sub },
+    where,
     select: {
       id: true,
       name: true,
       defaultResponseTarget: true,
+      pausedAt: true,
       createdAt: true,
+      adminUser: { select: { email: true, companyName: true } },
       _count: { select: { tasks: true } },
     },
   });
@@ -34,11 +39,17 @@ export default async function AdminCampaignDetailPage({
     );
   }
 
+  const isOwner = campaign.adminUser.email === session.email;
+  const isReadOnly = session.role === "SUPER_ADMIN" && !isOwner;
+
   return (
     <CampaignDetail
       campaignId={id}
       campaignName={campaign.name}
       defaultResponseTarget={campaign.defaultResponseTarget}
+      pausedAt={campaign.pausedAt?.toISOString() ?? null}
+      ownerEmail={campaign.adminUser.companyName ?? campaign.adminUser.email}
+      isReadOnly={isReadOnly}
     />
   );
 }

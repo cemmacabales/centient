@@ -11,6 +11,8 @@ interface Campaign {
   totalResponses: number;
   completionPct: number;
   createdAt: string;
+  pausedAt: string | null;
+  ownerEmail: string | null;
 }
 
 interface AggregateStats {
@@ -23,9 +25,10 @@ interface AggregateStats {
 interface CampaignListProps {
   initialCampaigns: Campaign[];
   aggregate: AggregateStats;
+  showOwner?: boolean;
 }
 
-export default function CampaignList({ initialCampaigns, aggregate }: CampaignListProps) {
+export default function CampaignList({ initialCampaigns, aggregate, showOwner = false }: CampaignListProps) {
   const [campaigns, setCampaigns] = useState(initialCampaigns);
   const [showNewModal, setShowNewModal] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -115,6 +118,11 @@ export default function CampaignList({ initialCampaigns, aggregate }: CampaignLi
                 <th className="px-6 py-4 text-left font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
                   Campaign
                 </th>
+                {showOwner && (
+                  <th className="px-6 py-4 text-left font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
+                    Owner
+                  </th>
+                )}
                 <th className="px-6 py-4 text-center font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
                   Tasks
                 </th>
@@ -123,6 +131,9 @@ export default function CampaignList({ initialCampaigns, aggregate }: CampaignLi
                 </th>
                 <th className="px-6 py-4 text-center font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
                   Completion
+                </th>
+                <th className="px-6 py-4 text-center font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
+                  Status
                 </th>
                 <th className="px-6 py-4 text-center font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
                   Created
@@ -139,8 +150,24 @@ export default function CampaignList({ initialCampaigns, aggregate }: CampaignLi
                   className="border-b border-outline-variant/20 last:border-0 transition-colors hover:bg-surface-container-low/40"
                 >
                   <td className="px-6 py-4">
-                    <div className="font-body text-sm font-semibold text-on-surface">{c.name}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-body text-sm font-semibold text-on-surface">{c.name}</span>
+                      {c.pausedAt && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2 py-0.5 font-label text-[10px] font-bold uppercase tracking-wider text-yellow-800"
+                          title={`Paused since ${new Date(c.pausedAt).toLocaleDateString()}`}
+                        >
+                          <span className="material-symbols-outlined text-[12px]">pause</span>
+                          paused
+                        </span>
+                      )}
+                    </div>
                   </td>
+                  {showOwner && (
+                    <td className="px-6 py-4 font-body text-xs text-on-surface-variant">
+                      {c.ownerEmail ?? "—"}
+                    </td>
+                  )}
                   <td className="px-6 py-4 text-center font-body text-sm text-on-surface-variant">
                     {c.taskCount}
                   </td>
@@ -159,6 +186,17 @@ export default function CampaignList({ initialCampaigns, aggregate }: CampaignLi
                     >
                       {c.completionPct}%
                     </span>
+                  </td>
+                  <td className="px-6 py-4 text-center">
+                    {c.pausedAt ? (
+                      <span className="inline-flex rounded-full bg-yellow-100 px-2.5 py-0.5 font-label text-[10px] font-bold uppercase tracking-wider text-yellow-800">
+                        paused
+                      </span>
+                    ) : (
+                      <span className="inline-flex rounded-full bg-secondary-container px-2.5 py-0.5 font-label text-[10px] font-bold uppercase tracking-wider text-on-secondary-container">
+                        active
+                      </span>
+                    )}
                   </td>
                   <td className="px-6 py-4 text-center font-body text-sm text-on-surface-variant">
                     {new Date(c.createdAt).toLocaleDateString()}

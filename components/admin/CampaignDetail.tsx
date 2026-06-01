@@ -22,11 +22,21 @@ interface CampaignDetailProps {
   campaignId: string;
   campaignName: string;
   defaultResponseTarget: number;
+  pausedAt: string | null;
+  ownerEmail: string | null;
+  isReadOnly: boolean;
 }
 
 type DeleteConfirm = { taskId: string } | null;
 
-export default function CampaignDetail({ campaignId, campaignName, defaultResponseTarget }: CampaignDetailProps) {
+export default function CampaignDetail({
+  campaignId,
+  campaignName,
+  defaultResponseTarget,
+  pausedAt: initialPausedAt,
+  ownerEmail,
+  isReadOnly,
+}: CampaignDetailProps) {
   const [tasks, setTasks] = useState<TaskProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -35,6 +45,9 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
   const [addingNew, setAddingNew] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirm>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pausedAt, setPausedAt] = useState<string | null>(initialPausedAt);
+  const [pausing, setPausing] = useState(false);
+  const [pauseError, setPauseError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -83,6 +96,28 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
       a.download = "campaign_template.csv";
       a.click();
       window.URL.revokeObjectURL(url);
+    }
+  }
+
+  async function handleTogglePause() {
+    setPausing(true);
+    setPauseError(null);
+    try {
+      const res = await fetch(`/api/admin/campaigns/${campaignId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ paused: !pausedAt }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPauseError(body.error ?? "Failed to update pause state");
+      } else {
+        setPausedAt(body.pausedAt ?? null);
+      }
+    } catch {
+      setPauseError("Network error");
+    } finally {
+      setPausing(false);
     }
   }
 
@@ -239,9 +274,21 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
         <span className="font-body text-sm text-on-surface-variant">
           Target: {defaultResponseTarget} responses per task
         </span>
+        {pausedAt && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-3 py-1 font-label text-xs font-bold text-yellow-800">
+            <span className="material-symbols-outlined text-[14px]">pause</span>
+            paused since {new Date(pausedAt).toLocaleDateString("en-US")}
+          </span>
+        )}
       </div>
 
-      <div className="flex items-center gap-3">
+      {ownerEmail && (
+        <p className="font-body text-xs text-on-surface-variant">
+          Owner: <span className="font-mono">{ownerEmail}</span>
+        </p>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
         <button
           onClick={handleDownloadTemplate}
           className="flex items-center gap-2 rounded-xl border border-outline-variant bg-surface-container-low px-4 py-2 font-label text-sm font-semibold text-on-surface transition-colors hover:bg-surface-container-high"
@@ -250,24 +297,47 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
           Download Template
         </button>
 
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".csv"
-          onChange={handleUpload}
-          disabled={uploading}
-          className="hidden"
-          id="csv-upload"
-        />
-        <label
-          htmlFor="csv-upload"
-          className={`flex cursor-pointer items-center gap-2 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90 ${
-            uploading ? "opacity-50" : ""
-          }`}
+        {!isReadOnly && (
+          <>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv"
+              onChange={handleUpload}
+              disabled={uploading}
+              className="hidden"
+              id="csv-upload"
+            />
+            <label
+              htmlFor="csv-upload"
+              className={`flex cursor-pointer items-center gap-2 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90 ${
+                uploading ? "opacity-50" : ""
+              }`}
+            >
+              <span className="material-symbols-outlined text-[18px]">upload_file</span>
+              {uploading ? "Uploading..." : "Upload CSV"}
+            </label>
+          </>
+        )}
+
+        <button
+          type="button"
+          onClick={handleTogglePause}
+          disabled={pausing}
+          className={`flex items-center gap-2 rounded-xl border px-4 py-2 font-label text-sm font-semibold transition-colors ${
+            pausedAt
+              ? "border-primary bg-primary-container text-on-primary-container hover:opacity-90"
+              : "border-outline-variant bg-surface-container-low text-on-surface hover:bg-surface-container-high"
+          } disabled:opacity-50`}
         >
-          <span className="material-symbols-outlined text-[18px]">upload_file</span>
-          {uploading ? "Uploading..." : "Upload CSV"}
-        </label>
+          <span className="material-symbols-outlined text-[18px]">
+            {pausedAt ? "play_arrow" : "pause"}
+          </span>
+          {pausedAt ? "Resume" : "Pause"}
+        </button>
+        {pauseError && (
+          <span className="font-label text-xs font-semibold text-error">{pauseError}</span>
+        )}
 
         <ExportModal campaignId={campaignId} />
       </div>
