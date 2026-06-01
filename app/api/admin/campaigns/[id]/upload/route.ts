@@ -21,8 +21,11 @@ export async function POST(
 
   const { id } = await params;
 
+  // SUPER_ADMIN can upload to any campaign; CUSTOMER only their own.
+  const where = session.role === "SUPER_ADMIN" ? { id } : { id, adminUserId: session.sub };
+
   const campaign = await prisma.campaign.findFirst({
-    where: { id, adminUserId: session.sub },
+    where,
   });
 
   if (!campaign) {
