@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import ExportModal from "@/components/admin/ExportModal";
@@ -32,6 +32,31 @@ interface CampaignDetailProps {
 type DeleteConfirm = { taskId: string } | null;
 type CampaignDeleteConfirm = boolean;
 
+type UploadJobStatus = "queued" | "processing" | "done" | "failed" | "cancelled";
+
+interface UploadJob {
+  id: string;
+  campaignId: string;
+  fileName: string;
+  fileSize: number;
+  status: UploadJobStatus;
+  totalRows: number;
+  processedRows: number;
+  upsertedRows: number;
+  skippedRows: number;
+  errorRows: number;
+  chunksCommitted: number;
+  chunksTotal: number;
+  errorSamples: string[] | null;
+  lastError: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const POLL_INTERVAL_MS = 1500;
+
 export default function CampaignDetail({
   campaignId,
   campaignName: initialCampaignName,
@@ -45,7 +70,7 @@ export default function CampaignDetail({
   const [tasks, setTasks] = useState<TaskProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState<{ inserted: number; skipped: number; errors: string[] } | null>(null);
+  const [liveJob, setLiveJob] = useState<UploadJob | null>(null);
   const [editing, setEditing] = useState<EditingRow | null>(null);
   const [addingNew, setAddingNew] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirm>(null);
@@ -62,12 +87,9 @@ export default function CampaignDetail({
   const [renamingLoading, setRenamingLoading] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    fetchTasks();
-  }, [campaignId]);
-
-  async function fetchTasks() {
+  const fetchTasks = useCallback(async () => {
     setLoading(true);
     const res = await fetch(`/api/admin/campaigns/${campaignId}/tasks`);
     if (res.ok) {
@@ -75,6 +97,47 @@ export default function CampaignDetail({
       setTasks(data);
     }
     setLoading(false);
+  }, [campaignId]);
+
+  useEffect(() => {
+    fetchTasks();
+  }, [campaignId, fetchTasks]);
+
+  useEffect(() => {
+    if (!liveJob) return;
+    const terminal = liveJob.status === "done" || liveJob.status === "failed" || liveJob.status === "cancelled";
+    if (terminal) {
+      if (liveJob.status === "done") fetchTasks();
+      return;
+    }
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/admin/campaigns/${campaignId}/upload/${liveJob.id}`);
+        if (!res.ok) {
+          stopPolling();
+          return;
+        }
+        const next = (await res.json()) as UploadJob;
+        setLiveJob(next);
+        const isTerminal = next.status === "done" || next.status === "failed" || next.status === "cancelled";
+        if (isTerminal) {
+          stopPolling();
+          if (next.status === "done") fetchTasks();
+        }
+      } catch {
+        stopPolling();
+      }
+    }, POLL_INTERVAL_MS);
+
+    return () => stopPolling();
+  }, [liveJob?.id, liveJob?.status, fetchTasks]);
+
+  function stopPolling() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
   }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -82,21 +145,97 @@ export default function CampaignDetail({
     if (!file) return;
 
     setUploading(true);
-    setUploadResult(null);
+    setError(null);
+    setLiveJob(null);
 
     const formData = new FormData();
     formData.append("file", file);
 
-    const res = await fetch(`/api/admin/campaigns/${campaignId}/upload`, {
-      method: "POST",
-      body: formData,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`/api/admin/campaigns/${campaignId}/upload`, {
+        method: "POST",
+        body: formData,
+      });
+    } catch {
+      setError("Upload failed — could not reach server");
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
 
-    const result = await res.json();
-    setUploadResult(result);
-    if (res.ok) fetchTasks();
+    if (res.status === 202) {
+      const accepted = await res.json();
+      setLiveJob({
+        ...accepted,
+        processedRows: 0,
+        upsertedRows: 0,
+        skippedRows: 0,
+        errorRows: 0,
+        chunksCommitted: 0,
+        chunksTotal: Math.ceil(accepted.totalRows / 500),
+        errorSamples: null,
+        lastError: null,
+        startedAt: null,
+        completedAt: null,
+        updatedAt: accepted.createdAt,
+      } as UploadJob);
+    } else if (res.ok) {
+      const result = await res.json();
+      setError(
+        result.errors?.length
+          ? `Upload parsed 0 rows. ${result.skipped} row(s) skipped.`
+          : "Upload contained no valid rows."
+      );
+      fetchTasks();
+    } else if (res.status === 413) {
+      setError("File is too large (max 5 MB).");
+    } else if (res.status === 400) {
+      const body = await res.json().catch(() => ({}));
+      const code = body?.error;
+      const message =
+        code === "gold_columns_not_allowed"
+          ? "CSV contains gold columns. Strip isGold/goldAnswer before uploading."
+          : code === "invalid_file_type"
+          ? "Only .csv files are supported."
+          : code === "missing_file"
+          ? "Choose a CSV file to upload."
+          : "Upload request was rejected by the server.";
+      setError(message);
+    } else {
+      setError("Upload failed. Try again or contact support.");
+    }
+
     setUploading(false);
     if (fileRef.current) fileRef.current.value = "";
+  }
+
+  async function handleRetry() {
+    if (!liveJob) return;
+    const res = await fetch(`/api/admin/campaigns/${campaignId}/upload/${liveJob.id}/retry`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      setError("Could not retry upload");
+      return;
+    }
+    setLiveJob({
+      ...liveJob,
+      status: "queued",
+      processedRows: 0,
+      upsertedRows: 0,
+      skippedRows: 0,
+      errorRows: 0,
+      chunksCommitted: 0,
+      lastError: null,
+      completedAt: null,
+      startedAt: null,
+    });
+  }
+
+  function handleDismissUpload() {
+    stopPolling();
+    setLiveJob(null);
   }
 
   async function handleDownloadTemplate() {
@@ -505,30 +644,7 @@ export default function CampaignDetail({
         <ExportModal campaignId={campaignId} />
       </div>
 
-      {uploadResult && (
-        <div className="rounded-2xl border border-outline-variant/40 bg-surface-container-lowest p-4">
-          <div className="flex items-center gap-4">
-            <span className="material-symbols-outlined text-primary text-[24px]">check_circle</span>
-            <div>
-              <div className="font-label text-sm font-bold text-on-surface">
-                Import complete
-              </div>
-              <div className="font-body text-xs text-on-surface-variant">
-                Inserted: {uploadResult.inserted}, Skipped: {uploadResult.skipped}
-              </div>
-            </div>
-          </div>
-          {uploadResult.errors.length > 0 && (
-            <div className="mt-3 space-y-1">
-              {uploadResult.errors.slice(0, 10).map((err, i) => (
-                <div key={i} className="rounded-lg bg-error-container px-3 py-2 font-body text-xs text-on-error-container">
-                  {err}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {liveJob && <UploadStatusCard job={liveJob} onRetry={handleRetry} onDismiss={handleDismissUpload} />}
 
       <section className="rounded-3xl border border-outline-variant/40 bg-surface-container-lowest shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
         <div className="flex items-center justify-between border-b border-outline-variant/30 px-6 py-4">
@@ -819,6 +935,111 @@ export default function CampaignDetail({
             </div>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+function UploadStatusCard({
+  job,
+  onRetry,
+  onDismiss,
+}: {
+  job: UploadJob;
+  onRetry: () => void;
+  onDismiss: () => void;
+}) {
+  const pct = job.totalRows > 0 ? Math.min(100, Math.round((job.processedRows / job.totalRows) * 100)) : 0;
+  const isTerminal = job.status === "done" || job.status === "failed" || job.status === "cancelled";
+
+  const icon =
+    job.status === "done" ? "check_circle" : job.status === "failed" ? "error" : "progress_activity";
+  const iconColor =
+    job.status === "done"
+      ? "text-primary"
+      : job.status === "failed"
+      ? "text-on-error-container"
+      : "text-on-surface-variant";
+
+  const title =
+    job.status === "done"
+      ? "Import complete"
+      : job.status === "failed"
+      ? "Import failed"
+      : job.status === "cancelled"
+      ? "Import cancelled"
+      : job.status === "queued"
+      ? "Queued for processing"
+      : "Processing CSV";
+
+  return (
+    <div
+      className={`rounded-2xl border p-4 ${
+        job.status === "failed"
+          ? "border-error/40 bg-error-container/30"
+          : "border-outline-variant/40 bg-surface-container-lowest"
+      }`}
+    >
+      <div className="flex items-center gap-4">
+        <span className={`material-symbols-outlined text-[24px] ${iconColor}`}>{icon}</span>
+        <div className="flex-1">
+          <div className="font-label text-sm font-bold text-on-surface">{title}</div>
+          <div className="font-body text-xs text-on-surface-variant">
+            {job.fileName} ·{" "}
+            {isTerminal
+              ? `${job.upsertedRows.toLocaleString()} upserted · ${job.skippedRows.toLocaleString()} skipped · ${job.errorRows.toLocaleString()} errors`
+              : `${job.processedRows.toLocaleString()} / ${job.totalRows.toLocaleString()} rows · ${job.upsertedRows.toLocaleString()} upserted`}
+          </div>
+        </div>
+        {isTerminal && (
+          <button
+            onClick={onDismiss}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container-high"
+            title="Dismiss"
+          >
+            <span className="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        )}
+      </div>
+
+      {!isTerminal && (
+        <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-surface-container-high">
+          <div
+            className="h-full rounded-full bg-primary transition-[width] duration-300"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      )}
+
+      {job.status === "failed" && job.lastError && (
+        <div className="mt-3 rounded-lg bg-error-container px-3 py-2 font-body text-xs text-on-error-container">
+          {job.lastError}
+        </div>
+      )}
+
+      {(job.errorSamples?.length ?? 0) > 0 && (
+        <div className="mt-3 space-y-1">
+          {job.errorSamples!.slice(0, 10).map((err, i) => (
+            <div
+              key={i}
+              className="rounded-lg bg-error-container px-3 py-2 font-body text-xs text-on-error-container"
+            >
+              {err}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {job.status === "failed" && (
+        <div className="mt-4 flex justify-end">
+          <button
+            onClick={onRetry}
+            className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90"
+          >
+            <span className="material-symbols-outlined text-[18px]">refresh</span>
+            Retry import
+          </button>
+        </div>
       )}
     </div>
   );

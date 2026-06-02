@@ -9,6 +9,7 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
+    "worker": "tsx lib/upload-worker.ts",
     "test": "tsx --test 'components/__tests__/*.test.ts'",
     "typecheck": "tsc --noEmit",
     "db:migrate": "prisma migrate dev",
