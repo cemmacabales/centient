@@ -25,7 +25,7 @@ export default async function AdminCampaignDetailPage({
       defaultResponseTarget: true,
       pausedAt: true,
       createdAt: true,
-      adminUser: { select: { companyName: true } },
+      adminUser: { select: { companyName: true, email: true } },
       _count: { select: { tasks: true } },
     },
   });
@@ -54,7 +54,7 @@ export default async function AdminCampaignDetailPage({
       campaignName={campaign.name}
       defaultResponseTarget={campaign.defaultResponseTarget}
       pausedAt={campaign.pausedAt?.toISOString() ?? null}
-      ownerEmail={campaign.adminUser.companyName ?? null}
+      ownerEmail={campaign.adminUser.companyName ?? campaign.adminUser.email}
       isReadOnly={isReadOnly}
       canManage={canManage}
     />
