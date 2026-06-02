@@ -9,17 +9,16 @@ vi.mock("@/lib/payout", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/quality", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/quality")>();
-  return {
-    ...actual,
-    isRateLimited: vi.fn(() => false),
-  };
-});
+vi.mock("@/lib/rate-limit", async () => ({
+  checkWalletRateLimit: vi.fn(async () => false),
+  isLoginRateLimited: vi.fn(async () => false),
+  recordLoginFailure: vi.fn(async () => {}),
+  resetLoginFailures: vi.fn(async () => {}),
+}));
 
 import { POST } from "@/app/api/submit/route";
 import { payReward } from "@/lib/payout";
-import { isRateLimited } from "@/lib/quality";
+import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 import {
   createUser,
@@ -33,8 +32,8 @@ import {
 beforeEach(async () => {
   await truncateAll();
   vi.mocked(payReward).mockReset();
-  vi.mocked(isRateLimited).mockReset();
-  vi.mocked(isRateLimited).mockReturnValue(false);
+  vi.mocked(checkWalletRateLimit).mockReset();
+  vi.mocked(checkWalletRateLimit).mockResolvedValue(false);
 });
 
 function makeReq(body: unknown): NextRequest {
@@ -181,9 +180,9 @@ describe("POST /api/submit - guards", () => {
       "0xfeed0000000000000000000000000000000000000000000000000000000000" as `0x${string}`,
     );
 
-    vi.mocked(isRateLimited)
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(true);
+    vi.mocked(checkWalletRateLimit)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
 
     const first = await submit(validPayload({ walletAddress: wallet, taskId: task1.id }));
     expect(first.status).toBe(200);
