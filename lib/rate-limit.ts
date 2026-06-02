@@ -38,15 +38,16 @@ const LOGIN_PREFIX = "login:";
 
 export async function isLoginRateLimited(ip: string): Promise<boolean> {
   return prisma.$transaction(async (tx) => {
+    const key = LOGIN_PREFIX + ip;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey("login", ip)}))`;
 
     await tx.$executeRaw`
       DELETE FROM rate_limit_buckets
-      WHERE key = ${LOGIN_PREFIX}${ip} AND expires_at < NOW()
+      WHERE key = ${key} AND expires_at < NOW()
     `;
 
     const rows = await tx.$queryRaw<Array<{ count: bigint }>>`
-      SELECT COUNT(*)::int8 as count FROM rate_limit_buckets WHERE key = ${LOGIN_PREFIX}${ip}
+      SELECT COUNT(*)::int8 as count FROM rate_limit_buckets WHERE key = ${key}
     `;
 
     return Number(rows[0].count) >= LOGIN_MAX_FAILURES;
@@ -54,14 +55,16 @@ export async function isLoginRateLimited(ip: string): Promise<boolean> {
 }
 
 export async function recordLoginFailure(ip: string): Promise<void> {
+  const key = LOGIN_PREFIX + ip;
   await prisma.$executeRaw`
     INSERT INTO rate_limit_buckets (key, expires_at)
-    VALUES (${LOGIN_PREFIX}${ip}, NOW() + make_interval(ms := ${LOGIN_WINDOW_MS}))
+    VALUES (${key}, NOW() + make_interval(ms := ${LOGIN_WINDOW_MS}))
   `;
 }
 
 export async function resetLoginFailures(ip: string): Promise<void> {
+  const key = LOGIN_PREFIX + ip;
   await prisma.$executeRaw`
-    DELETE FROM rate_limit_buckets WHERE key = ${LOGIN_PREFIX}${ip}
+    DELETE FROM rate_limit_buckets WHERE key = ${key}
   `;
 }
