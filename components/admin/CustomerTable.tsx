@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 interface Customer {
   id: string;
@@ -101,10 +102,20 @@ export default function CustomerTable({ customers, onDelete }: CustomerTableProp
               className="border-b border-outline-variant/20 last:border-0 transition-colors hover:bg-surface-container-low/40"
             >
               <td className="px-6 py-4 font-body text-sm font-semibold text-on-surface">
-                {c.companyName ?? "—"}
+                <Link
+                  href={`/admin/customers/${c.id}`}
+                  className="hover:text-primary hover:underline"
+                >
+                  {c.companyName ?? "—"}
+                </Link>
               </td>
               <td className="px-6 py-4 font-body text-sm text-on-surface-variant">
-                {c.email}
+                <Link
+                  href={`/admin/customers/${c.id}`}
+                  className="hover:text-primary hover:underline"
+                >
+                  {c.email}
+                </Link>
               </td>
               <td className="px-6 py-4 font-body text-sm text-on-surface-variant">
                 {new Date(c.createdAt).toLocaleDateString()}

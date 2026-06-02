@@ -13,13 +13,19 @@ export default async function AdminCampaignDetailPage({
 
   const { id } = await params;
 
+  // SUPER_ADMIN can view any campaign; CUSTOMER only their own.
+  const where = session.role === "SUPER_ADMIN" ? { id } : { id, adminUserId: session.sub };
+
   const campaign = await prisma.campaign.findFirst({
-    where: { id, adminUserId: session.sub },
+    where,
     select: {
       id: true,
+      adminUserId: true,
       name: true,
       defaultResponseTarget: true,
+      pausedAt: true,
       createdAt: true,
+      adminUser: { select: { companyName: true, email: true } },
       _count: { select: { tasks: true } },
     },
   });
@@ -34,11 +40,23 @@ export default async function AdminCampaignDetailPage({
     );
   }
 
+  // Compare the stable adminUserId from the JWT (`session.sub`) rather than the
+  // mutable email — emails can change post-issue, and case/whitespace handling
+  // diverges between the JWT and the DB. campaign.adminUserId is the source of truth.
+  const isOwner = campaign.adminUserId === session.sub;
+  const isReadOnly = session.role === "SUPER_ADMIN" && !isOwner;
+  // Operator (SUPER_ADMIN) can manage any campaign; the customer can manage their own.
+  const canManage = isOwner || session.role === "SUPER_ADMIN";
+
   return (
     <CampaignDetail
       campaignId={id}
       campaignName={campaign.name}
       defaultResponseTarget={campaign.defaultResponseTarget}
+      pausedAt={campaign.pausedAt?.toISOString() ?? null}
+      ownerEmail={campaign.adminUser.companyName ?? campaign.adminUser.email}
+      isReadOnly={isReadOnly}
+      canManage={canManage}
     />
   );
 }

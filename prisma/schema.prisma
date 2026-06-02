@@ -16,6 +16,8 @@ model User {
   goldCorrect          Int      @default(0)
   goldAttempted        Int      @default(0)
   isBanned             Boolean  @default(false)
+  bannedAt             DateTime?
+  bannedReason         String?
   country              String?
   gender               String?
   ageRange             String?
@@ -56,6 +58,7 @@ model Campaign {
   name                  String
   defaultResponseTarget Int
   csvFileName           String?
+  pausedAt              DateTime?
   createdAt             DateTime @default(now())
 
   adminUser AdminUser @relation(fields: [adminUserId], references: [id])
