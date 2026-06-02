@@ -1,5 +1,4 @@
-import { describe, it } from "node:test";
-import assert from "node:assert";
+import { describe, it, expect } from "vitest";
 import { parseCSV } from "@/lib/csv-parser";
 
 const validCSV = `prompt,responseA,responseB,category
@@ -23,51 +22,51 @@ const csvMissingRequiredColumn = `prompt,responseA,other\nrow1,col2,col3\nrow2,c
 describe("parseCSV", () => {
   it("parses a valid CSV into rows", () => {
     const { rows, errors } = parseCSV(validCSV);
-    assert.strictEqual(errors.length, 0);
-    assert.strictEqual(rows.length, 3);
+    expect(errors.length).toBe(0);
+    expect(rows.length).toBe(3);
 
-    assert.strictEqual(rows[0].prompt, "What is the capital of France?");
-    assert.strictEqual(rows[0].responseA, "Paris");
-    assert.strictEqual(rows[0].responseB, "Lyon");
-    assert.strictEqual(rows[0].category, "general");
+    expect(rows[0].prompt).toBe("What is the capital of France?");
+    expect(rows[0].responseA).toBe("Paris");
+    expect(rows[0].responseB).toBe("Lyon");
+    expect(rows[0].category).toBe("general");
 
-    assert.strictEqual(rows[2].prompt, "Explain photosynthesis.");
-    assert.strictEqual(rows[2].responseA, "Plants making food from sunlight.");
+    expect(rows[2].prompt).toBe("Explain photosynthesis.");
+    expect(rows[2].responseA).toBe("Plants making food from sunlight.");
   });
 
   it("parses isGold and goldAnswer from CSV headers", () => {
     const { rows, errors } = parseCSV(csvWithGoldHeaders);
-    assert.strictEqual(errors.length, 0);
-    assert.strictEqual(rows.length, 2);
+    expect(errors.length).toBe(0);
+    expect(rows.length).toBe(2);
 
-    assert.strictEqual(rows[0].isGold, true);
-    assert.strictEqual(rows[0].goldAnswer, "A");
-    assert.strictEqual(rows[1].isGold, false);
-    assert.strictEqual(rows[1].goldAnswer, undefined);
+    expect(rows[0].isGold).toBe(true);
+    expect(rows[0].goldAnswer).toBe("A");
+    expect(rows[1].isGold).toBe(false);
+    expect(rows[1].goldAnswer).toBeUndefined();
   });
 
   it("parses goldAnswer-only CSV without error", () => {
     const { rows, errors } = parseCSV(csvWithGoldAnswerOnly);
-    assert.strictEqual(errors.length, 0);
-    assert.strictEqual(rows.length, 2);
+    expect(errors.length).toBe(0);
+    expect(rows.length).toBe(2);
 
-    assert.strictEqual(rows[0].isGold, false);
-    assert.strictEqual(rows[0].goldAnswer, undefined);
-    assert.strictEqual(rows[1].isGold, false);
-    assert.strictEqual(rows[1].goldAnswer, undefined);
+    expect(rows[0].isGold).toBe(false);
+    expect(rows[0].goldAnswer).toBeUndefined();
+    expect(rows[1].isGold).toBe(false);
+    expect(rows[1].goldAnswer).toBeUndefined();
   });
 
   it("returns empty rows for CSV with no data rows", () => {
     const { rows, errors } = parseCSV(`prompt,responseA,responseB`);
-    assert.strictEqual(rows.length, 0);
-    assert.strictEqual(errors.length, 0);
+    expect(rows.length).toBe(0);
+    expect(errors.length).toBe(0);
   });
 
   it("returns error for missing required columns", () => {
     const { rows, errors } = parseCSV(csvMissingRequiredColumn);
-    assert.strictEqual(rows.length, 0);
-    assert.strictEqual(errors.length, 1);
-    assert.match(errors[0], /must have prompt, responseA, responseB/);
+    expect(rows.length).toBe(0);
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toMatch(/must have prompt, responseA, responseB/);
   });
 
   it("isGold/goldAnswer headers are case-insensitive", () => {
@@ -75,10 +74,10 @@ describe("parseCSV", () => {
 What is the capital of France?,Paris,Lyon,True,A
 `;
     const { rows, errors } = parseCSV(csv);
-    assert.strictEqual(errors.length, 0);
-    assert.strictEqual(rows.length, 1);
-    assert.strictEqual(rows[0].isGold, true);
-    assert.strictEqual(rows[0].goldAnswer, "A");
+    expect(errors.length).toBe(0);
+    expect(rows.length).toBe(1);
+    expect(rows[0].isGold).toBe(true);
+    expect(rows[0].goldAnswer).toBe("A");
   });
 
   it("rejects rows with isGold=true but invalid goldAnswer", () => {
@@ -86,9 +85,9 @@ What is the capital of France?,Paris,Lyon,True,A
 What is the capital of France?,Paris,Lyon,True,C
 `;
     const { rows, errors } = parseCSV(csv);
-    assert.strictEqual(rows.length, 0);
-    assert.strictEqual(errors.length, 1);
-    assert.match(errors[0], /isGold is true but goldAnswer is missing or invalid/);
+    expect(rows.length).toBe(0);
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toMatch(/isGold is true but goldAnswer is missing or invalid/);
   });
 
   it("rejects rows with isGold=true but missing goldAnswer", () => {
@@ -96,9 +95,9 @@ What is the capital of France?,Paris,Lyon,True,C
 What is the capital of France?,Paris,Lyon,True,
 `;
     const { rows, errors } = parseCSV(csv);
-    assert.strictEqual(rows.length, 0);
-    assert.strictEqual(errors.length, 1);
-    assert.match(errors[0], /isGold is true but goldAnswer is missing or invalid/);
+    expect(rows.length).toBe(0);
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toMatch(/isGold is true but goldAnswer is missing or invalid/);
   });
 
   it("accepts isGold=1 and isGold=yes as true", () => {
@@ -107,9 +106,9 @@ Which is bigger?,Sun,Moon,1,A
 What color is the sky?,Blue,Red,yes,B
 `;
     const { rows, errors } = parseCSV(csv);
-    assert.strictEqual(errors.length, 0);
-    assert.strictEqual(rows.length, 2);
-    assert.strictEqual(rows[0].isGold, true);
-    assert.strictEqual(rows[1].isGold, true);
+    expect(errors.length).toBe(0);
+    expect(rows.length).toBe(2);
+    expect(rows[0].isGold).toBe(true);
+    expect(rows[1].isGold).toBe(true);
   });
 });
