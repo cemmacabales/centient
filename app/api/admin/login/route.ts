@@ -6,7 +6,7 @@ import {
   isLoginRateLimited,
   recordLoginFailure,
   resetLoginFailures,
-} from "@/lib/admin-rate-limit";
+} from "@/lib/rate-limit";
 
 function clientIp(req: NextRequest): string {
   const forwarded = req.headers.get("x-forwarded-for");
@@ -31,7 +31,7 @@ function redirectToLogin(req: NextRequest, error: string) {
 
 export async function POST(req: NextRequest) {
   const ip = clientIp(req);
-  if (isLoginRateLimited(ip)) {
+  if (await isLoginRateLimited(ip)) {
     console.warn("[admin] login_rate_limited", { ip });
     return NextResponse.json({ error: "rate_limited" }, { status: 429 });
   }
@@ -41,14 +41,14 @@ export async function POST(req: NextRequest) {
   const password = (form.get("password") ?? "").toString();
 
   if (!email || !password) {
-    recordLoginFailure(ip);
+    await recordLoginFailure(ip);
     console.warn("[admin] login_fail", { ip, email, reason: "missing_fields" });
     return redirectToLogin(req, "invalid");
   }
 
   const admin = await prisma.adminUser.findUnique({ where: { email } });
   if (!admin) {
-    recordLoginFailure(ip);
+    await recordLoginFailure(ip);
     console.warn("[admin] login_fail", { ip, email, reason: "unknown_user" });
     return redirectToLogin(req, "invalid");
   }
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
 
   const ok = await bcrypt.compare(password, admin.passwordHash);
   if (!ok) {
-    recordLoginFailure(ip);
+    await recordLoginFailure(ip);
     console.warn("[admin] login_fail", { ip, email, reason: "bad_password" });
     return redirectToLogin(req, "invalid");
   }
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
   });
 
   await setAdminSessionCookie(token);
-  resetLoginFailures(ip);
+  await resetLoginFailures(ip);
   console.info("[admin] login_ok", { ip, email });
 
   return NextResponse.redirect(new URL("/admin", externalOrigin(req)), 303);
