@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import ExportModal from "@/components/admin/ExportModal";
 
 interface TaskProgress {
@@ -22,11 +23,25 @@ interface CampaignDetailProps {
   campaignId: string;
   campaignName: string;
   defaultResponseTarget: number;
+  pausedAt: string | null;
+  ownerEmail: string | null;
+  isReadOnly: boolean;
+  canManage: boolean;
 }
 
 type DeleteConfirm = { taskId: string } | null;
+type CampaignDeleteConfirm = boolean;
 
-export default function CampaignDetail({ campaignId, campaignName, defaultResponseTarget }: CampaignDetailProps) {
+export default function CampaignDetail({
+  campaignId,
+  campaignName: initialCampaignName,
+  defaultResponseTarget,
+  pausedAt: initialPausedAt,
+  ownerEmail,
+  isReadOnly,
+  canManage,
+}: CampaignDetailProps) {
+  const router = useRouter();
   const [tasks, setTasks] = useState<TaskProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -34,7 +49,18 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
   const [editing, setEditing] = useState<EditingRow | null>(null);
   const [addingNew, setAddingNew] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirm>(null);
+  const [campaignDeleteConfirm, setCampaignDeleteConfirm] = useState<CampaignDeleteConfirm>(false);
+  const [deletingCampaign, setDeletingCampaign] = useState(false);
+  const [deleteCampaignError, setDeleteCampaignError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pausedAt, setPausedAt] = useState<string | null>(initialPausedAt);
+  const [pausing, setPausing] = useState(false);
+  const [pauseError, setPauseError] = useState<string | null>(null);
+  const [campaignName, setCampaignName] = useState<string>(initialCampaignName);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState<string>(initialCampaignName);
+  const [renamingLoading, setRenamingLoading] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -83,6 +109,107 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
       a.download = "campaign_template.csv";
       a.click();
       window.URL.revokeObjectURL(url);
+    }
+  }
+
+  async function handleTogglePause() {
+    setPausing(true);
+    setPauseError(null);
+    try {
+      const res = await fetch(`/api/admin/campaigns/${campaignId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ paused: !pausedAt }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPauseError(body.error ?? "Failed to update pause state");
+      } else {
+        setPausedAt(body.pausedAt ?? null);
+      }
+    } catch {
+      setPauseError("Network error");
+    } finally {
+      setPausing(false);
+    }
+  }
+
+  function handleStartRename() {
+    setRenameValue(campaignName);
+    setRenameError(null);
+    setRenaming(true);
+  }
+
+  function handleCancelRename() {
+    setRenaming(false);
+    setRenameError(null);
+    setRenameValue(campaignName);
+  }
+
+  async function handleSaveRename() {
+    const next = renameValue.trim();
+    if (next.length < 1 || next.length > 200) {
+      setRenameError("Name must be between 1 and 200 characters.");
+      return;
+    }
+    if (next === campaignName) {
+      setRenaming(false);
+      return;
+    }
+
+    const previous = campaignName;
+    setRenamingLoading(true);
+    setRenameError(null);
+    setCampaignName(next);
+    setRenaming(false);
+
+    try {
+      const res = await fetch(`/api/admin/campaigns/${campaignId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: next }),
+      });
+
+      if (!res.ok) {
+        setCampaignName(previous);
+        const body = await res.json().catch(() => ({}));
+        setRenameError(
+          body.error === "invalid_name"
+            ? "Name must be between 1 and 200 characters."
+            : "Failed to rename campaign.",
+        );
+      }
+    } catch {
+      setCampaignName(previous);
+      setRenameError("Network error.");
+    } finally {
+      setRenamingLoading(false);
+    }
+  }
+
+  async function handleConfirmDeleteCampaign() {
+    setDeletingCampaign(true);
+    setDeleteCampaignError(null);
+    try {
+      const res = await fetch(`/api/admin/campaigns/${campaignId}`, { method: "DELETE" });
+      if (res.status === 204) {
+        setCampaignDeleteConfirm(false);
+        router.push("/admin/campaigns");
+        router.refresh();
+        return;
+      }
+      const body = await res.json().catch(() => ({}));
+      if (body.error === "has_submissions") {
+        setDeleteCampaignError(
+          `Cannot delete: ${body.count} submissions reference this campaign. Pause it instead.`,
+        );
+      } else {
+        setDeleteCampaignError(body.error ?? "Failed to delete campaign.");
+      }
+      setDeletingCampaign(false);
+    } catch {
+      setDeleteCampaignError("Network error.");
+      setDeletingCampaign(false);
     }
   }
 
@@ -233,15 +360,84 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
       </div>
 
       <div className="flex items-baseline gap-4">
-        <h1 className="font-headline text-3xl font-extrabold tracking-tight text-on-surface">
-          {campaignName}
-        </h1>
+        {renaming ? (
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              maxLength={200}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSaveRename();
+                if (e.key === "Escape") handleCancelRename();
+              }}
+              className="rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1.5 font-headline text-2xl font-extrabold text-on-surface focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+            <button
+              type="button"
+              onClick={handleSaveRename}
+              disabled={renamingLoading}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-primary transition-colors hover:bg-primary-container disabled:opacity-50"
+              title="Save name"
+              aria-label="Save name"
+            >
+              <span className="material-symbols-outlined text-[20px]">check</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleCancelRename}
+              disabled={renamingLoading}
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container-high disabled:opacity-50"
+              title="Cancel"
+              aria-label="Cancel rename"
+            >
+              <span className="material-symbols-outlined text-[20px]">close</span>
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <h1 className="font-headline text-3xl font-extrabold tracking-tight text-on-surface">
+              {campaignName}
+            </h1>
+            {canManage && (
+              <button
+                type="button"
+                onClick={handleStartRename}
+                disabled={renamingLoading}
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container-high disabled:opacity-50"
+                title="Rename campaign"
+                aria-label="Rename campaign"
+              >
+                <span className="material-symbols-outlined text-[18px]">edit</span>
+              </button>
+            )}
+          </div>
+        )}
         <span className="font-body text-sm text-on-surface-variant">
           Target: {defaultResponseTarget} responses per task
         </span>
+        {pausedAt && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-3 py-1 font-label text-xs font-bold text-yellow-800">
+            <span className="material-symbols-outlined text-[14px]">pause</span>
+            paused since {new Date(pausedAt).toLocaleDateString("en-US")}
+          </span>
+        )}
       </div>
 
-      <div className="flex items-center gap-3">
+      {renameError && (
+        <div className="rounded-lg bg-error-container px-3 py-2 font-body text-xs text-on-error-container">
+          {renameError}
+        </div>
+      )}
+
+      {ownerEmail && (
+        <p className="font-body text-xs text-on-surface-variant">
+          Owner: <span className="font-mono">{ownerEmail}</span>
+        </p>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
         <button
           onClick={handleDownloadTemplate}
           className="flex items-center gap-2 rounded-xl border border-outline-variant bg-surface-container-low px-4 py-2 font-label text-sm font-semibold text-on-surface transition-colors hover:bg-surface-container-high"
@@ -250,24 +446,61 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
           Download Template
         </button>
 
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".csv"
-          onChange={handleUpload}
-          disabled={uploading}
-          className="hidden"
-          id="csv-upload"
-        />
-        <label
-          htmlFor="csv-upload"
-          className={`flex cursor-pointer items-center gap-2 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90 ${
-            uploading ? "opacity-50" : ""
-          }`}
+        {!isReadOnly && (
+          <>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv"
+              onChange={handleUpload}
+              disabled={uploading}
+              className="hidden"
+              id="csv-upload"
+            />
+            <label
+              htmlFor="csv-upload"
+              className={`flex cursor-pointer items-center gap-2 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-opacity hover:opacity-90 ${
+                uploading ? "opacity-50" : ""
+              }`}
+            >
+              <span className="material-symbols-outlined text-[18px]">upload_file</span>
+              {uploading ? "Uploading..." : "Upload CSV"}
+            </label>
+          </>
+        )}
+
+        <button
+          type="button"
+          onClick={handleTogglePause}
+          disabled={pausing}
+          className={`flex items-center gap-2 rounded-xl border px-4 py-2 font-label text-sm font-semibold transition-colors ${
+            pausedAt
+              ? "border-primary bg-primary-container text-on-primary-container hover:opacity-90"
+              : "border-outline-variant bg-surface-container-low text-on-surface hover:bg-surface-container-high"
+          } disabled:opacity-50`}
         >
-          <span className="material-symbols-outlined text-[18px]">upload_file</span>
-          {uploading ? "Uploading..." : "Upload CSV"}
-        </label>
+          <span className="material-symbols-outlined text-[18px]">
+            {pausedAt ? "play_arrow" : "pause"}
+          </span>
+          {pausedAt ? "Resume" : "Pause"}
+        </button>
+        {pauseError && (
+          <span className="font-label text-xs font-semibold text-error">{pauseError}</span>
+        )}
+
+        {canManage && (
+          <button
+            type="button"
+            onClick={() => {
+              setDeleteCampaignError(null);
+              setCampaignDeleteConfirm(true);
+            }}
+            className="flex items-center gap-2 rounded-xl border border-outline-variant bg-surface-container-low px-4 py-2 font-label text-sm font-semibold text-error transition-colors hover:bg-error-container hover:text-on-error-container"
+          >
+            <span className="material-symbols-outlined text-[18px]">delete</span>
+            Delete
+          </button>
+        )}
 
         <ExportModal campaignId={campaignId} />
       </div>
@@ -526,6 +759,62 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
                 className="flex-1 rounded-xl bg-error-container px-4 py-2.5 font-label text-sm font-semibold text-on-error-container transition-colors hover:opacity-90"
               >
                 Remove
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {campaignDeleteConfirm && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => {
+              if (!deletingCampaign) {
+                setCampaignDeleteConfirm(false);
+                setDeleteCampaignError(null);
+              }
+            }}
+          />
+          <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-outline-variant/40 bg-surface-container-lowest p-6 shadow-[0_24px_48px_rgba(25,28,30,0.24)]">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-error-container">
+                <span className="material-symbols-outlined text-[20px] text-on-error-container">delete</span>
+              </div>
+              <div>
+                <div className="font-label text-sm font-bold text-on-surface">Delete campaign?</div>
+                <div className="font-body text-xs text-on-surface-variant">
+                  All tasks in <span className="font-semibold">{campaignName}</span> will be
+                  removed. Submissions already collected will block the delete — pause instead.
+                </div>
+              </div>
+            </div>
+            {deleteCampaignError && (
+              <div className="mt-4 rounded-lg bg-error-container px-3 py-2 font-body text-xs text-on-error-container">
+                {deleteCampaignError}
+              </div>
+            )}
+            <div className="mt-5 flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!deletingCampaign) {
+                    setCampaignDeleteConfirm(false);
+                    setDeleteCampaignError(null);
+                  }
+                }}
+                disabled={deletingCampaign}
+                className="flex-1 rounded-xl border border-outline-variant bg-surface-container-low px-4 py-2.5 font-label text-sm font-semibold text-on-surface transition-colors hover:bg-surface-container-high disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDeleteCampaign}
+                disabled={deletingCampaign}
+                className="flex-1 rounded-xl bg-error px-4 py-2.5 font-label text-sm font-semibold text-on-error transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                {deletingCampaign ? "Deleting…" : "Delete"}
               </button>
             </div>
           </div>

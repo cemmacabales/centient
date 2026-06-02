@@ -73,8 +73,12 @@ export async function PATCH(
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
-  const { name, defaultResponseTarget } = body;
-  const updateData: { name?: string; defaultResponseTarget?: number } = {};
+  const { name, defaultResponseTarget, paused } = body;
+  const updateData: {
+    name?: string;
+    defaultResponseTarget?: number;
+    pausedAt?: Date | null;
+  } = {};
 
   if (name !== undefined) {
     if (typeof name !== "string" || name.trim().length < 1 || name.trim().length > 200) {
@@ -94,8 +98,25 @@ export async function PATCH(
     updateData.defaultResponseTarget = defaultResponseTarget;
   }
 
-  if (Object.keys(updateData).length === 0) {
+  if (paused !== undefined) {
+    if (typeof paused !== "boolean") {
+      return NextResponse.json({ error: "invalid_paused" }, { status: 400 });
+    }
+    const nextPausedAt = paused ? (campaign.pausedAt ?? new Date()) : null;
+    const currentMs = campaign.pausedAt ? campaign.pausedAt.getTime() : null;
+    const nextMs = nextPausedAt ? nextPausedAt.getTime() : null;
+    if (nextMs !== currentMs) {
+      updateData.pausedAt = nextPausedAt;
+    }
+  }
+
+  const hasAnyField =
+    name !== undefined || defaultResponseTarget !== undefined || paused !== undefined;
+  if (!hasAnyField) {
     return NextResponse.json({ error: "no_fields_to_update" }, { status: 400 });
+  }
+  if (Object.keys(updateData).length === 0) {
+    return NextResponse.json(campaign, { status: 200 });
   }
 
   const updatedCampaign = await prisma.campaign.update({
@@ -103,9 +124,11 @@ export async function PATCH(
     data: updateData,
   });
 
+  const isPauseToggle = paused !== undefined && Boolean(campaign.pausedAt) !== Boolean(updatedCampaign.pausedAt);
+
   auditLog({
     adminUserId: session.sub,
-    action: "campaign.update",
+    action: isPauseToggle ? (paused ? "campaign.pause" : "campaign.resume") : "campaign.update",
     targetType: "campaign",
     targetId: id,
     req,
@@ -113,10 +136,12 @@ export async function PATCH(
       before: {
         name: campaign.name,
         defaultResponseTarget: campaign.defaultResponseTarget,
+        pausedAt: campaign.pausedAt?.toISOString() ?? null,
       },
       after: {
         name: updatedCampaign.name,
         defaultResponseTarget: updatedCampaign.defaultResponseTarget,
+        pausedAt: updatedCampaign.pausedAt?.toISOString() ?? null,
       }
     },
   });

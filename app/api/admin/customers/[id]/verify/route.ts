@@ -1,9 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
+import { auditLog } from "@/lib/audit";
 
 export async function POST(
-  _req: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getAdminSession();
@@ -18,7 +19,7 @@ export async function POST(
 
   const customer = await prisma.adminUser.findFirst({
     where: { id, role: "CUSTOMER" },
-    select: { isVerified: true },
+    select: { isVerified: true, email: true, companyName: true },
   });
 
   if (!customer) {
@@ -37,6 +38,15 @@ export async function POST(
       verificationToken: null,
       verificationTokenExpires: null,
     },
+  });
+
+  auditLog({
+    adminUserId: session.sub,
+    action: "customer.verify",
+    targetType: "adminUser",
+    targetId: id,
+    req,
+    metadata: { email: customer.email, companyName: customer.companyName },
   });
 
   return NextResponse.json({ ok: true });

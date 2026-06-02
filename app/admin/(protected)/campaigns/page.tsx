@@ -13,6 +13,8 @@ interface CampaignWithProgress {
   totalTarget: number;
   completionPct: number;
   createdAt: string;
+  pausedAt: string | null;
+  ownerEmail: string | null;
 }
 
 interface AggregateStats {
@@ -25,8 +27,11 @@ interface AggregateStats {
 export default async function AdminCampaignsPage() {
   const session = await requireRoleForPage("CUSTOMER");
 
+  // SUPER_ADMIN sees all campaigns; CUSTOMER sees only their own.
+  const where = session.role === "SUPER_ADMIN" ? {} : { adminUserId: session.sub };
+
   const campaigns = await prisma.campaign.findMany({
-    where: { adminUserId: session.sub },
+    where,
     orderBy: { createdAt: "asc" },
     include: {
       tasks: {
@@ -35,6 +40,7 @@ export default async function AdminCampaignsPage() {
           _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
         },
       },
+      adminUser: { select: { email: true, companyName: true } },
     },
   });
 
@@ -52,6 +58,8 @@ export default async function AdminCampaignsPage() {
       totalTarget,
       completionPct,
       createdAt: c.createdAt.toISOString(),
+      pausedAt: c.pausedAt?.toISOString() ?? null,
+      ownerEmail: c.adminUser.companyName ?? c.adminUser.email,
     };
   });
 
@@ -77,6 +85,7 @@ export default async function AdminCampaignsPage() {
     <CampaignList
       initialCampaigns={campaignsWithProgress}
       aggregate={aggregate}
+      showOwner={session.role === "SUPER_ADMIN"}
     />
   );
 }

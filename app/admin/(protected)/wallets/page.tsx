@@ -23,14 +23,15 @@ export default async function AdminWalletsPage() {
     <div className="space-y-6">
       <header>
         <div className="font-label text-[11px] font-bold uppercase tracking-[0.2em] text-outline">
-          Per-wallet performance
+          Per-wallet performance · legacy view
         </div>
         <h1 className="mt-1 font-headline text-3xl font-extrabold tracking-tight text-on-surface">
           Wallets
         </h1>
         <p className="mt-2 font-body text-sm text-on-surface-variant">
-          {rows.length} wallet{rows.length === 1 ? "" : "s"} have submitted at least one task.
-          Click a wallet to deep-link (route stubbed for a future release).
+          {rows.length} wallet{rows.length === 1 ? "" : "s"} on record. This is a legacy view;
+          the newer <a href="/admin/users" className="font-semibold text-primary hover:underline">Users</a> tab
+          adds demographics, ban controls, and a per-user profile.
         </p>
       </header>
 
