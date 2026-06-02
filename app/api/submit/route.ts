@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { payReward, rewardInWei } from "@/lib/payout";
-import { isRateLimited, isSpamReason } from "@/lib/quality";
+import { isSpamReason } from "@/lib/quality";
+import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { validateReason } from "@/lib/validators";
 import { evaluateBanRule } from "@/lib/admin-data";
 
@@ -43,7 +44,7 @@ export async function POST(req: NextRequest) {
     return errorResponse("invalid_reason", 400, { walletAddress, taskId });
   }
 
-  if (isRateLimited(walletAddress)) {
+  if (await checkWalletRateLimit(walletAddress)) {
     return errorResponse("rate_limited", 429, { walletAddress });
   }
 
