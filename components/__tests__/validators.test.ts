@@ -1,59 +1,31 @@
-import { describe, it } from "node:test";
-import assert from "node:assert";
+import { describe, it, expect } from "vitest";
 import { validateReason } from "@/lib/validators";
 
 describe("Issue #121 - Text Heuristic Validation Suite", () => {
   it("should allow valid descriptive sentences", () => {
-    assert.strictEqual(
-      validateReason("What are the strengths of response A?"), 
-      true
-    );
-    assert.strictEqual(
-      validateReason("I chose this for its length and clarity."), 
-      true
-    );
+    expect(validateReason("What are the strengths of response A?")).toBe(true);
+    expect(validateReason("I chose this for its length and clarity.")).toBe(true);
   });
 
   it("should allow compact but clear 3-word submissions", () => {
-    assert.strictEqual(
-      validateReason("This is good"), 
-      true
-    );
+    expect(validateReason("This is good")).toBe(true);
   });
 
   it("should reject raw home-row keyboard mashing", () => {
-    assert.strictEqual(
-      validateReason("asdfghjklm"), 
-      false
-    );
-    assert.strictEqual(
-      validateReason("Wedxtcsfmbxd"), 
-      false
-    );
+    expect(validateReason("asdfghjklm")).toBe(false);
+    expect(validateReason("Wedxtcsfmbxd")).toBe(false);
   });
 
   it("should reject high density single character spam", () => {
-    assert.strictEqual(
-      validateReason("aaaaaaaaaa"), 
-      false
-    );
+    expect(validateReason("aaaaaaaaaa")).toBe(false);
   });
 
   it("should reject entries with insufficient word boundaries", () => {
-    assert.strictEqual(
-      validateReason("Response good"), 
-      false
-    );
-    assert.strictEqual(
-      validateReason("Supercalifragilistic"), 
-      false
-    );
+    expect(validateReason("Response good")).toBe(false);
+    expect(validateReason("Supercalifragilistic")).toBe(false);
   });
 
   it("should reject sentences containing isolated gibberish words", () => {
-    assert.strictEqual(
-      validateReason("This is asdfghjklm"), 
-      false
-    );
+    expect(validateReason("This is asdfghjklm")).toBe(false);
   });
 });
