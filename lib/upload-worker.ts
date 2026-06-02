@@ -65,7 +65,7 @@ export async function processJob(jobId: string): Promise<void> {
           status: "done",
           completedAt: new Date(),
           processedRows: 0,
-          insertedRows: 0,
+          upsertedRows: 0,
           skippedRows: parseErrorCount,
           errorRows: parseErrorCount,
           chunksCommitted: 0,
@@ -82,7 +82,7 @@ export async function processJob(jobId: string): Promise<void> {
       await writeAudit(job.adminUserId, "tasks.upload.completed", "campaign", job.campaignId, {
         jobId,
         totalRows: 0,
-        insertedRows: 0,
+        upsertedRows: 0,
         skippedRows: parseErrorCount,
         errorRows: parseErrorCount,
       });
@@ -130,7 +130,7 @@ export async function processJob(jobId: string): Promise<void> {
 
     const chunksTotal = Math.ceil(upsertArgs.length / CHUNK_SIZE);
     let processedRows = 0;
-    let insertedRows = 0;
+    let upsertedRows = 0;
     let chunksCommitted = 0;
     let lastHeartbeat = Date.now();
 
@@ -150,7 +150,7 @@ export async function processJob(jobId: string): Promise<void> {
       );
 
       processedRows += chunk.length;
-      insertedRows += chunk.length;
+      upsertedRows += chunk.length;
       chunksCommitted++;
 
       const now = Date.now();
@@ -159,7 +159,7 @@ export async function processJob(jobId: string): Promise<void> {
           where: { id: jobId },
           data: {
             processedRows,
-            insertedRows,
+            upsertedRows,
             chunksCommitted,
             chunksTotal,
             workerHeartbeatAt: new Date(),
@@ -176,7 +176,7 @@ export async function processJob(jobId: string): Promise<void> {
         status: "done",
         completedAt: new Date(),
         processedRows,
-        insertedRows,
+        upsertedRows,
         skippedRows: parseErrorCount,
         errorRows: parseErrorCount,
         chunksCommitted,
@@ -194,13 +194,13 @@ export async function processJob(jobId: string): Promise<void> {
     await writeAudit(job.adminUserId, "tasks.upload.completed", "campaign", job.campaignId, {
       jobId,
       totalRows: job.totalRows,
-      insertedRows,
+      upsertedRows,
       skippedRows: parseErrorCount,
       errorRows: parseErrorCount,
     });
 
     console.log(
-      `[upload-worker] job ${jobId} done committed=${chunksCommitted}/${chunksTotal} inserted=${insertedRows} parseErrors=${parseErrorCount}`
+      `[upload-worker] job ${jobId} done committed=${chunksCommitted}/${chunksTotal} upserted=${upsertedRows} parseErrors=${parseErrorCount}`
     );
   } catch (err: any) {
     const message = err?.message ?? String(err);

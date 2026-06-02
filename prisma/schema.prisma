@@ -146,7 +146,7 @@ model UploadJob {
   status            UploadJobStatus  @default(queued)
   totalRows         Int
   processedRows     Int              @default(0)
-  insertedRows      Int              @default(0)
+  upsertedRows      Int              @default(0)
   skippedRows       Int              @default(0)
   errorRows         Int              @default(0)
   chunksCommitted   Int              @default(0)

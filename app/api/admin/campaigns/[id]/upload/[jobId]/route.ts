@@ -32,7 +32,7 @@ export async function GET(
     status: job.status,
     totalRows: job.totalRows,
     processedRows: job.processedRows,
-    insertedRows: job.insertedRows,
+    upsertedRows: job.upsertedRows,
     skippedRows: job.skippedRows,
     errorRows: job.errorRows,
     chunksCommitted: job.chunksCommitted,

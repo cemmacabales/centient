@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import ExportModal from "@/components/admin/ExportModal";
 
@@ -36,7 +36,7 @@ interface UploadJob {
   status: UploadJobStatus;
   totalRows: number;
   processedRows: number;
-  insertedRows: number;
+  upsertedRows: number;
   skippedRows: number;
   errorRows: number;
   chunksCommitted: number;
@@ -63,9 +63,19 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
   const fileRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const fetchTasks = useCallback(async () => {
+    setLoading(true);
+    const res = await fetch(`/api/admin/campaigns/${campaignId}/tasks`);
+    if (res.ok) {
+      const data = await res.json();
+      setTasks(data);
+    }
+    setLoading(false);
+  }, [campaignId]);
+
   useEffect(() => {
     fetchTasks();
-  }, [campaignId]);
+  }, [campaignId, fetchTasks]);
 
   useEffect(() => {
     if (!liveJob) return;
@@ -95,24 +105,13 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
     }, POLL_INTERVAL_MS);
 
     return () => stopPolling();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveJob?.id, liveJob?.status]);
+  }, [liveJob?.id, liveJob?.status, fetchTasks]);
 
   function stopPolling() {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
-  }
-
-  async function fetchTasks() {
-    setLoading(true);
-    const res = await fetch(`/api/admin/campaigns/${campaignId}/tasks`);
-    if (res.ok) {
-      const data = await res.json();
-      setTasks(data);
-    }
-    setLoading(false);
   }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -144,7 +143,7 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
       setLiveJob({
         ...accepted,
         processedRows: 0,
-        insertedRows: 0,
+        upsertedRows: 0,
         skippedRows: 0,
         errorRows: 0,
         chunksCommitted: 0,
@@ -198,7 +197,7 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
       ...liveJob,
       status: "queued",
       processedRows: 0,
-      insertedRows: 0,
+      upsertedRows: 0,
       skippedRows: 0,
       errorRows: 0,
       chunksCommitted: 0,
@@ -703,8 +702,8 @@ function UploadStatusCard({
           <div className="font-body text-xs text-on-surface-variant">
             {job.fileName} ·{" "}
             {isTerminal
-              ? `${job.insertedRows.toLocaleString()} inserted · ${job.skippedRows.toLocaleString()} skipped · ${job.errorRows.toLocaleString()} errors`
-              : `${job.processedRows.toLocaleString()} / ${job.totalRows.toLocaleString()} rows · ${job.insertedRows.toLocaleString()} inserted`}
+              ? `${job.upsertedRows.toLocaleString()} upserted · ${job.skippedRows.toLocaleString()} skipped · ${job.errorRows.toLocaleString()} errors`
+              : `${job.processedRows.toLocaleString()} / ${job.totalRows.toLocaleString()} rows · ${job.upsertedRows.toLocaleString()} upserted`}
           </div>
         </div>
         {isTerminal && (
