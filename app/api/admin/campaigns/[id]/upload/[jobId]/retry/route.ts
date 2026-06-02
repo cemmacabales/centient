@@ -39,7 +39,7 @@ export async function POST(
     data: {
       status: "queued",
       processedRows: 0,
-      insertedRows: 0,
+      upsertedRows: 0,
       skippedRows: 0,
       errorRows: 0,
       chunksCommitted: 0,
