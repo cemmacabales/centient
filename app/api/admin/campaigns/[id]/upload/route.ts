@@ -20,9 +20,10 @@ export async function POST(
 
   const { id } = await params;
 
+  const where = session.role === "SUPER_ADMIN" ? { id } : { id, adminUserId: session.sub };
+
   const campaign = await prisma.campaign.findFirst({
-    where: { id, adminUserId: session.sub },
-    select: { id: true },
+    where,
   });
 
   if (!campaign) {
