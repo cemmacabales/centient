@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@/app/generated/prisma/client";
 import { formatUnits } from "viem";
 import {
   GOLD_TASK_RATIO,
@@ -62,27 +63,43 @@ export async function GET(req: NextRequest) {
   }
 
   if (!task) {
-    const nonGoldTasks = await prisma.task.findMany({
-      where: {
-        OR: [
-          { isGold: false },
-          { isGold: true, campaignId: { not: null } },
-        ],
-        id: { notIn: doneIds },
-      },
-      include: {
-        campaign: { select: { defaultResponseTarget: true, rewardWei: true } },
-        _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
-      },
-      orderBy: { createdAt: "asc" },
-    });
+    const doneIdCondition =
+      doneIds.length > 0
+        ? Prisma.sql`AND t.id NOT IN (${Prisma.join(doneIds)})`
+        : Prisma.empty;
 
-    for (const t of nonGoldTasks) {
-      const target = computeResponseTarget(t.responseTarget, t.campaign?.defaultResponseTarget ?? null);
-      if (target === null || t._count.submissions < target) {
-        task = t;
-        break;
-      }
+    const available = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT t.id
+      FROM "tasks" t
+      LEFT JOIN "campaigns" c ON t."campaignId" = c.id
+      WHERE
+        (
+          t."isGold" = false
+          OR (t."isGold" = true AND t."campaignId" IS NOT NULL)
+        )
+        ${doneIdCondition}
+        AND (
+          COALESCE(t."responseTarget", c."defaultResponseTarget") IS NULL
+          OR (
+            SELECT COUNT(*)
+            FROM "submissions" s
+            WHERE s."taskId" = t.id
+              AND s."payoutStatus" = 'sent'
+              AND s."isGoldCheck" = false
+          ) < COALESCE(t."responseTarget", c."defaultResponseTarget")
+        )
+      ORDER BY t."createdAt" ASC
+      LIMIT 1
+    `;
+
+    if (available.length > 0) {
+      task = await prisma.task.findFirst({
+        where: { id: available[0].id },
+        include: {
+          campaign: { select: { defaultResponseTarget: true, rewardWei: true } },
+          _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
+        },
+      });
     }
   }
 
