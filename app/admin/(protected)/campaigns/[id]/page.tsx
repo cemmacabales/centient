@@ -19,6 +19,7 @@ export default async function AdminCampaignDetailPage({
       id: true,
       name: true,
       defaultResponseTarget: true,
+      rewardWei: true,
       createdAt: true,
       _count: { select: { tasks: true } },
     },
@@ -39,6 +40,7 @@ export default async function AdminCampaignDetailPage({
       campaignId={id}
       campaignName={campaign.name}
       defaultResponseTarget={campaign.defaultResponseTarget}
+      rewardWei={campaign.rewardWei.toString()}
     />
   );
 }

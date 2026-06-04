@@ -22,6 +22,7 @@ export async function GET(
       id: true,
       name: true,
       defaultResponseTarget: true,
+      rewardWei: true,
       csvFileName: true,
       createdAt: true,
       _count: { select: { tasks: true } },
@@ -34,6 +35,7 @@ export async function GET(
 
   return NextResponse.json({
     ...campaign,
+    rewardWei: campaign.rewardWei.toString(),
     taskCount: campaign._count.tasks,
     createdAt: campaign.createdAt.toISOString(),
   });
@@ -73,8 +75,8 @@ export async function PATCH(
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
-  const { name, defaultResponseTarget } = body;
-  const updateData: { name?: string; defaultResponseTarget?: number } = {};
+  const { name, defaultResponseTarget, rewardWei: rewardWeiRaw } = body;
+  const updateData: { name?: string; defaultResponseTarget?: number; rewardWei?: bigint } = {};
 
   if (name !== undefined) {
     if (typeof name !== "string" || name.trim().length < 1 || name.trim().length > 200) {
@@ -92,6 +94,13 @@ export async function PATCH(
       return NextResponse.json({ error: "invalid_target" }, { status: 400 });
     }
     updateData.defaultResponseTarget = defaultResponseTarget;
+  }
+
+  if (rewardWeiRaw !== undefined) {
+    if (typeof rewardWeiRaw !== "string" || !/^\d+$/.test(rewardWeiRaw)) {
+      return NextResponse.json({ error: "invalid_reward_wei" }, { status: 400 });
+    }
+    updateData.rewardWei = BigInt(rewardWeiRaw);
   }
 
   if (Object.keys(updateData).length === 0) {
@@ -113,15 +122,20 @@ export async function PATCH(
       before: {
         name: campaign.name,
         defaultResponseTarget: campaign.defaultResponseTarget,
+        rewardWei: campaign.rewardWei.toString(),
       },
       after: {
         name: updatedCampaign.name,
         defaultResponseTarget: updatedCampaign.defaultResponseTarget,
+        rewardWei: updatedCampaign.rewardWei.toString(),
       }
     },
   });
 
-  return NextResponse.json(updatedCampaign, { status: 200 });
+  return NextResponse.json({
+    ...updatedCampaign,
+    rewardWei: updatedCampaign.rewardWei.toString(),
+  }, { status: 200 });
 }
 
 // delete

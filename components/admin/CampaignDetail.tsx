@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { formatUnits, parseUnits } from "viem";
 import ExportModal from "@/components/admin/ExportModal";
 
 interface TaskProgress {
@@ -10,23 +11,26 @@ interface TaskProgress {
   responseTarget: number;
   responseCount: number;
   pct: number;
+  rewardWei?: string;
 }
 
 interface EditingRow {
   taskId: string | null;
   prompt: string;
   responseTarget: number;
+  rewardWei?: string | null;
 }
 
 interface CampaignDetailProps {
   campaignId: string;
   campaignName: string;
   defaultResponseTarget: number;
+  rewardWei: string;
 }
 
 type DeleteConfirm = { taskId: string } | null;
 
-export default function CampaignDetail({ campaignId, campaignName, defaultResponseTarget }: CampaignDetailProps) {
+export default function CampaignDetail({ campaignId, campaignName, defaultResponseTarget, rewardWei }: CampaignDetailProps) {
   const [tasks, setTasks] = useState<TaskProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -35,6 +39,11 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
   const [addingNew, setAddingNew] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirm>(null);
   const [error, setError] = useState<string | null>(null);
+  const [campaignRewardEdit, setCampaignRewardEdit] = useState(false);
+  const [campaignRewardDisplay, setCampaignRewardDisplay] = useState(() => {
+    try { return formatUnits(BigInt(rewardWei), 18); } catch { return "0.05"; }
+  });
+  const [campaignRewardSaving, setCampaignRewardSaving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -49,6 +58,32 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
       setTasks(data);
     }
     setLoading(false);
+  }
+
+  async function handleSaveCampaignReward() {
+    setCampaignRewardSaving(true);
+    try {
+      const wei = parseUnits(campaignRewardDisplay.trim(), 18).toString();
+      const res = await fetch(`/api/admin/campaigns/${campaignId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rewardWei: wei }),
+      });
+      if (!res.ok) {
+        setError("Failed to save campaign reward");
+        setCampaignRewardDisplay(() => {
+          try { return formatUnits(BigInt(rewardWei), 18); } catch { return "0.05"; }
+        });
+      } else {
+        setCampaignRewardEdit(false);
+      }
+    } catch {
+      setError("Invalid reward amount");
+      setCampaignRewardDisplay(() => {
+        try { return formatUnits(BigInt(rewardWei), 18); } catch { return "0.05"; }
+      });
+    }
+    setCampaignRewardSaving(false);
   }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -87,7 +122,7 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
   }
 
   function handleEdit(task: TaskProgress) {
-    setEditing({ taskId: task.taskId, prompt: task.prompt, responseTarget: task.responseTarget });
+    setEditing({ taskId: task.taskId, prompt: task.prompt, responseTarget: task.responseTarget, rewardWei: task.rewardWei ?? null });
     setError(null);
   }
 
@@ -107,6 +142,14 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
       return;
     }
 
+    const body: Record<string, unknown> = {
+      prompt: editing.prompt.trim(),
+      responseTarget: editing.responseTarget,
+    };
+    if (editing.rewardWei !== undefined) {
+      body.rewardWei = editing.rewardWei;
+    }
+
     const original = tasks.find(t => t.taskId === editing.taskId);
     setTasks(prev => prev.map(t =>
       t.taskId === editing.taskId
@@ -119,7 +162,7 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
     const res = await fetch(`/api/admin/campaigns/${campaignId}/tasks/${editing.taskId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: editing.prompt.trim(), responseTarget: editing.responseTarget }),
+      body: JSON.stringify(body),
     });
 
     if (!res.ok) {
@@ -132,7 +175,7 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
 
   function handleStartAdd() {
     setAddingNew(true);
-    setEditing({ taskId: null, prompt: "", responseTarget: defaultResponseTarget });
+    setEditing({ taskId: null, prompt: "", responseTarget: defaultResponseTarget, rewardWei: null });
     setError(null);
   }
 
@@ -166,10 +209,18 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
     setEditing(null);
     setError(null);
 
+    const body: Record<string, unknown> = {
+      prompt: editing.prompt.trim(),
+      responseTarget: editing.responseTarget,
+    };
+    if (editing.rewardWei !== undefined && editing.rewardWei !== null) {
+      body.rewardWei = editing.rewardWei;
+    }
+
     const res = await fetch(`/api/admin/campaigns/${campaignId}/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: editing.prompt.trim(), responseTarget: editing.responseTarget }),
+      body: JSON.stringify(body),
     });
 
     if (res.ok) {
@@ -239,6 +290,48 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
         <span className="font-body text-sm text-on-surface-variant">
           Target: {defaultResponseTarget} responses per task
         </span>
+        {campaignRewardEdit ? (
+          <span className="flex items-center gap-1">
+            <input
+              type="text"
+              inputMode="decimal"
+              value={campaignRewardDisplay}
+              onChange={(e) => setCampaignRewardDisplay(e.target.value)}
+              className="w-20 rounded-lg border border-outline-variant bg-surface-container px-2 py-1 text-right font-body text-sm text-on-surface focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              disabled={campaignRewardSaving}
+              autoFocus
+            />
+            <button
+              onClick={handleSaveCampaignReward}
+              disabled={campaignRewardSaving}
+              className="flex h-6 w-6 items-center justify-center rounded text-primary transition-colors hover:bg-primary-container"
+              title="Save"
+            >
+              <span className="material-symbols-outlined text-[16px]">check</span>
+            </button>
+            <button
+              onClick={() => {
+                setCampaignRewardEdit(false);
+                try { setCampaignRewardDisplay(formatUnits(BigInt(rewardWei), 18)); } catch { setCampaignRewardDisplay("0.05"); }
+              }}
+              className="flex h-6 w-6 items-center justify-center rounded text-on-surface-variant transition-colors hover:bg-surface-container-high"
+              title="Cancel"
+            >
+              <span className="material-symbols-outlined text-[16px]">close</span>
+            </button>
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 font-body text-sm text-on-surface-variant">
+            Reward: {campaignRewardDisplay} / task
+            <button
+              onClick={() => setCampaignRewardEdit(true)}
+              className="flex h-6 w-6 items-center justify-center rounded text-on-surface-variant transition-colors hover:bg-surface-container-high"
+              title="Edit reward"
+            >
+              <span className="material-symbols-outlined text-[14px]">edit</span>
+            </button>
+          </span>
+        )}
       </div>
 
       <div className="flex items-center gap-3">
@@ -330,6 +423,9 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
                 <th className="px-6 py-3 text-left font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
                   Prompt
                 </th>
+                <th className="px-6 py-3 text-right font-label text-xs font-bold uppercase tracking-[0.15em] text-outline w-20">
+                  Reward
+                </th>
                 <th className="px-6 py-3 text-right font-label text-xs font-bold uppercase tracking-[0.15em] text-outline w-24">
                   Target
                 </th>
@@ -364,6 +460,29 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
                       ) : (
                         <span className="font-body text-sm text-on-surface">
                           {t.prompt.length > 80 ? t.prompt.slice(0, 80) + "..." : t.prompt}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-6 py-3">
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="Inherit"
+                          className="w-full rounded-lg border border-outline-variant bg-surface-container px-2 py-2 text-right font-body text-xs text-on-surface placeholder-on-surface-variant/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                          value={editing.rewardWei !== undefined && editing.rewardWei !== null ? (() => { try { return formatUnits(BigInt(editing.rewardWei), 18); } catch { return ""; } })() : ""}
+                          onChange={e => {
+                            const v = e.target.value.trim();
+                            if (v === "") {
+                              setEditing({ ...editing, rewardWei: null });
+                            } else {
+                              try { setEditing({ ...editing, rewardWei: parseUnits(v, 18).toString() }); } catch {}
+                            }
+                          }}
+                        />
+                      ) : (
+                        <span className="block text-right font-body text-sm text-on-surface-variant">
+                          {(() => { try { return formatUnits(BigInt(t.rewardWei || "0"), 18); } catch { return "—"; } })()}
                         </span>
                       )}
                     </td>
@@ -448,6 +567,23 @@ export default function CampaignDetail({ campaignId, campaignName, defaultRespon
                       rows={2}
                       placeholder="Enter prompt text..."
                       autoFocus
+                    />
+                  </td>
+                  <td className="px-6 py-3">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="Inherit"
+                      className="w-full rounded-lg border border-outline-variant bg-surface-container px-2 py-2 text-right font-body text-xs text-on-surface placeholder-on-surface-variant/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+                      value={editing.rewardWei !== undefined && editing.rewardWei !== null ? (() => { try { return formatUnits(BigInt(editing.rewardWei), 18); } catch { return ""; } })() : ""}
+                      onChange={e => {
+                        const v = e.target.value.trim();
+                        if (v === "") {
+                          setEditing({ ...editing, rewardWei: null });
+                        } else {
+                          try { setEditing({ ...editing, rewardWei: parseUnits(v, 18).toString() }); } catch {}
+                        }
+                      }}
                     />
                   </td>
                   <td className="px-6 py-3">

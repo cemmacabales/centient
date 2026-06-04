@@ -8,6 +8,8 @@ export interface TaskResponse {
     prompt: string;
     responseA: string;
     responseB: string;
+    rewardWei?: string;
+    rewardDisplay?: string;
   } | null;
   message?: string;
 }
