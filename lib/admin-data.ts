@@ -284,6 +284,251 @@ export async function getWalletRows(): Promise<WalletRow[]> {
   }));
 }
 
+export interface UserRow {
+  walletAddress: string;
+  createdAt: Date;
+  submissionCount: number;
+  totalEarned: string;
+  goldCorrect: number;
+  goldAttempted: number;
+  goldAccuracyPct: number | null;
+  isBanned: boolean;
+  bannedAt: Date | null;
+  bannedReason: string | null;
+  country: string | null;
+  gender: string | null;
+  ageRange: string | null;
+  onboardingCompleted: boolean;
+  lastSubmissionAt: Date | null;
+}
+
+export async function getUserRows(): Promise<UserRow[]> {
+  const users = await prisma.user.findMany({
+    orderBy: { createdAt: "desc" },
+    include: {
+      submissions: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { createdAt: true },
+      },
+    },
+  });
+  return users.map((u) => ({
+    walletAddress: u.walletAddress,
+    createdAt: u.createdAt,
+    submissionCount: u.submissionCount,
+    totalEarned: formatUnits(u.totalEarnedWei, REWARD_TOKEN_DECIMALS),
+    goldCorrect: u.goldCorrect,
+    goldAttempted: u.goldAttempted,
+    goldAccuracyPct:
+      u.goldAttempted === 0 ? null : Math.round((u.goldCorrect / u.goldAttempted) * 100),
+    isBanned: u.isBanned,
+    bannedAt: u.bannedAt,
+    bannedReason: u.bannedReason,
+    country: u.country,
+    gender: u.gender,
+    ageRange: u.ageRange,
+    onboardingCompleted: u.onboardingCompleted,
+    lastSubmissionAt: u.submissions[0]?.createdAt ?? null,
+  }));
+}
+
+export interface UserProfile {
+  walletAddress: string;
+  createdAt: Date;
+  totalEarned: string;
+  totalEarnedWei: bigint;
+  submissionCount: number;
+  goldCorrect: number;
+  goldAttempted: number;
+  goldAccuracyPct: number | null;
+  isBanned: boolean;
+  bannedAt: Date | null;
+  bannedReason: string | null;
+  country: string | null;
+  gender: string | null;
+  ageRange: string | null;
+  onboardingCompleted: boolean;
+  payoutTotals: {
+    pending: number;
+    sent: number;
+    failed: number;
+    skipped: number;
+  };
+  recentSubmissions: Array<{
+    id: string;
+    taskId: string;
+    taskPrompt: string;
+    choice: string;
+    reason: string;
+    isGoldCheck: boolean;
+    goldPassed: boolean | null;
+    payoutAmountWei: bigint;
+    payoutStatus: string;
+    payoutTxHash: string | null;
+    createdAt: Date;
+  }>;
+}
+
+export async function getUserProfile(walletAddress: string): Promise<UserProfile | null> {
+  const u = await prisma.user.findUnique({
+    where: { walletAddress: walletAddress.toLowerCase() },
+  });
+  if (!u) return null;
+
+  const [payoutGrouped, recent] = await Promise.all([
+    prisma.submission.groupBy({
+      by: ["payoutStatus"],
+      where: { walletAddress: u.walletAddress },
+      _count: { _all: true },
+    }),
+    prisma.submission.findMany({
+      where: { walletAddress: u.walletAddress },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      include: { task: { select: { prompt: true } } },
+    }),
+  ]);
+
+  const payoutTotals = payoutGrouped.reduce(
+    (acc, row) => {
+      const key = row.payoutStatus as keyof typeof acc;
+      if (key in acc) acc[key] = row._count._all;
+      return acc;
+    },
+    { pending: 0, sent: 0, failed: 0, skipped: 0 } as { pending: number; sent: number; failed: number; skipped: number },
+  );
+
+  return {
+    walletAddress: u.walletAddress,
+    createdAt: u.createdAt,
+    totalEarned: formatUnits(u.totalEarnedWei, REWARD_TOKEN_DECIMALS),
+    totalEarnedWei: u.totalEarnedWei,
+    submissionCount: u.submissionCount,
+    goldCorrect: u.goldCorrect,
+    goldAttempted: u.goldAttempted,
+    goldAccuracyPct:
+      u.goldAttempted === 0 ? null : Math.round((u.goldCorrect / u.goldAttempted) * 100),
+    isBanned: u.isBanned,
+    bannedAt: u.bannedAt,
+    bannedReason: u.bannedReason,
+    country: u.country,
+    gender: u.gender,
+    ageRange: u.ageRange,
+    onboardingCompleted: u.onboardingCompleted,
+    payoutTotals,
+    recentSubmissions: recent.map((s) => ({
+      id: s.id,
+      taskId: s.taskId,
+      taskPrompt: s.task.prompt,
+      choice: s.choice,
+      reason: s.reason,
+      isGoldCheck: s.isGoldCheck,
+      goldPassed: s.goldPassed,
+      payoutAmountWei: s.payoutAmountWei,
+      payoutStatus: s.payoutStatus,
+      payoutTxHash: s.payoutTxHash,
+      createdAt: s.createdAt,
+    })),
+  };
+}
+
+export interface PoolHealth {
+  pendingSubmissions: number;
+  pendingOldestAt: Date | null;
+  failedSubmissions: number;
+  failedLast24h: number;
+  totalTasks: number;
+  totalCampaignTasks: number;
+  totalPlatformGoldTasks: number;
+  totalUsers: number;
+  bannedUsers: number;
+  hotWalletAddress: string;
+  hotWalletBalance: string;
+  rewardSymbol: string;
+  stuckPayoutThresholdMs: number;
+}
+
+const STUCK_PAYOUT_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+export async function getHealthSnapshot(): Promise<PoolHealth> {
+  const now = new Date();
+  const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+  const [
+    pending,
+    pendingOldest,
+    failedAll,
+    failedLast24h,
+    totalTasks,
+    totalCampaignTasks,
+    totalPlatformGoldTasks,
+    totalUsers,
+    bannedUsers,
+    wallet,
+  ] = await Promise.all([
+    prisma.submission.count({ where: { payoutStatus: "pending" } }),
+    prisma.submission.findFirst({
+      where: { payoutStatus: "pending" },
+      orderBy: { createdAt: "asc" },
+      select: { createdAt: true },
+    }),
+    prisma.submission.count({ where: { payoutStatus: "failed" } }),
+    prisma.submission.count({
+      where: { payoutStatus: "failed", createdAt: { gte: last24h } },
+    }),
+    prisma.task.count(),
+    prisma.task.count({ where: { campaignId: { not: null } } }),
+    prisma.task.count({ where: { isGold: true, campaignId: null } }),
+    prisma.user.count(),
+    prisma.user.count({ where: { isBanned: true } }),
+    hotWallet(),
+  ]);
+
+  return {
+    pendingSubmissions: pending,
+    pendingOldestAt: pendingOldest?.createdAt ?? null,
+    failedSubmissions: failedAll,
+    failedLast24h,
+    totalTasks,
+    totalCampaignTasks,
+    totalPlatformGoldTasks,
+    totalUsers,
+    bannedUsers,
+    hotWalletAddress: wallet.address,
+    hotWalletBalance: wallet.balance,
+    rewardSymbol: REWARD_TOKEN_SYMBOL,
+    stuckPayoutThresholdMs: STUCK_PAYOUT_THRESHOLD_MS,
+  };
+}
+
+export function isStuckPending(createdAt: Date, now: Date = new Date()): boolean {
+  return now.getTime() - createdAt.getTime() > STUCK_PAYOUT_THRESHOLD_MS;
+}
+
+// Pure rule used by both /api/submit and the ban endpoint. Mirrors the
+// submission flow at app/api/submit/route.ts — keep them in sync.
+export interface BanCheckInput {
+  goldAttempted: number;
+  goldCorrect: number;
+}
+export interface BanCheckResult {
+  shouldBan: boolean;
+  reason: string | null;
+}
+export function evaluateBanRule(input: BanCheckInput): BanCheckResult {
+  if (input.goldAttempted < 3) {
+    return { shouldBan: false, reason: null };
+  }
+  if (input.goldCorrect / input.goldAttempted < 0.5) {
+    return {
+      shouldBan: true,
+      reason: `auto: gold accuracy ${input.goldCorrect}/${input.goldAttempted} < 50% after 3+ attempts`,
+    };
+  }
+  return { shouldBan: false, reason: null };
+}
+
 export function truncateAddress(address: string): string {
   if (!address || address.length < 12) return address;
   return `${address.slice(0, 6)}…${address.slice(-4)}`;

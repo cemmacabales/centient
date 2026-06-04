@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession, assertExportAllowed, type AdminJWTPayload } from "@/lib/admin-auth";
+import { auditLog } from "@/lib/audit";
 
 type ExportFormat = "json" | "csv" | "txt";
 type SplitValue = "train" | "test" | "validation" | "all";
@@ -113,6 +114,21 @@ export async function GET(
   const filtered = splitParam === "all"
     ? records
     : records.filter((s) => assignSplit(s.id) === splitParam);
+
+  auditLog({
+    adminUserId: session.sub,
+    action: "export.download",
+    targetType: "campaign",
+    targetId: campaign.id,
+    req,
+    metadata: {
+      format,
+      split: splitParam,
+      limit,
+      recordCount: filtered.length,
+      scope: "campaign",
+    },
+  });
 
   const safeName = campaign.name.replace(/[^a-zA-Z0-9-_]/g, "_");
   const dateStr = new Date().toISOString().slice(0, 10);

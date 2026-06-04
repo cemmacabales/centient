@@ -1,11 +1,12 @@
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 import { sendVerificationEmail } from "@/lib/email";
 import { randomBytes } from "crypto";
+import { auditLog } from "@/lib/audit";
 
 export async function POST(
-  _req: Request,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getAdminSession();
@@ -38,6 +39,15 @@ export async function POST(
       verificationToken,
       verificationTokenExpires: new Date(Date.now() + 24 * 60 * 60 * 1000),
     },
+  });
+
+  auditLog({
+    adminUserId: session.sub,
+    action: "customer.resend_verification",
+    targetType: "adminUser",
+    targetId: id,
+    req,
+    metadata: { email: customer.email, companyName: customer.companyName },
   });
 
   let emailDelivered = true;

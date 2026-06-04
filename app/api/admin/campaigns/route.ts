@@ -50,7 +50,12 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const { name, defaultResponseTarget, rewardWei: rewardWeiRaw } = body;
 
-  if (!name?.trim() || defaultResponseTarget === undefined) {
+  if (
+    !name?.trim() ||
+    defaultResponseTarget === undefined ||
+    !Number.isInteger(Number(defaultResponseTarget)) ||
+    Number(defaultResponseTarget) < 1
+  ) {
     return NextResponse.json({ error: "missing_fields" }, { status: 400 });
   }
 
