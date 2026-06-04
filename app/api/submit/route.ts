@@ -66,9 +66,22 @@ export async function POST(req: NextRequest) {
       return errorResponse("already_submitted", 409, { walletAddress, taskId });
     }
 
-    const task = await prisma.task.findUnique({ where: { id: taskId } });
+    const task = await prisma.task.findUnique({
+      where: { id: taskId },
+      include: {
+        campaign: { select: { defaultResponseTarget: true } },
+        _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
+      },
+    });
     if (!task) {
       return errorResponse("task_not_found", 404, { walletAddress, taskId });
+    }
+
+    if (!task.isGold) {
+      const responseTarget = task.responseTarget ?? task.campaign?.defaultResponseTarget ?? null;
+      if (responseTarget !== null && task._count.submissions >= responseTarget) {
+        return errorResponse("response_target_reached", 409, { walletAddress, taskId, responseTarget, paid: task._count.submissions });
+      }
     }
 
     if (task.isGold) {

@@ -24,6 +24,7 @@ import {
   createUser,
   createTask,
   createGoldTask,
+  createCampaign,
   seedSubmissions,
   makeWallet,
   VALID_REASON,
@@ -353,5 +354,95 @@ describe("POST /api/submit - payout", () => {
 
     const user = await prisma.user.findUnique({ where: { walletAddress: wallet } });
     expect(user?.submissionCount).toBe(0);
+  });
+});
+
+describe("POST /api/submit - response target cap", () => {
+  it("returns 409 response_target_reached when task-level target is met", async () => {
+    const wallet = makeWallet();
+    const campaign = await createCampaign();
+    const task = await createTask({ campaignId: campaign.id, responseTarget: 2 });
+
+    const other1 = makeWallet();
+    const other2 = makeWallet();
+    await prisma.user.create({ data: { walletAddress: wallet } });
+    await prisma.user.create({ data: { walletAddress: other1 } });
+    await prisma.user.create({ data: { walletAddress: other2 } });
+    await prisma.submission.createMany({
+      data: [
+        { walletAddress: other1, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
+        { walletAddress: other2, taskId: task.id, choice: "B", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
+      ],
+    });
+
+    const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("response_target_reached");
+  });
+
+  it("returns 409 response_target_reached when campaign-level target is met (task null)", async () => {
+    const wallet = makeWallet();
+    const campaign = await createCampaign({ defaultResponseTarget: 1 });
+    const task = await createTask({ campaignId: campaign.id, responseTarget: null });
+
+    const other = makeWallet();
+    await prisma.user.create({ data: { walletAddress: wallet } });
+    await prisma.user.create({ data: { walletAddress: other } });
+    await prisma.submission.create({
+      data: { walletAddress: other, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
+    });
+
+    const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("response_target_reached");
+  });
+
+  it("allows submission when target is not yet met", async () => {
+    const wallet = makeWallet();
+    const campaign = await createCampaign({ defaultResponseTarget: 3 });
+    const task = await createTask({ campaignId: campaign.id, responseTarget: null });
+
+    const other = makeWallet();
+    await prisma.user.create({ data: { walletAddress: wallet } });
+    await prisma.user.create({ data: { walletAddress: other } });
+    await prisma.submission.create({
+      data: { walletAddress: other, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
+    });
+
+    vi.mocked(payReward).mockResolvedValueOnce(
+      "0xfeed0000000000000000000000000000000000000000000000000000000000" as `0x${string}`,
+    );
+
+    const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).paid).toBe(true);
+  });
+
+  it("gold tasks bypass the response target cap", async () => {
+    const wallet = makeWallet();
+    const gold = await createGoldTask("A");
+
+    const u1 = makeWallet();
+    const u2 = makeWallet();
+    const u3 = makeWallet();
+    await prisma.user.create({ data: { walletAddress: wallet } });
+    await prisma.user.create({ data: { walletAddress: u1 } });
+    await prisma.user.create({ data: { walletAddress: u2 } });
+    await prisma.user.create({ data: { walletAddress: u3 } });
+    await prisma.submission.createMany({
+      data: [
+        { walletAddress: u1, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
+        { walletAddress: u2, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
+        { walletAddress: u3, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
+      ],
+    });
+
+    vi.mocked(payReward).mockResolvedValueOnce(
+      "0xfeed0000000000000000000000000000000000000000000000000000000000" as `0x${string}`,
+    );
+
+    const res = await submit(validPayload({ walletAddress: wallet, taskId: gold.id, choice: "A" }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).paid).toBe(true);
   });
 });
