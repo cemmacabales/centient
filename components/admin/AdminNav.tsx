@@ -4,9 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS_SUPER_ADMIN = [
+  { href: "/admin/campaigns", label: "Campaigns" },
   { href: "/admin/tasks", label: "Tasks" },
+  { href: "/admin/users", label: "Users" },
   { href: "/admin/wallets", label: "Wallets" },
   { href: "/admin/customers", label: "Customers" },
+  { href: "/admin/status-health", label: "Status" },
 ];
 
 const TABS_CUSTOMER = [

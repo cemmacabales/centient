@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { payReward, resolveRewardWei } from "@/lib/payout";
-import { isRateLimited, isSpamReason } from "@/lib/quality";
+import { isSpamReason } from "@/lib/quality";
+import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { validateReason } from "@/lib/validators";
+import { evaluateBanRule } from "@/lib/admin-data";
 
 const EXPLORER_URL = process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://celoscan.io";
 
@@ -42,7 +44,7 @@ export async function POST(req: NextRequest) {
     return errorResponse("invalid_reason", 400, { walletAddress, taskId });
   }
 
-  if (isRateLimited(walletAddress)) {
+  if (await checkWalletRateLimit(walletAddress)) {
     return errorResponse("rate_limited", 429, { walletAddress });
   }
 
@@ -98,18 +100,24 @@ export async function POST(req: NextRequest) {
         const refreshed = await prisma.user.findUniqueOrThrow({
           where: { walletAddress },
         });
-        if (
-          refreshed.goldAttempted >= 3 &&
-          refreshed.goldCorrect / refreshed.goldAttempted < 0.5
-        ) {
+        const banDecision = evaluateBanRule({
+          goldAttempted: refreshed.goldAttempted,
+          goldCorrect: refreshed.goldCorrect,
+        });
+        if (banDecision.shouldBan) {
           await prisma.user.update({
             where: { walletAddress },
-            data: { isBanned: true },
+            data: {
+              isBanned: true,
+              bannedAt: new Date(),
+              bannedReason: banDecision.reason,
+            },
           });
           console.warn("[submit] banned_wallet", {
             walletAddress,
             goldAttempted: refreshed.goldAttempted,
             goldCorrect: refreshed.goldCorrect,
+            reason: banDecision.reason,
           });
         }
 

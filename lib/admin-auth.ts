@@ -68,12 +68,19 @@ export async function requireAdmin(): Promise<AdminJWTPayload> {
   return session;
 }
 
+// Role hierarchy: SUPER_ADMIN is a superset of CUSTOMER. Anywhere a CUSTOMER is
+// required, a SUPER_ADMIN session is accepted. The reverse is never true.
+function hasRole(session: AdminJWTPayload, role: AdminRole): boolean {
+  if (session.role === "SUPER_ADMIN") return true;
+  return session.role === role;
+}
+
 // For use in route handlers (API routes)
 export async function requireRoleForRoute(
   role: AdminRole,
   session: AdminJWTPayload
 ): Promise<void | NextResponse> {
-  if (session.role !== role) {
+  if (!hasRole(session, role)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 }
@@ -81,7 +88,7 @@ export async function requireRoleForRoute(
 // For use in server components/pages
 export async function requireRoleForPage(role: AdminRole): Promise<AdminJWTPayload> {
   const session = await requireAdmin();
-  if (session.role !== role) {
+  if (!hasRole(session, role)) {
     redirect("/admin/login");
   }
   return session;
