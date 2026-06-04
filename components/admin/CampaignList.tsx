@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { parseUnits } from "viem";
+import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
 interface Campaign {
   id: string;
   name: string;
   defaultResponseTarget: number;
+  rewardWei: string;
   taskCount: number;
   totalResponses: number;
   completionPct: number;
@@ -40,12 +43,12 @@ export default function CampaignList({
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
 
-  async function handleCreate(name: string, defaultResponseTarget: number) {
+  async function handleCreate(name: string, defaultResponseTarget: number, rewardWei: string) {
     setLoading(true);
     const res = await fetch("/api/admin/campaigns", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, defaultResponseTarget }),
+      body: JSON.stringify({ name, defaultResponseTarget, rewardWei }),
     });
     if (res.ok) {
       const newCampaign = await res.json();
@@ -279,7 +282,7 @@ function StatCard({ label, value, subline }: StatCardProps) {
 }
 
 interface NewCampaignModalProps {
-  onSubmit: (name: string, defaultResponseTarget: number) => void;
+  onSubmit: (name: string, defaultResponseTarget: number, rewardWei: string) => void;
   onClose: () => void;
   loading: boolean;
 }
@@ -287,8 +290,20 @@ interface NewCampaignModalProps {
 function NewCampaignModal({ onSubmit, onClose, loading }: NewCampaignModalProps) {
   const [name, setName] = useState("");
   const [defaultResponseTarget, setDefaultResponseTarget] = useState(50);
+  const [rewardDisplay, setRewardDisplay] = useState("0.05");
 
-  const canSubmit = name.trim();
+  const canSubmit = name.trim() && rewardDisplay.trim() && !isNaN(Number(rewardDisplay)) && Number(rewardDisplay) > 0;
+
+  function handleFormSubmit() {
+    if (!canSubmit) return;
+    let wei: string;
+    try {
+      wei = parseUnits(rewardDisplay.trim(), REWARD_TOKEN_DECIMALS).toString();
+    } catch {
+      return;
+    }
+    onSubmit(name.trim(), defaultResponseTarget, wei);
+  }
 
   return (
     <div
@@ -314,7 +329,7 @@ function NewCampaignModal({ onSubmit, onClose, loading }: NewCampaignModalProps)
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (canSubmit) onSubmit(name.trim(), defaultResponseTarget);
+            handleFormSubmit();
           }}
           className="mt-6 space-y-4"
         >
@@ -346,6 +361,23 @@ function NewCampaignModal({ onSubmit, onClose, loading }: NewCampaignModalProps)
             />
             <p className="mt-1 font-body text-xs text-on-surface-variant">
               Per-task submission goal. Can be overridden per task in CSV.
+            </p>
+          </div>
+
+          <div>
+            <label className="block font-label text-sm font-bold text-on-surface">
+              Reward per Task ({REWARD_TOKEN_SYMBOL})
+            </label>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={rewardDisplay}
+              onChange={(e) => setRewardDisplay(e.target.value)}
+              placeholder="0.05"
+              className="mt-1 w-full rounded-lg border-none bg-surface-container-highest px-4 py-3 font-body text-sm text-on-surface placeholder-on-surface-variant/50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+            />
+            <p className="mt-1 font-body text-xs text-on-surface-variant">
+              Reward amount per submission in display units (e.g., 0.05 for 0.05 tokens).
             </p>
           </div>
 

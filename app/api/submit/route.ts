@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { payReward, rewardInWei } from "@/lib/payout";
+import { payReward, resolveRewardWei } from "@/lib/payout";
 import { isSpamReason } from "@/lib/quality";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { validateReason } from "@/lib/validators";
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
     const task = await prisma.task.findUnique({
       where: { id: taskId },
       include: {
-        campaign: { select: { defaultResponseTarget: true } },
+        campaign: { select: { defaultResponseTarget: true, rewardWei: true } },
         _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
       },
     });
@@ -172,7 +172,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const amount = rewardInWei();
+    const amount = resolveRewardWei(task.rewardWei, task.campaign?.rewardWei ?? null);
     const submission = await prisma.submission.create({
       data: {
         walletAddress,
@@ -187,7 +187,7 @@ export async function POST(req: NextRequest) {
     });
 
     try {
-      const txHash = await payReward(walletAddress as `0x${string}`);
+      const txHash = await payReward(walletAddress as `0x${string}`, amount);
       await prisma.$transaction([
         prisma.submission.update({
           where: { id: submission.id },

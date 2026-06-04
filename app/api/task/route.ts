@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { GOLD_TASK_RATIO } from "@/lib/constants";
+import { formatUnits } from "viem";
+import {
+  GOLD_TASK_RATIO,
+  REWARD_TOKEN_DECIMALS,
+  REWARD_TOKEN_SYMBOL,
+} from "@/lib/constants";
+import { resolveRewardWei } from "@/lib/payout";
 
 function computeResponseTarget(
   taskResponseTarget: number | null,
@@ -30,7 +36,8 @@ export async function GET(req: NextRequest) {
     responseB: string;
     isGold: boolean;
     responseTarget: number | null;
-    campaign: { defaultResponseTarget: number } | null;
+    rewardWei: bigint | null;
+    campaign: { defaultResponseTarget: number; rewardWei: bigint } | null;
     _count: { submissions: number };
   } | null = null;
 
@@ -42,11 +49,11 @@ export async function GET(req: NextRequest) {
         goldAnswer: { not: null },
         id: { notIn: doneIds },
       },
-      orderBy: { createdAt: "asc" },
       include: {
-        campaign: { select: { defaultResponseTarget: true } },
+        campaign: { select: { defaultResponseTarget: true, rewardWei: true } },
         _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
       },
+      orderBy: { createdAt: "asc" },
     });
 
     if (!task) {
@@ -63,11 +70,11 @@ export async function GET(req: NextRequest) {
         ],
         id: { notIn: doneIds },
       },
-      orderBy: { createdAt: "asc" },
       include: {
-        campaign: { select: { defaultResponseTarget: true } },
+        campaign: { select: { defaultResponseTarget: true, rewardWei: true } },
         _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
       },
+      orderBy: { createdAt: "asc" },
     });
 
     for (const t of nonGoldTasks) {
@@ -85,6 +92,8 @@ export async function GET(req: NextRequest) {
 
   const target = computeResponseTarget(task.responseTarget, task.campaign?.defaultResponseTarget ?? null);
   const submissionsRemaining = target !== null ? Math.max(0, target - task._count.submissions) : null;
+  const resolvedWei = resolveRewardWei(task.rewardWei, task.campaign?.rewardWei ?? null);
+  const rewardDisplay = formatUnits(resolvedWei, REWARD_TOKEN_DECIMALS);
 
   return NextResponse.json({
     task: {
@@ -93,6 +102,9 @@ export async function GET(req: NextRequest) {
       responseA: task.responseA,
       responseB: task.responseB,
       submissionsRemaining,
+      rewardWei: resolvedWei.toString(),
+      rewardDisplay,
+      rewardSymbol: REWARD_TOKEN_SYMBOL,
     },
   });
 }

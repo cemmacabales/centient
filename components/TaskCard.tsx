@@ -23,9 +23,11 @@ export default function TaskCard({
   task,
   onSubmit,
   loading,
-  reward = REWARD_AMOUNT,
-  tokenSymbol = REWARD_TOKEN_SYMBOL,
+  reward,
+  tokenSymbol,
 }: TaskCardProps) {
+  const displayReward = reward ?? REWARD_AMOUNT;
+  const displaySymbol = tokenSymbol ?? REWARD_TOKEN_SYMBOL;
   const [choice, setChoice] = useState<"A" | "B" | null>(null);
   const [reason, setReason] = useState("");
 
@@ -62,7 +64,7 @@ export default function TaskCard({
           >
             monetization_on
           </span>
-          <span className="font-headline text-sm font-bold text-secondary">{reward} {tokenSymbol}</span>
+          <span className="font-headline text-sm font-bold text-secondary">{displayReward} {displaySymbol}</span>
         </div>
       </div>
 
