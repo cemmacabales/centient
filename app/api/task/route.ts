@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { GOLD_TASK_RATIO } from "@/lib/constants";
 
+function computeResponseTarget(
+  taskResponseTarget: number | null,
+  campaignDefaultResponseTarget: number | null,
+): number | null {
+  return taskResponseTarget ?? campaignDefaultResponseTarget ?? null;
+}
+
 export async function GET(req: NextRequest) {
   const wallet = req.nextUrl.searchParams.get("wallet")?.toLowerCase();
   if (!wallet || !/^0x[a-f0-9]{40}$/.test(wallet)) {
@@ -16,7 +23,16 @@ export async function GET(req: NextRequest) {
 
   const useGold = Math.random() < GOLD_TASK_RATIO;
 
-  let task = null;
+  let task: {
+    id: string;
+    prompt: string;
+    responseA: string;
+    responseB: string;
+    isGold: boolean;
+    responseTarget: number | null;
+    campaign: { defaultResponseTarget: number } | null;
+    _count: { submissions: number };
+  } | null = null;
 
   if (useGold) {
     task = await prisma.task.findFirst({
@@ -27,6 +43,10 @@ export async function GET(req: NextRequest) {
         id: { notIn: doneIds },
       },
       orderBy: { createdAt: "asc" },
+      include: {
+        campaign: { select: { defaultResponseTarget: true } },
+        _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
+      },
     });
 
     if (!task) {
@@ -35,7 +55,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (!task) {
-    task = await prisma.task.findFirst({
+    const nonGoldTasks = await prisma.task.findMany({
       where: {
         OR: [
           { isGold: false },
@@ -44,12 +64,27 @@ export async function GET(req: NextRequest) {
         id: { notIn: doneIds },
       },
       orderBy: { createdAt: "asc" },
+      include: {
+        campaign: { select: { defaultResponseTarget: true } },
+        _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
+      },
     });
+
+    for (const t of nonGoldTasks) {
+      const target = computeResponseTarget(t.responseTarget, t.campaign?.defaultResponseTarget ?? null);
+      if (target === null || t._count.submissions < target) {
+        task = t;
+        break;
+      }
+    }
   }
 
   if (!task) {
     return NextResponse.json({ task: null, message: "No more tasks available" });
   }
+
+  const target = computeResponseTarget(task.responseTarget, task.campaign?.defaultResponseTarget ?? null);
+  const submissionsRemaining = target !== null ? Math.max(0, target - task._count.submissions) : null;
 
   return NextResponse.json({
     task: {
@@ -57,6 +92,7 @@ export async function GET(req: NextRequest) {
       prompt: task.prompt,
       responseA: task.responseA,
       responseB: task.responseB,
+      submissionsRemaining,
     },
   });
 }

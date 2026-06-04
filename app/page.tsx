@@ -35,6 +35,7 @@ interface TaskData {
   prompt: string;
   responseA: string;
   responseB: string;
+  submissionsRemaining?: number | null;
 }
 
 interface SubmitResponseBody {
@@ -66,6 +67,8 @@ function submitErrorMessage(status: number, code?: string): string {
       return "Please vary your answers — submission rejected.";
     case "task_not_found":
       return "This task is no longer available.";
+    case "response_target_reached":
+      return "This task has enough submissions. Try the next one.";
     case "payout_failed":
       return "Payment failed. Please try again.";
     case "server_error":

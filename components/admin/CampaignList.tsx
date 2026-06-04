@@ -123,7 +123,8 @@ export default function CampaignList({
           )}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-3xl border border-outline-variant/40 bg-surface-container-lowest shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
+        <div className="rounded-3xl border border-outline-variant/40 bg-surface-container-lowest shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
+          <div className="overflow-x-auto rounded-3xl">
           <table className="w-full">
             <thead>
               <tr className="border-b border-outline-variant/30">
@@ -240,6 +241,7 @@ export default function CampaignList({
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
