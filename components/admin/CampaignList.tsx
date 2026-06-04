@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { parseUnits } from "viem";
+import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
 interface Campaign {
   id: string;
@@ -295,7 +296,7 @@ function NewCampaignModal({ onSubmit, onClose, loading }: NewCampaignModalProps)
     if (!canSubmit) return;
     let wei: string;
     try {
-      wei = parseUnits(rewardDisplay.trim(), 18).toString();
+      wei = parseUnits(rewardDisplay.trim(), REWARD_TOKEN_DECIMALS).toString();
     } catch {
       return;
     }
@@ -363,7 +364,7 @@ function NewCampaignModal({ onSubmit, onClose, loading }: NewCampaignModalProps)
 
           <div>
             <label className="block font-label text-sm font-bold text-on-surface">
-              Reward per Task (ETH)
+              Reward per Task ({REWARD_TOKEN_SYMBOL})
             </label>
             <input
               type="text"
