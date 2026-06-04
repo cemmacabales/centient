@@ -13,6 +13,7 @@ import InAppLanding from "@/components/InAppLanding";
 import OutsideMiniPayPage from "@/components/OutsideMiniPayPage";
 import Toast, { type ToastKind, type ToastMessage } from "@/components/Toast";
 import OnboardingScreen from "@/components/OnboardingScreen";
+import { posthog } from "@/components/PostHogProvider";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
 const MIN_LOADING_MS = 1500;
@@ -116,6 +117,9 @@ export default function Home() {
         rewardSymbol: data.task.rewardSymbol,
       });
       setScreen("task");
+      if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
+        posthog.capture("task_viewed", { wallet: addr, taskId: data.task.id });
+      }
     } else {
       setScreen("no_tasks");
     }
@@ -153,7 +157,10 @@ export default function Home() {
   const handleOnboardingComplete = useCallback(() => {
     setOnboardingCompleted(true);
     setScreen("landing");
-  }, []);
+    if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
+      posthog.capture("onboarding_completed", { wallet });
+    }
+  }, [wallet]);
 
   async function handleSubmit(choice: "A" | "B", reason: string) {
     if (!wallet || !task) return;
@@ -181,11 +188,17 @@ export default function Home() {
 
       if (res.status === 403) {
         setScreen("banned");
+        if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
+          posthog.capture("user_banned", { wallet, taskId: task.id });
+        }
         return;
       }
 
       if (!data.paid && data.reason === "quality_check_failed") {
         setScreen("quality_failed");
+        if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
+          posthog.capture("quality_check_failed", { wallet, taskId: task.id });
+        }
         setTimeout(() => fetchTask(wallet), 1500);
         return;
       }
@@ -194,6 +207,9 @@ export default function Home() {
         setLastTxHash(data.txHash ?? null);
         await fetchUserData(wallet);
         setScreen("success");
+        if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
+          posthog.capture("submission_success", { wallet, taskId: task.id, txHash: data.txHash });
+        }
         setTimeout(async () => {
           await fetchTask(wallet);
         }, 1500);

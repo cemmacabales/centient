@@ -1,3 +1,4 @@
+import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 
 const config: NextConfig = {
@@ -9,4 +10,8 @@ const config: NextConfig = {
   ],
 };
 
-export default config;
+export default withSentryConfig(config, {
+  silent: true,
+  telemetry: false,
+  widenClientFileUpload: true,
+});

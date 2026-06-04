@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { payReward, resolveRewardWei } from "@/lib/payout";
 import { isSpamReason } from "@/lib/quality";
@@ -10,6 +11,10 @@ const EXPLORER_URL = process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://celoscan.i
 
 function errorResponse(code: string, status: number, context: Record<string, unknown> = {}) {
   console.error(`[submit] ${code}`, context);
+  Sentry.captureMessage(`[submit] ${code}`, {
+    level: status >= 500 ? "error" : "warning",
+    extra: context,
+  });
   return NextResponse.json({ error: code }, { status });
 }
 
@@ -198,6 +203,9 @@ export async function POST(req: NextRequest) {
         explorerUrl: `${EXPLORER_URL}/tx/${txHash}`,
       });
     } catch (err) {
+      Sentry.captureException(err, {
+        extra: { walletAddress, taskId, submissionId: submission.id },
+      });
       await prisma.submission.update({
         where: { id: submission.id },
         data: { payoutStatus: "failed" },
@@ -210,6 +218,9 @@ export async function POST(req: NextRequest) {
       });
     }
   } catch (err) {
+    Sentry.captureException(err, {
+      extra: { walletAddress, taskId },
+    });
     return errorResponse("server_error", 500, {
       walletAddress,
       taskId,

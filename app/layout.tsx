@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Manrope, Inter } from "next/font/google";
+import { ErrorBoundary } from "@sentry/nextjs";
+import PostHogProvider from "@/components/PostHogProvider";
 import "./globals.css";
 
 const manrope = Manrope({
@@ -46,6 +48,29 @@ export const metadata: Metadata = {
   },
 };
 
+function ErrorFallback() {
+  return (
+    <div className="flex min-h-dvh items-center justify-center bg-surface px-6">
+      <div className="flex max-w-sm flex-col items-center gap-4 text-center">
+        <div className="flex h-24 w-24 items-center justify-center rounded-full bg-error-container">
+          <span
+            className="material-symbols-outlined text-[48px] text-on-error-container"
+            aria-hidden="true"
+          >
+            error_outline
+          </span>
+        </div>
+        <h1 className="font-headline text-2xl font-bold text-on-surface">
+          Something went wrong
+        </h1>
+        <p className="font-body text-sm text-on-surface-variant">
+          An unexpected error occurred. Please reload the page and try again.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${manrope.variable} ${inter.variable}`}>
@@ -56,7 +81,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="bg-surface text-on-surface antialiased">
-        {children}
+        <ErrorBoundary fallback={<ErrorFallback />}>
+          <PostHogProvider>{children}</PostHogProvider>
+        </ErrorBoundary>
       </body>
     </html>
   );

@@ -1,4 +1,5 @@
 import "dotenv/config";
+import * as Sentry from "@sentry/nextjs";
 import { randomUUID } from "crypto";
 import prisma from "./prisma";
 import { parseCSV, type TaskRow } from "./csv-parser";
@@ -41,6 +42,7 @@ export async function processJob(jobId: string): Promise<void> {
   const job = await prisma.uploadJob.findUnique({ where: { id: jobId } });
   if (!job) {
     console.error(`[upload-worker] job ${jobId} not found`);
+    Sentry.captureMessage(`[upload-worker] job ${jobId} not found`, { level: "error" });
     return;
   }
 
@@ -205,6 +207,9 @@ export async function processJob(jobId: string): Promise<void> {
   } catch (err: any) {
     const message = err?.message ?? String(err);
     console.error(`[upload-worker] job ${jobId} failed:`, message);
+    Sentry.captureException(err, {
+      extra: { jobId },
+    });
 
     await prisma.uploadJob.update({
       where: { id: jobId },
@@ -239,6 +244,9 @@ export async function runWorkerLoop(): Promise<void> {
       await processJob(claimed.id);
     } catch (err) {
       console.error("[upload-worker] loop error:", err);
+      Sentry.captureException(err, {
+        extra: { context: "worker-loop" },
+      });
       await sleep(POLL_IDLE_MS);
     }
   }
@@ -273,6 +281,9 @@ async function writeAudit(
     });
   } catch (err) {
     console.error(`[upload-worker] failed to write audit ${action}:`, err);
+    Sentry.captureException(err, {
+      extra: { action, targetId },
+    });
   }
 }
 
@@ -293,6 +304,9 @@ if (isEntrypoint) {
   installSignalHandlers();
   runWorkerLoop().catch((err) => {
     console.error("[upload-worker] fatal:", err);
+    Sentry.captureException(err, {
+      extra: { context: "worker-fatal" },
+    });
     process.exit(1);
   });
 }
