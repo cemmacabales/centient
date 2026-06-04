@@ -57,6 +57,7 @@ model Campaign {
   adminUserId           String
   name                  String
   defaultResponseTarget Int
+  rewardWei             BigInt
   csvFileName           String?
   pausedAt              DateTime?
   createdAt             DateTime @default(now())
@@ -82,6 +83,7 @@ model Task {
   createdAt      DateTime @default(now())
   campaignId     String?
   responseTarget Int?
+  rewardWei      BigInt?
 
   submissions Submission[]
   campaign    Campaign?    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
