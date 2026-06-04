@@ -17,7 +17,7 @@ export async function GET(
 
   const campaign = await prisma.campaign.findFirst({
     where,
-    select: { defaultResponseTarget: true },
+    select: { defaultResponseTarget: true, rewardWei: true },
   });
 
   if (!campaign) {
@@ -30,6 +30,7 @@ export async function GET(
       id: true,
       prompt: true,
       responseTarget: true,
+      rewardWei: true,
       _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
     },
   });
@@ -38,6 +39,7 @@ export async function GET(
     const responseTarget = t.responseTarget ?? campaign.defaultResponseTarget;
     const responseCount = t._count.submissions;
     const pct = Math.min(100, Math.floor((responseCount / responseTarget) * 100));
+    const resolvedRewardWei = t.rewardWei ?? campaign.rewardWei;
 
     return {
       taskId: t.id,
@@ -45,6 +47,7 @@ export async function GET(
       responseTarget,
       responseCount,
       pct,
+      rewardWei: resolvedRewardWei.toString(),
     };
   });
 
@@ -66,7 +69,7 @@ export async function POST(
 
   const campaign = await prisma.campaign.findFirst({
     where,
-    select: { id: true, defaultResponseTarget: true },
+    select: { id: true, defaultResponseTarget: true, rewardWei: true },
   });
 
   if (!campaign) {
@@ -74,7 +77,7 @@ export async function POST(
   }
 
   const body = await req.json().catch(() => ({}));
-  const { prompt, responseTarget } = body;
+  const { prompt, responseTarget, rewardWei: rewardWeiRaw } = body;
 
   if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
     return NextResponse.json({ error: "invalid_prompt" }, { status: 400 });
@@ -83,6 +86,14 @@ export async function POST(
   const target = responseTarget !== undefined ? responseTarget : campaign.defaultResponseTarget;
   if (!Number.isInteger(target) || target < 1) {
     return NextResponse.json({ error: "invalid_response_target" }, { status: 400 });
+  }
+
+  let rewardWei: bigint | null = null;
+  if (rewardWeiRaw !== undefined) {
+    if (typeof rewardWeiRaw !== "string" || !/^\d+$/.test(rewardWeiRaw)) {
+      return NextResponse.json({ error: "invalid_reward_wei" }, { status: 400 });
+    }
+    rewardWei = BigInt(rewardWeiRaw);
   }
 
   const existing = await prisma.task.findUnique({
@@ -100,13 +111,17 @@ export async function POST(
       responseA: "(add via CSV)",
       responseB: "(add via CSV)",
       responseTarget: target,
+      rewardWei,
     },
   });
+
+  const resolvedRewardWei = task.rewardWei ?? campaign.rewardWei;
 
   return NextResponse.json({
     taskId: task.id,
     prompt: task.prompt,
     responseTarget: task.responseTarget ?? campaign.defaultResponseTarget,
+    rewardWei: resolvedRewardWei.toString(),
     responseCount: 0,
     pct: 0,
   }, { status: 201 });
