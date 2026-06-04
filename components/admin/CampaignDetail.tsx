@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { formatUnits, parseUnits } from "viem";
 import { useRouter } from "next/navigation";
+import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 import ExportModal from "@/components/admin/ExportModal";
 
 interface TaskProgress {
@@ -85,7 +86,7 @@ export default function CampaignDetail({
   const [error, setError] = useState<string | null>(null);
   const [campaignRewardEdit, setCampaignRewardEdit] = useState(false);
   const [campaignRewardDisplay, setCampaignRewardDisplay] = useState(() => {
-    try { return formatUnits(BigInt(rewardWei), 18); } catch { return "0.05"; }
+    try { return formatUnits(BigInt(rewardWei), REWARD_TOKEN_DECIMALS); } catch { return "0.05"; }
   });
   const [campaignRewardSaving, setCampaignRewardSaving] = useState(false);
   const [pausedAt, setPausedAt] = useState<string | null>(initialPausedAt);
@@ -153,7 +154,7 @@ export default function CampaignDetail({
   async function handleSaveCampaignReward() {
     setCampaignRewardSaving(true);
     try {
-      const wei = parseUnits(campaignRewardDisplay.trim(), 18).toString();
+      const wei = parseUnits(campaignRewardDisplay.trim(), REWARD_TOKEN_DECIMALS).toString();
       const res = await fetch(`/api/admin/campaigns/${campaignId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -162,7 +163,7 @@ export default function CampaignDetail({
       if (!res.ok) {
         setError("Failed to save campaign reward");
         setCampaignRewardDisplay(() => {
-          try { return formatUnits(BigInt(rewardWei), 18); } catch { return "0.05"; }
+          try { return formatUnits(BigInt(rewardWei), REWARD_TOKEN_DECIMALS); } catch { return "0.05"; }
         });
       } else {
         setCampaignRewardEdit(false);
@@ -170,7 +171,7 @@ export default function CampaignDetail({
     } catch {
       setError("Invalid reward amount");
       setCampaignRewardDisplay(() => {
-        try { return formatUnits(BigInt(rewardWei), 18); } catch { return "0.05"; }
+        try { return formatUnits(BigInt(rewardWei), REWARD_TOKEN_DECIMALS); } catch { return "0.05"; }
       });
     }
     setCampaignRewardSaving(false);
@@ -630,7 +631,7 @@ export default function CampaignDetail({
             <button
               onClick={() => {
                 setCampaignRewardEdit(false);
-                try { setCampaignRewardDisplay(formatUnits(BigInt(rewardWei), 18)); } catch { setCampaignRewardDisplay("0.05"); }
+                try { setCampaignRewardDisplay(formatUnits(BigInt(rewardWei), REWARD_TOKEN_DECIMALS)); } catch { setCampaignRewardDisplay("0.05"); }
               }}
               className="flex h-6 w-6 items-center justify-center rounded text-on-surface-variant transition-colors hover:bg-surface-container-high"
               title="Cancel"
@@ -640,7 +641,7 @@ export default function CampaignDetail({
           </span>
         ) : (
           <span className="flex items-center gap-1 font-body text-sm text-on-surface-variant">
-            Reward: {campaignRewardDisplay} / task
+            Reward: {campaignRewardDisplay} {REWARD_TOKEN_SYMBOL} / task
             <button
               onClick={() => setCampaignRewardEdit(true)}
               className="flex h-6 w-6 items-center justify-center rounded text-on-surface-variant transition-colors hover:bg-surface-container-high"
@@ -820,19 +821,19 @@ export default function CampaignDetail({
                           inputMode="decimal"
                           placeholder="Inherit"
                           className="w-full rounded-lg border border-outline-variant bg-surface-container px-2 py-2 text-right font-body text-xs text-on-surface placeholder-on-surface-variant/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                          value={editing.rewardWei !== undefined && editing.rewardWei !== null ? (() => { try { return formatUnits(BigInt(editing.rewardWei), 18); } catch { return ""; } })() : ""}
+                          value={editing.rewardWei !== undefined && editing.rewardWei !== null ? (() => { try { return formatUnits(BigInt(editing.rewardWei), REWARD_TOKEN_DECIMALS); } catch { return ""; } })() : ""}
                           onChange={e => {
                             const v = e.target.value.trim();
                             if (v === "") {
                               setEditing({ ...editing, rewardWei: null });
                             } else {
-                              try { setEditing({ ...editing, rewardWei: parseUnits(v, 18).toString() }); } catch {}
+                              try { setEditing({ ...editing, rewardWei: parseUnits(v, REWARD_TOKEN_DECIMALS).toString() }); } catch {}
                             }
                           }}
                         />
                       ) : (
                         <span className="block text-right font-body text-sm text-on-surface-variant">
-                          {(() => { try { return formatUnits(BigInt(t.rewardWei || "0"), 18); } catch { return "—"; } })()}
+                          {(() => { try { return formatUnits(BigInt(t.rewardWei || "0"), REWARD_TOKEN_DECIMALS); } catch { return "—"; } })()}
                         </span>
                       )}
                     </td>
@@ -925,13 +926,13 @@ export default function CampaignDetail({
                       inputMode="decimal"
                       placeholder="Inherit"
                       className="w-full rounded-lg border border-outline-variant bg-surface-container px-2 py-2 text-right font-body text-xs text-on-surface placeholder-on-surface-variant/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                      value={editing.rewardWei !== undefined && editing.rewardWei !== null ? (() => { try { return formatUnits(BigInt(editing.rewardWei), 18); } catch { return ""; } })() : ""}
+                      value={editing.rewardWei !== undefined && editing.rewardWei !== null ? (() => { try { return formatUnits(BigInt(editing.rewardWei), REWARD_TOKEN_DECIMALS); } catch { return ""; } })() : ""}
                       onChange={e => {
                         const v = e.target.value.trim();
                         if (v === "") {
                           setEditing({ ...editing, rewardWei: null });
                         } else {
-                          try { setEditing({ ...editing, rewardWei: parseUnits(v, 18).toString() }); } catch {}
+                          try { setEditing({ ...editing, rewardWei: parseUnits(v, REWARD_TOKEN_DECIMALS).toString() }); } catch {}
                         }
                       }}
                     />
