@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@/app/generated/prisma/client";
@@ -42,5 +43,8 @@ export function auditLog({
     })
     .catch((error) => {
       console.error(`[AUDIT_LOG_ERROR] Failed to log action ${action}:`, error);
+      Sentry.captureException(error, {
+        extra: { action, targetType, targetId },
+      });
     });
 }

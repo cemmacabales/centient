@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { createPublicClient, erc20Abi, formatUnits, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import prisma from "./prisma";
@@ -98,6 +99,9 @@ async function hotWallet(): Promise<{ address: string; balance: string }> {
       }
     })();
     console.error("[admin] hot wallet balance lookup failed", err);
+    Sentry.captureException(err, {
+      extra: { context: "hot-wallet-balance" },
+    });
     return { address: account, balance: "—" };
   }
 }
@@ -532,4 +536,142 @@ export function evaluateBanRule(input: BanCheckInput): BanCheckResult {
 export function truncateAddress(address: string): string {
   if (!address || address.length < 12) return address;
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+export interface TimeSeriesPoint {
+  hour: string;
+  count: number;
+}
+
+export interface PayoutTimeSeriesPoint {
+  hour: string;
+  amountWei: string;
+}
+
+export interface GoldPassRateStats {
+  totalAttempted: number;
+  totalCorrect: number;
+  ratePct: number | null;
+}
+
+export interface GoldAccuracyBucket {
+  accuracyRange: string;
+  count: number;
+}
+
+export interface CategoryDistribution {
+  category: string;
+  count: number;
+}
+
+export interface OpsDashboardData {
+  submissionVolume24h: TimeSeriesPoint[];
+  payoutVolume24h: PayoutTimeSeriesPoint[];
+  goldPassRate: GoldPassRateStats;
+  goldAccuracyDistribution: GoldAccuracyBucket[];
+  categoryDistribution: CategoryDistribution[];
+}
+
+export async function getOpsDashboardData(): Promise<OpsDashboardData> {
+  const [
+    submissionVolume24h,
+    payoutVolume24h,
+    goldPassRate,
+    goldAccuracyDistribution,
+    categoryDistribution,
+  ] = await Promise.all([
+    getSubmissionVolume24h(),
+    getPayoutVolume24h(),
+    getGoldPassRateStats(),
+    getGoldAccuracyDistribution(),
+    getCategoryDistribution(),
+  ]);
+
+  return {
+    submissionVolume24h,
+    payoutVolume24h,
+    goldPassRate,
+    goldAccuracyDistribution,
+    categoryDistribution,
+  };
+}
+
+async function getSubmissionVolume24h(): Promise<TimeSeriesPoint[]> {
+  const rows = await prisma.$queryRaw<{ hour: Date; count: bigint }[]>`
+    SELECT date_trunc('hour', created_at) as hour, COUNT(*)::int as count
+    FROM submissions
+    WHERE created_at >= NOW() - INTERVAL '24 hours'
+    GROUP BY hour
+    ORDER BY hour ASC
+  `;
+  return rows.map((r) => ({
+    hour: r.hour.toISOString(),
+    count: Number(r.count),
+  }));
+}
+
+async function getPayoutVolume24h(): Promise<PayoutTimeSeriesPoint[]> {
+  const rows = await prisma.$queryRaw<{ hour: Date; amount_wei: bigint }[]>`
+    SELECT date_trunc('hour', created_at) as hour, COALESCE(SUM(payout_amount_wei), 0) as amount_wei
+    FROM submissions
+    WHERE created_at >= NOW() - INTERVAL '24 hours' AND payout_status = 'sent'
+    GROUP BY hour
+    ORDER BY hour ASC
+  `;
+  return rows.map((r) => ({
+    hour: r.hour.toISOString(),
+    amountWei: String(r.amount_wei),
+  }));
+}
+
+async function getGoldPassRateStats(): Promise<GoldPassRateStats> {
+  const aggregate = await prisma.user.aggregate({
+    _sum: { goldAttempted: true, goldCorrect: true },
+  });
+  const totalAttempted = aggregate._sum.goldAttempted ?? 0;
+  const totalCorrect = aggregate._sum.goldCorrect ?? 0;
+  const ratePct = totalAttempted > 0 ? Math.round((totalCorrect / totalAttempted) * 100) : null;
+  return { totalAttempted, totalCorrect, ratePct };
+}
+
+async function getGoldAccuracyDistribution(): Promise<GoldAccuracyBucket[]> {
+  const users = await prisma.user.findMany({
+    select: { goldCorrect: true, goldAttempted: true },
+  });
+  const buckets: Record<string, number> = {
+    "N/A": 0,
+    "90-100%": 0,
+    "70-89%": 0,
+    "50-69%": 0,
+    "<50%": 0,
+  };
+  for (const u of users) {
+    if (u.goldAttempted === 0) {
+      buckets["N/A"]++;
+    } else {
+      const pct = u.goldCorrect / u.goldAttempted;
+      if (pct >= 0.9) buckets["90-100%"]++;
+      else if (pct >= 0.7) buckets["70-89%"]++;
+      else if (pct >= 0.5) buckets["50-69%"]++;
+      else buckets["<50%"]++;
+    }
+  }
+  return Object.entries(buckets).map(([accuracyRange, count]) => ({
+    accuracyRange,
+    count,
+  }));
+}
+
+async function getCategoryDistribution(): Promise<CategoryDistribution[]> {
+  const rows = await prisma.$queryRaw<{ category: string | null; count: bigint }[]>`
+    SELECT t.category, COUNT(*)::int as count
+    FROM submissions s
+    JOIN tasks t ON s.task_id = t.id
+    GROUP BY t.category
+    ORDER BY count DESC
+  `;
+  return rows.map((r) => ({
+    category: r.category ?? "uncategorized",
+    count: Number(r.count),
+  }));
 }

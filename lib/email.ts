@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs";
 import { APP_URL } from "./constants";
 import { sendEmail } from "./resend";
 function escapeHtml(str: string): string {
@@ -41,8 +42,11 @@ export async function sendVerificationEmail(
             `,
         );
         return result;
-    } catch (error) {
-        console.error("[email] Failed to send verification email:", { email, error });
-        throw error;
-    }
+  } catch (error) {
+    console.error("[email] Failed to send verification email:", { email, error });
+    Sentry.captureException(error, {
+      extra: { email },
+    });
+    throw error;
+  }
 }
