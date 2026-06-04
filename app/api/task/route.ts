@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { GOLD_TASK_RATIO } from "@/lib/constants";
+import { formatUnits } from "viem";
+import {
+  GOLD_TASK_RATIO,
+  REWARD_TOKEN_DECIMALS,
+  REWARD_TOKEN_SYMBOL,
+} from "@/lib/constants";
+import { resolveRewardWei } from "@/lib/payout";
 
 export async function GET(req: NextRequest) {
   const wallet = req.nextUrl.searchParams.get("wallet")?.toLowerCase();
@@ -26,6 +32,7 @@ export async function GET(req: NextRequest) {
         goldAnswer: { not: null },
         id: { notIn: doneIds },
       },
+      include: { campaign: { select: { rewardWei: true } } },
       orderBy: { createdAt: "asc" },
     });
 
@@ -43,6 +50,7 @@ export async function GET(req: NextRequest) {
         ],
         id: { notIn: doneIds },
       },
+      include: { campaign: { select: { rewardWei: true } } },
       orderBy: { createdAt: "asc" },
     });
   }
@@ -51,12 +59,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ task: null, message: "No more tasks available" });
   }
 
+  const resolvedWei = resolveRewardWei(task.rewardWei, task.campaign?.rewardWei ?? null);
+  const rewardDisplay = formatUnits(resolvedWei, REWARD_TOKEN_DECIMALS);
+
   return NextResponse.json({
     task: {
       id: task.id,
       prompt: task.prompt,
       responseA: task.responseA,
       responseB: task.responseB,
+      rewardWei: resolvedWei.toString(),
+      rewardDisplay,
+      rewardSymbol: REWARD_TOKEN_SYMBOL,
     },
   });
 }
