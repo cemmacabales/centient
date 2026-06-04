@@ -23,6 +23,7 @@ export default async function AdminCampaignDetailPage({
       adminUserId: true,
       name: true,
       defaultResponseTarget: true,
+      rewardWei: true,
       pausedAt: true,
       createdAt: true,
       adminUser: { select: { companyName: true, email: true } },
@@ -53,6 +54,7 @@ export default async function AdminCampaignDetailPage({
       campaignId={id}
       campaignName={campaign.name}
       defaultResponseTarget={campaign.defaultResponseTarget}
+      rewardWei={campaign.rewardWei.toString()}
       pausedAt={campaign.pausedAt?.toISOString() ?? null}
       ownerEmail={campaign.adminUser.companyName ?? campaign.adminUser.email}
       isReadOnly={isReadOnly}

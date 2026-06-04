@@ -36,6 +36,8 @@ interface TaskData {
   responseA: string;
   responseB: string;
   submissionsRemaining?: number | null;
+  rewardDisplay?: string;
+  rewardSymbol?: string;
 }
 
 interface SubmitResponseBody {
@@ -108,7 +110,15 @@ export default function Home() {
     const res = await fetch(`/api/task?wallet=${addr}`);
     const data = await res.json();
     if (data.task) {
-      setTask(data.task);
+      setTask({
+        id: data.task.id,
+        prompt: data.task.prompt,
+        responseA: data.task.responseA,
+        responseB: data.task.responseB,
+        submissionsRemaining: data.task.submissionsRemaining,
+        rewardDisplay: data.task.rewardDisplay,
+        rewardSymbol: data.task.rewardSymbol,
+      });
       setScreen("task");
     } else {
       setScreen("no_tasks");
@@ -258,7 +268,7 @@ export default function Home() {
           </div>
         </header>
         <main className="mx-auto max-w-lg px-4 py-6">
-          <TaskCard task={task} onSubmit={handleSubmit} loading={submitting} />
+          <TaskCard task={task} onSubmit={handleSubmit} loading={submitting} reward={task.rewardDisplay} tokenSymbol={task.rewardSymbol} />
         </main>
         <AccountSheet
           open={accountOpen}
@@ -289,7 +299,7 @@ export default function Home() {
             </span>
           </div>
           <h2 className="text-2xl font-headline font-bold text-on-surface">
-            Paid {REWARD_AMOUNT} {REWARD_TOKEN_SYMBOL}
+            Paid {task?.rewardDisplay ?? REWARD_AMOUNT} {task?.rewardSymbol ?? REWARD_TOKEN_SYMBOL}
           </h2>
           <p className="text-center font-body text-sm text-on-surface-variant">
             Your contribution helps improve AI.

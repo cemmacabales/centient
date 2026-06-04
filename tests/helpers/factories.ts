@@ -38,7 +38,7 @@ export async function createAdminUser(
 }
 
 export async function createCampaign(
-  overrides: Partial<{ id: string; adminUserId: string; name: string; defaultResponseTarget: number }> = {},
+  overrides: Partial<{ id: string; adminUserId: string; name: string; defaultResponseTarget: number; rewardWei: bigint }> = {},
 ) {
   if (!overrides.adminUserId) {
     const admin = await createAdminUser();
@@ -50,6 +50,7 @@ export async function createCampaign(
       adminUserId: overrides.adminUserId,
       name: overrides.name ?? "Test Campaign",
       defaultResponseTarget: overrides.defaultResponseTarget ?? 3,
+      rewardWei: overrides.rewardWei ?? 50000000000000000n,
     },
   });
 }

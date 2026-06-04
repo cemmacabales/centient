@@ -17,7 +17,7 @@ export async function PATCH(
 
   const campaign = await prisma.campaign.findFirst({
     where,
-    select: { id: true, defaultResponseTarget: true },
+    select: { id: true, defaultResponseTarget: true, rewardWei: true },
   });
 
   if (!campaign) {
@@ -25,7 +25,7 @@ export async function PATCH(
   }
 
   const body = await req.json();
-  const { prompt, responseTarget } = body;
+  const { prompt, responseTarget, rewardWei } = body;
 
   if (prompt !== undefined && (typeof prompt !== "string" || prompt.trim().length === 0)) {
     return NextResponse.json({ error: "invalid_prompt" }, { status: 400 });
@@ -34,6 +34,12 @@ export async function PATCH(
   if (responseTarget !== undefined) {
     if (!Number.isInteger(responseTarget) || responseTarget < 1) {
       return NextResponse.json({ error: "invalid_response_target" }, { status: 400 });
+    }
+  }
+
+  if (rewardWei !== undefined) {
+    if (rewardWei !== null && (typeof rewardWei !== "string" || !/^\d+$/.test(rewardWei))) {
+      return NextResponse.json({ error: "invalid_reward_wei" }, { status: 400 });
     }
   }
 
@@ -50,13 +56,17 @@ export async function PATCH(
     data: {
       ...(prompt !== undefined ? { prompt: prompt.trim() } : {}),
       ...(responseTarget !== undefined ? { responseTarget } : {}),
+      ...(rewardWei !== undefined ? { rewardWei: rewardWei !== null ? BigInt(rewardWei) : null } : {}),
     },
   });
+
+  const resolvedRewardWei = updated.rewardWei ?? campaign.rewardWei;
 
   return NextResponse.json({
     taskId: updated.id,
     prompt: updated.prompt,
     responseTarget: updated.responseTarget ?? campaign.defaultResponseTarget,
+    rewardWei: resolvedRewardWei.toString(),
   });
 }
 
