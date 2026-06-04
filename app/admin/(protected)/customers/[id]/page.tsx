@@ -11,6 +11,7 @@ interface CampaignWithProgress {
   id: string;
   name: string;
   defaultResponseTarget: number;
+  rewardWei: string;
   taskCount: number;
   totalResponses: number;
   totalTarget: number;
@@ -78,6 +79,7 @@ export default async function AdminCustomerDetailPage({
       id: c.id,
       name: c.name,
       defaultResponseTarget: c.defaultResponseTarget,
+      rewardWei: c.rewardWei.toString(),
       taskCount,
       totalResponses,
       totalTarget,

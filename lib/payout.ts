@@ -24,12 +24,13 @@ function walletClient() {
   });
 }
 
-export async function payReward(to: `0x${string}`): Promise<`0x${string}`> {
+export async function payReward(to: `0x${string}`, amountWei?: bigint): Promise<`0x${string}`> {
+  const amount = amountWei ?? rewardInWei();
   return walletClient().writeContract({
     address: REWARD_TOKEN_ADDRESS,
     abi: erc20Abi,
     functionName: "transfer",
-    args: [to, parseUnits(REWARD_AMOUNT, REWARD_TOKEN_DECIMALS)],
+    args: [to, amount],
     gas: 100_000n,
   });
 }
@@ -40,4 +41,13 @@ export async function waitForTx(hash: `0x${string}`) {
 
 export function rewardInWei(): bigint {
   return parseUnits(REWARD_AMOUNT, REWARD_TOKEN_DECIMALS);
+}
+
+export function resolveRewardWei(
+  taskRewardWei: bigint | null,
+  campaignRewardWei: bigint | null,
+): bigint {
+  if (taskRewardWei != null && taskRewardWei > 0n) return taskRewardWei;
+  if (campaignRewardWei != null && campaignRewardWei > 0n) return campaignRewardWei;
+  return rewardInWei();
 }

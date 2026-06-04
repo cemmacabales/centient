@@ -22,6 +22,7 @@ export async function GET(
       id: true,
       name: true,
       defaultResponseTarget: true,
+      rewardWei: true,
       csvFileName: true,
       createdAt: true,
       _count: { select: { tasks: true } },
@@ -34,6 +35,7 @@ export async function GET(
 
   return NextResponse.json({
     ...campaign,
+    rewardWei: campaign.rewardWei.toString(),
     taskCount: campaign._count.tasks,
     createdAt: campaign.createdAt.toISOString(),
   });
@@ -73,10 +75,11 @@ export async function PATCH(
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
-  const { name, defaultResponseTarget, paused } = body;
+  const { name, defaultResponseTarget, rewardWei: rewardWeiRaw, paused } = body;
   const updateData: {
     name?: string;
     defaultResponseTarget?: number;
+    rewardWei?: bigint;
     pausedAt?: Date | null;
   } = {};
 
@@ -98,6 +101,13 @@ export async function PATCH(
     updateData.defaultResponseTarget = defaultResponseTarget;
   }
 
+  if (rewardWeiRaw !== undefined) {
+    if (typeof rewardWeiRaw !== "string" || !/^\d+$/.test(rewardWeiRaw)) {
+      return NextResponse.json({ error: "invalid_reward_wei" }, { status: 400 });
+    }
+    updateData.rewardWei = BigInt(rewardWeiRaw);
+  }
+
   if (paused !== undefined) {
     if (typeof paused !== "boolean") {
       return NextResponse.json({ error: "invalid_paused" }, { status: 400 });
@@ -111,7 +121,7 @@ export async function PATCH(
   }
 
   const hasAnyField =
-    name !== undefined || defaultResponseTarget !== undefined || paused !== undefined;
+    name !== undefined || defaultResponseTarget !== undefined || rewardWeiRaw !== undefined || paused !== undefined;
   if (!hasAnyField) {
     return NextResponse.json({ error: "no_fields_to_update" }, { status: 400 });
   }
@@ -136,17 +146,22 @@ export async function PATCH(
       before: {
         name: campaign.name,
         defaultResponseTarget: campaign.defaultResponseTarget,
+        rewardWei: campaign.rewardWei.toString(),
         pausedAt: campaign.pausedAt?.toISOString() ?? null,
       },
       after: {
         name: updatedCampaign.name,
         defaultResponseTarget: updatedCampaign.defaultResponseTarget,
+        rewardWei: updatedCampaign.rewardWei.toString(),
         pausedAt: updatedCampaign.pausedAt?.toISOString() ?? null,
       }
     },
   });
 
-  return NextResponse.json(updatedCampaign, { status: 200 });
+  return NextResponse.json({
+    ...updatedCampaign,
+    rewardWei: updatedCampaign.rewardWei.toString(),
+  }, { status: 200 });
 }
 
 // delete
