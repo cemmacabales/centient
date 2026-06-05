@@ -12,7 +12,9 @@ function lockKey(prefix: string, key: string): string {
 
 let bucketsEnsured = false;
 
-async function ensureRateLimitBuckets(client: typeof prisma): Promise<void> {
+type PrismaClientLike = Pick<typeof prisma, "$executeRaw">;
+
+async function ensureRateLimitBuckets(client: PrismaClientLike): Promise<void> {
   if (bucketsEnsured) return;
   await client.$executeRaw`
     CREATE UNLOGGED TABLE IF NOT EXISTS rate_limit_buckets (
