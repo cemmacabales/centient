@@ -236,4 +236,30 @@ describe("GET /api/task - response target filtering", () => {
     expect(body.task).not.toBeNull();
     expect(body.task.submissionsRemaining).toBe(2);
   });
+
+  it("counts confirmed submissions against target", async () => {
+    mockRandom(0.5);
+    const campaign = await createCampaign();
+    const targetMet = await createTask({ campaignId: campaign.id, responseTarget: 2, prompt: "Prompt A?" });
+    const targetNotMet = await createTask({ campaignId: campaign.id, responseTarget: 2, prompt: "Prompt B?" });
+
+    const u1 = makeWallet();
+    const u2 = makeWallet();
+    await prisma.user.create({ data: { walletAddress: u1 } });
+    await prisma.user.create({ data: { walletAddress: u2 } });
+    await prisma.submission.createMany({
+      data: [
+        { walletAddress: u1, taskId: targetMet.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "confirmed", isGoldCheck: false },
+        { walletAddress: u2, taskId: targetMet.id, choice: "B", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "confirmed", isGoldCheck: false },
+      ],
+    });
+
+    const wallet = makeWallet();
+    const res = await getTask(wallet);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.task).not.toBeNull();
+    expect(body.task.id).toBe(targetNotMet.id);
+    expect(body.task.submissionsRemaining).toBe(2);
+  });
 });

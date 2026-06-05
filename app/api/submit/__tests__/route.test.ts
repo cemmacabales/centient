@@ -397,6 +397,28 @@ describe("POST /api/submit - response target cap", () => {
     expect((await res.json()).error).toBe("response_target_reached");
   });
 
+  it("returns 409 when target is met by confirmed submissions", async () => {
+    const wallet = makeWallet();
+    const campaign = await createCampaign();
+    const task = await createTask({ campaignId: campaign.id, responseTarget: 2 });
+
+    const other1 = makeWallet();
+    const other2 = makeWallet();
+    await prisma.user.create({ data: { walletAddress: wallet } });
+    await prisma.user.create({ data: { walletAddress: other1 } });
+    await prisma.user.create({ data: { walletAddress: other2 } });
+    await prisma.submission.createMany({
+      data: [
+        { walletAddress: other1, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "confirmed", isGoldCheck: false },
+        { walletAddress: other2, taskId: task.id, choice: "B", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "confirmed", isGoldCheck: false },
+      ],
+    });
+
+    const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("response_target_reached");
+  });
+
   it("allows submission when target is not yet met", async () => {
     const wallet = makeWallet();
     const campaign = await createCampaign({ defaultResponseTarget: 3 });
