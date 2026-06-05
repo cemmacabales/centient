@@ -2,6 +2,8 @@ import type { PrismaClient } from "@/app/generated/prisma/client";
 import { prisma } from "./db";
 
 let walletCounter = 0;
+let campaignCounter = 0;
+let taskIdCounter = 0;
 
 export function makeWallet(seed?: number): string {
   const n = seed ?? ++walletCounter;
@@ -9,12 +11,49 @@ export function makeWallet(seed?: number): string {
 }
 
 export function makeTaskId(seed?: number): string {
-  const n = seed ?? Math.floor(Math.random() * 1e15);
+  const n = seed ?? ++taskIdCounter;
   return `task-${n.toString(16).padStart(8, "0")}`;
+}
+
+export function makeCampaignId(): string {
+  const n = ++campaignCounter;
+  return `campaign-${n.toString(16).padStart(8, "0")}`;
 }
 
 export const db = prisma as PrismaClient;
 export const VALID_REASON = "Response A is clearer and more accurate overall.";
+
+export async function createAdminUser(
+  overrides: Partial<{ id: string; email: string; role: string }> = {},
+) {
+  return db.adminUser.create({
+    data: {
+      id: overrides.id ?? `admin-${++campaignCounter}`,
+      email: overrides.email ?? "test@test.com",
+      passwordHash: "hashed",
+      role: (overrides.role as any) ?? "SUPER_ADMIN",
+      isVerified: true,
+    },
+  });
+}
+
+export async function createCampaign(
+  overrides: Partial<{ id: string; adminUserId: string; name: string; defaultResponseTarget: number; rewardWei: bigint }> = {},
+) {
+  if (!overrides.adminUserId) {
+    const admin = await createAdminUser();
+    overrides.adminUserId = admin.id;
+  }
+  return db.campaign.create({
+    data: {
+      id: overrides.id ?? makeCampaignId(),
+      adminUserId: overrides.adminUserId,
+      name: overrides.name ?? "Test Campaign",
+      defaultResponseTarget: overrides.defaultResponseTarget ?? 3,
+      rewardWei: overrides.rewardWei ?? 50000000000000000n,
+    },
+  });
+}
 
 export async function createUser(
   overrides: Partial<{ walletAddress: string; isBanned: boolean; goldCorrect: number; goldAttempted: number }> = {},
@@ -37,6 +76,9 @@ export async function createTask(
     responseB: string;
     isGold: boolean;
     goldAnswer: "A" | "B" | null;
+    campaignId: string | null;
+    responseTarget: number | null;
+    createdAt: Date;
   }> = {},
 ) {
   return db.task.create({
@@ -47,6 +89,9 @@ export async function createTask(
       responseB: overrides.responseB ?? "Response B",
       isGold: overrides.isGold ?? false,
       goldAnswer: overrides.goldAnswer ?? null,
+      campaignId: overrides.campaignId ?? null,
+      responseTarget: overrides.responseTarget ?? null,
+      createdAt: overrides.createdAt ?? undefined,
     },
   });
 }

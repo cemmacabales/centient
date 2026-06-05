@@ -11,6 +11,7 @@ interface TaskCardProps {
     prompt: string;
     responseA: string;
     responseB: string;
+    submissionsRemaining?: number | null;
   };
   onSubmit: (choice: "A" | "B", reason: string) => Promise<void>;
   loading: boolean;
@@ -49,6 +50,11 @@ export default function TaskCard({
           <span className="text-xs font-label font-bold uppercase tracking-[0.2em] text-outline">
             Label Task
           </span>
+          {task.submissionsRemaining != null && (
+            <span className="ml-1 rounded-full bg-secondary-container px-2 py-0.5 text-[10px] font-label font-bold text-on-secondary-container">
+              {task.submissionsRemaining} remaining
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5 rounded-xl bg-surface-container-lowest px-3 py-1.5 shadow-[0_4px_12px_rgba(25,28,30,0.03)]">
           <span
