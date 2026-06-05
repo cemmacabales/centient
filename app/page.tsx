@@ -36,6 +36,7 @@ interface TaskData {
   prompt: string;
   responseA: string;
   responseB: string;
+  submissionsRemaining?: number | null;
   rewardDisplay?: string;
   rewardSymbol?: string;
 }
@@ -69,6 +70,8 @@ function submitErrorMessage(status: number, code?: string): string {
       return "Please vary your answers — submission rejected.";
     case "task_not_found":
       return "This task is no longer available.";
+    case "response_target_reached":
+      return "This task has enough submissions. Try the next one.";
     case "payout_failed":
       return "Payment failed. Please try again.";
     case "server_error":
@@ -113,6 +116,7 @@ export default function Home() {
         prompt: data.task.prompt,
         responseA: data.task.responseA,
         responseB: data.task.responseB,
+        submissionsRemaining: data.task.submissionsRemaining,
         rewardDisplay: data.task.rewardDisplay,
         rewardSymbol: data.task.rewardSymbol,
       });
