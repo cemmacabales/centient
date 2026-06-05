@@ -1055,7 +1055,7 @@ async function main() {
     await prisma.adminUser.create({
       data: {
         email: "admin@centient.work",
-        passwordHash: await bcrypt.hash(password, 10),
+        passwordHash: await bcrypt.hash(password, 12),
         role: "SUPER_ADMIN",
         isVerified: true,
       },
@@ -1077,7 +1077,7 @@ async function main() {
       await prisma.adminUser.create({
         data: {
           email: centientEmail,
-          passwordHash: await bcrypt.hash(password, 10),
+          passwordHash: await bcrypt.hash(password, 12),
           role: "CUSTOMER",
           companyName: "Centient",
           isVerified: true,
