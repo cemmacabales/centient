@@ -38,7 +38,7 @@ export default async function AdminCampaignsPage() {
       tasks: {
         select: {
           responseTarget: true,
-          _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
+          _count: { select: { submissions: { where: { payoutStatus: { in: ["sent", "confirmed"] }, isGoldCheck: false } } } },
         },
       },
       adminUser: { select: { email: true, companyName: true } },

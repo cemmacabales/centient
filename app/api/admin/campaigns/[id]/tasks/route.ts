@@ -31,7 +31,7 @@ export async function GET(
       prompt: true,
       responseTarget: true,
       rewardWei: true,
-      _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
+      _count: { select: { submissions: { where: { payoutStatus: { in: ["sent", "confirmed"] }, isGoldCheck: false } } } },
     },
   });
 

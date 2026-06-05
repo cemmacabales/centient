@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
       where: { id: taskId },
       include: {
         campaign: { select: { defaultResponseTarget: true, rewardWei: true } },
-        _count: { select: { submissions: { where: { payoutStatus: "sent", isGoldCheck: false } } } },
+        _count: { select: { submissions: { where: { payoutStatus: { in: ["sent", "confirmed"] }, isGoldCheck: false } } } },
       },
     });
     if (!task) {
