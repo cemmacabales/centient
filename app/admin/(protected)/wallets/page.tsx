@@ -17,6 +17,8 @@ export default async function AdminWalletsPage() {
     goldAttempted: r.goldAttempted,
     goldAccuracyPct: r.goldAccuracyPct,
     isBanned: r.isBanned,
+    banCount: r.banCount,
+    bannedUntil: r.bannedUntil?.toISOString() ?? null,
   }));
 
   return (

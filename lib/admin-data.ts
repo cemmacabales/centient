@@ -61,6 +61,8 @@ export interface WalletRow {
   goldAttempted: number;
   goldAccuracyPct: number | null;
   isBanned: boolean;
+  banCount: number;
+  bannedUntil: Date | null;
 }
 
 export interface DashboardActivity {
@@ -285,6 +287,8 @@ export async function getWalletRows(): Promise<WalletRow[]> {
     goldAccuracyPct:
       u.goldAttempted === 0 ? null : Math.round((u.goldCorrect / u.goldAttempted) * 100),
     isBanned: u.isBanned,
+    banCount: u.banCount,
+    bannedUntil: u.bannedUntil,
   }));
 }
 
@@ -299,6 +303,9 @@ export interface UserRow {
   isBanned: boolean;
   bannedAt: Date | null;
   bannedReason: string | null;
+  banCount: number;
+  bannedUntil: Date | null;
+  lastBanAt: Date | null;
   country: string | null;
   gender: string | null;
   ageRange: string | null;
@@ -329,6 +336,9 @@ export async function getUserRows(): Promise<UserRow[]> {
     isBanned: u.isBanned,
     bannedAt: u.bannedAt,
     bannedReason: u.bannedReason,
+    banCount: u.banCount,
+    bannedUntil: u.bannedUntil,
+    lastBanAt: u.lastBanAt,
     country: u.country,
     gender: u.gender,
     ageRange: u.ageRange,
@@ -349,6 +359,9 @@ export interface UserProfile {
   isBanned: boolean;
   bannedAt: Date | null;
   bannedReason: string | null;
+  banCount: number;
+  bannedUntil: Date | null;
+  lastBanAt: Date | null;
   country: string | null;
   gender: string | null;
   ageRange: string | null;
@@ -416,6 +429,9 @@ export async function getUserProfile(walletAddress: string): Promise<UserProfile
     isBanned: u.isBanned,
     bannedAt: u.bannedAt,
     bannedReason: u.bannedReason,
+    banCount: u.banCount,
+    bannedUntil: u.bannedUntil,
+    lastBanAt: u.lastBanAt,
     country: u.country,
     gender: u.gender,
     ageRange: u.ageRange,
@@ -508,6 +524,73 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
 
 export function isStuckPending(createdAt: Date, now: Date = new Date()): boolean {
   return now.getTime() - createdAt.getTime() > STUCK_PAYOUT_THRESHOLD_MS;
+}
+
+// ---------------------------------------------------------------------------
+// Tiered-ban cooldown helpers (issue #200)
+// ---------------------------------------------------------------------------
+
+export const RETEST_GOLD_COUNT = 3;
+export const RETEST_PASS_THRESHOLD = 0.6; // >= 60%
+export const BAN_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+export interface CooldownBanResult {
+  banCount: number;
+  bannedUntil: Date;
+  reason: string;
+}
+
+export function computeCooldownBan(
+  banCount: number,
+  lastBanAt: Date | null,
+  now: Date = new Date(),
+): CooldownBanResult {
+  const withinWindow =
+    lastBanAt != null && now.getTime() - lastBanAt.getTime() < BAN_WINDOW_MS;
+  const newCount = withinWindow && banCount >= 1 ? banCount + 1 : 1;
+
+  let bannedUntil: Date;
+  let reason: string;
+
+  if (newCount >= 3) {
+    bannedUntil = new Date(0); // sentinel — permanent
+    reason = `auto: permanent after ${newCount} bans within 30 days`;
+  } else if (newCount === 2) {
+    bannedUntil = new Date(now.getTime() + 72 * 60 * 60 * 1000);
+    reason = `auto: 72h cooldown — gold accuracy below threshold after 1 prior ban`;
+  } else {
+    bannedUntil = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    reason = `auto: 24h cooldown — gold accuracy below threshold`;
+  }
+
+  return { banCount: newCount, bannedUntil, reason };
+}
+
+export function isPermanentlyBanned(
+  isBanned: boolean,
+  bannedUntil: Date | null,
+  banCount: number,
+): boolean {
+  return isBanned && bannedUntil != null && bannedUntil.getTime() === 0 && banCount >= 3;
+}
+
+export function isInCooldown(
+  isBanned: boolean,
+  bannedUntil: Date | null,
+): boolean {
+  if (!isBanned || !bannedUntil) return false;
+  if (bannedUntil.getTime() === 0) return false; // permanent
+  return new Date() < bannedUntil;
+}
+
+export function isInRetest(
+  isBanned: boolean,
+  bannedUntil: Date | null,
+  banCount: number,
+): boolean {
+  if (!isBanned || !bannedUntil) return false;
+  if (bannedUntil.getTime() === 0) return false; // permanent
+  return new Date() >= bannedUntil && banCount < 3;
 }
 
 // Pure rule used by both /api/submit and the ban endpoint. Mirrors the

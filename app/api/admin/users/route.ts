@@ -24,6 +24,8 @@ export async function GET(_req: NextRequest) {
       isBanned: r.isBanned,
       bannedAt: r.bannedAt?.toISOString() ?? null,
       bannedReason: r.bannedReason,
+      banCount: r.banCount,
+      bannedUntil: r.bannedUntil?.toISOString() ?? null,
       country: r.country,
       gender: r.gender,
       ageRange: r.ageRange,

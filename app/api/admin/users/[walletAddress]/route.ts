@@ -31,6 +31,8 @@ export async function GET(
     ...profile,
     createdAt: profile.createdAt.toISOString(),
     bannedAt: profile.bannedAt?.toISOString() ?? null,
+    bannedUntil: profile.bannedUntil?.toISOString() ?? null,
+    lastBanAt: profile.lastBanAt?.toISOString() ?? null,
     totalEarnedWei: profile.totalEarnedWei.toString(),
     recentSubmissions: profile.recentSubmissions.map((s) => ({
       ...s,
@@ -69,7 +71,7 @@ export async function PATCH(
 
   const before = await prisma.user.findUnique({
     where: { walletAddress: walletAddress.toLowerCase() },
-    select: { isBanned: true, bannedAt: true, bannedReason: true },
+    select: { isBanned: true, bannedAt: true, bannedReason: true, banCount: true, bannedUntil: true, lastBanAt: true },
   });
   if (!before) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
@@ -90,11 +92,17 @@ export async function PATCH(
             isBanned: true,
             bannedAt: new Date(),
             bannedReason: reason ?? "operator: manual ban",
+            banCount: 3,
+            bannedUntil: null,
+            lastBanAt: new Date(),
           }
         : {
             isBanned: false,
             bannedAt: null,
             bannedReason: null,
+            banCount: 0,
+            bannedUntil: null,
+            lastBanAt: null,
           },
   });
 
@@ -123,5 +131,8 @@ export async function PATCH(
     isBanned: after.isBanned,
     bannedAt: after.bannedAt?.toISOString() ?? null,
     bannedReason: after.bannedReason,
+    banCount: after.banCount,
+    bannedUntil: after.bannedUntil?.toISOString() ?? null,
+    lastBanAt: after.lastBanAt?.toISOString() ?? null,
   });
 }

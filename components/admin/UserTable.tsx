@@ -14,6 +14,8 @@ export interface UserTableItem {
   isBanned: boolean;
   bannedAt: string | null;
   bannedReason: string | null;
+  banCount: number;
+  bannedUntil: string | null;
   country: string | null;
   gender: string | null;
   ageRange: string | null;
@@ -232,10 +234,18 @@ export default function UserTable({ rows, rewardSymbol }: UserTableProps) {
                   <td className="px-4 py-3">
                     {row.isBanned ? (
                       <span
-                        className="rounded-full bg-error-container px-3 py-1 font-label text-xs font-bold text-on-error-container"
-                        title={row.bannedReason ?? "banned"}
+                        className={`rounded-full px-3 py-1 font-label text-xs font-bold ${
+                          row.banCount >= 3 && !row.bannedUntil
+                            ? "bg-error-container text-on-error-container"
+                            : "bg-amber-100 text-amber-800"
+                        }`}
+                        title={[
+                          row.bannedReason ?? "banned",
+                          row.bannedUntil ? `until ${new Date(row.bannedUntil).toLocaleString()}` : "",
+                          row.banCount > 0 ? `ban #${row.banCount}` : "",
+                        ].filter(Boolean).join(" · ")}
                       >
-                        banned
+                        {row.banCount >= 3 && !row.bannedUntil ? "banned" : "cooldown"}
                       </span>
                     ) : (
                       <span className="rounded-full bg-surface-container-high px-3 py-1 font-label text-xs font-semibold text-on-surface-variant">
