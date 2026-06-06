@@ -8,6 +8,11 @@ import {
   REWARD_TOKEN_SYMBOL,
 } from "@/lib/constants";
 import { resolveRewardWei } from "@/lib/payout";
+import {
+  isInCooldown,
+  isInRetest,
+  RETEST_GOLD_COUNT,
+} from "@/lib/admin-data";
 
 function computeResponseTarget(
   taskResponseTarget: number | null,
@@ -22,13 +27,28 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "invalid_wallet" }, { status: 400 });
   }
 
+  const user = await prisma.user.findUnique({
+    where: { walletAddress: wallet },
+  });
+
+  if (user && isInCooldown(user.isBanned, user.bannedUntil)) {
+    return NextResponse.json({
+      cooldown: true,
+      unbannedAt: user.bannedUntil!.toISOString(),
+    });
+  }
+
+  const inRetest = user
+    ? isInRetest(user.isBanned, user.bannedUntil, user.banCount)
+    : false;
+
   const done = await prisma.submission.findMany({
     where: { walletAddress: wallet },
     select: { taskId: true },
   });
   const doneIds = done.map((s) => s.taskId);
 
-  const useGold = Math.random() < GOLD_TASK_RATIO;
+  const useGold = inRetest || Math.random() < GOLD_TASK_RATIO;
 
   let task: {
     id: string;

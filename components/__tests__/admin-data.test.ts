@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { evaluateBanRule, isStuckPending } from "@/lib/admin-data";
+import {
+  evaluateBanRule,
+  isStuckPending,
+  computeCooldownBan,
+  isPermanentlyBanned,
+  isInCooldown,
+  isInRetest,
+} from "@/lib/admin-data";
 
 describe("evaluateBanRule", () => {
   it("does not ban below the 3-attempt threshold", () => {
@@ -25,9 +32,109 @@ describe("evaluateBanRule", () => {
   });
 
   it("mirrors the production threshold for the canonical 1/3 case", () => {
-    // 1 correct out of 3 → 33.3% < 50% → ban
     const r = evaluateBanRule({ goldAttempted: 3, goldCorrect: 1 });
     expect(r.shouldBan).toBe(true);
+  });
+});
+
+describe("computeCooldownBan", () => {
+  it("tier 1: 24h cooldown for first-time ban", () => {
+    const now = new Date();
+    const r = computeCooldownBan(0, null, now);
+    expect(r.banCount).toBe(1);
+    expect(r.bannedUntil.getTime() - now.getTime()).toBe(24 * 60 * 60 * 1000);
+    expect(r.reason).toMatch(/24h/);
+  });
+
+  it("tier 2: escalates to 72h when last ban was within 30 days", () => {
+    const now = new Date();
+    const lastBan = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); // 7 days ago
+    const r = computeCooldownBan(1, lastBan, now);
+    expect(r.banCount).toBe(2);
+    expect(r.bannedUntil.getTime() - now.getTime()).toBe(72 * 60 * 60 * 1000);
+    expect(r.reason).toMatch(/72h/);
+  });
+
+  it("tier 3: permanent ban when banCount already 2 within 30 days", () => {
+    const now = new Date();
+    const lastBan = new Date(now.getTime() - 1 * 60 * 60 * 1000); // 1h ago
+    const r = computeCooldownBan(2, lastBan, now);
+    expect(r.banCount).toBe(3);
+    expect(r.bannedUntil.getTime()).toBe(0); // permanent sentinel
+    expect(r.reason).toMatch(/permanent/);
+  });
+
+  it("resets to tier 1 when last ban was > 30 days ago", () => {
+    const now = new Date();
+    const lastBan = new Date(now.getTime() - 31 * 24 * 60 * 60 * 1000);
+    const r = computeCooldownBan(2, lastBan, now);
+    expect(r.banCount).toBe(1);
+    expect(r.bannedUntil.getTime() - now.getTime()).toBe(24 * 60 * 60 * 1000);
+  });
+
+  it("handles null lastBanAt as first ban", () => {
+    const now = new Date();
+    const r = computeCooldownBan(0, null, now);
+    expect(r.banCount).toBe(1);
+  });
+});
+
+describe("isPermanentlyBanned", () => {
+  it("returns true for permanent ban", () => {
+    expect(isPermanentlyBanned(true, new Date(0), 3)).toBe(true);
+  });
+
+  it("returns false when isBanned is false", () => {
+    expect(isPermanentlyBanned(false, new Date(0), 3)).toBe(false);
+  });
+
+  it("returns false for cooldown ban", () => {
+    const future = new Date(Date.now() + 3600000);
+    expect(isPermanentlyBanned(true, future, 1)).toBe(false);
+  });
+
+  it("returns false when bannedUntil is null", () => {
+    expect(isPermanentlyBanned(true, null, 3)).toBe(false);
+  });
+});
+
+describe("isInCooldown", () => {
+  it("returns true when bannedUntil is in the future", () => {
+    const future = new Date(Date.now() + 3600000);
+    expect(isInCooldown(true, future)).toBe(true);
+  });
+
+  it("returns false when bannedUntil is in the past", () => {
+    const past = new Date(Date.now() - 3600000);
+    expect(isInCooldown(true, past)).toBe(false);
+  });
+
+  it("returns false when isBanned is false", () => {
+    expect(isInCooldown(false, new Date(Date.now() + 3600000))).toBe(false);
+  });
+
+  it("returns false for permanent ban sentinel", () => {
+    expect(isInCooldown(true, new Date(0))).toBe(false);
+  });
+});
+
+describe("isInRetest", () => {
+  it("returns true when cooldown expired and banCount < 3", () => {
+    const past = new Date(Date.now() - 3600000);
+    expect(isInRetest(true, past, 1)).toBe(true);
+  });
+
+  it("returns false when still in cooldown", () => {
+    const future = new Date(Date.now() + 3600000);
+    expect(isInRetest(true, future, 1)).toBe(false);
+  });
+
+  it("returns false for permanent ban", () => {
+    expect(isInRetest(true, new Date(0), 3)).toBe(false);
+  });
+
+  it("returns false when bannedUntil is null", () => {
+    expect(isInRetest(true, null, 1)).toBe(false);
   });
 });
 

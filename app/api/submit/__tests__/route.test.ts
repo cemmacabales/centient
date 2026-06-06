@@ -136,9 +136,20 @@ describe("POST /api/submit - validation", () => {
 });
 
 describe("POST /api/submit - guards", () => {
-  it("returns 403 banned for banned user", async () => {
+  it("returns 403 banned for permanently banned user", async () => {
     const wallet = makeWallet();
-    await createUser({ walletAddress: wallet, isBanned: true });
+    await createUser({ walletAddress: wallet, isBanned: true, banCount: 3, bannedUntil: new Date(0) });
+    const task = await createTask();
+
+    const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id }));
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("banned");
+  });
+
+  it("returns 403 banned for user in cooldown", async () => {
+    const wallet = makeWallet();
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await createUser({ walletAddress: wallet, isBanned: true, banCount: 1, bannedUntil: future });
     const task = await createTask();
 
     const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id }));
@@ -236,7 +247,7 @@ describe("POST /api/submit - gold tasks", () => {
     expect(user?.goldCorrect).toBe(1);
   });
 
-  it("bans user after 3 wrong gold answers (< 50% success)", async () => {
+  it("bans user after 3 wrong gold answers (< 50% success) with 24h cooldown", async () => {
     const wallet = makeWallet();
     const gold1 = await createGoldTask("A");
     const gold2 = await createGoldTask("A");
@@ -253,6 +264,10 @@ describe("POST /api/submit - gold tasks", () => {
     expect(user?.goldAttempted).toBe(3);
     expect(user?.goldCorrect).toBe(0);
     expect(user?.isBanned).toBe(true);
+    expect(user?.banCount).toBe(1);
+    expect(user?.bannedUntil).not.toBeNull();
+    // bannedUntil should be ~24h from now
+    expect(user!.bannedUntil!.getTime()).toBeGreaterThan(Date.now() + 23 * 60 * 60 * 1000);
   });
 
   it("does not ban user when gold ratio >= 50%", async () => {
@@ -275,6 +290,94 @@ describe("POST /api/submit - gold tasks", () => {
     expect(user?.goldAttempted).toBe(4);
     expect(user?.goldCorrect).toBe(3);
     expect(user?.isBanned).toBe(false);
+  });
+});
+
+describe("POST /api/submit - retest", () => {
+  it("allows retest user to submit gold tasks", async () => {
+    const wallet = makeWallet();
+    const past = new Date(Date.now() - 3600000); // cooldown expired 1h ago
+    await createUser({ walletAddress: wallet, isBanned: true, banCount: 1, bannedUntil: past });
+    const gold = await createGoldTask("A");
+
+    const res = await submit(
+      validPayload({ walletAddress: wallet, taskId: gold.id, choice: "B" }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ paid: false, reason: "quality_check_failed" });
+  });
+
+  it("rejects retest user submitting non-gold task", async () => {
+    const wallet = makeWallet();
+    const past = new Date(Date.now() - 3600000);
+    await createUser({ walletAddress: wallet, isBanned: true, banCount: 1, bannedUntil: past });
+    const task = await createTask();
+
+    const res = await submit(
+      validPayload({ walletAddress: wallet, taskId: task.id, choice: "A" }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("invalid_task");
+  });
+
+  it("lifts ban after 3 gold tasks passed with >=60% accuracy", async () => {
+    const wallet = makeWallet();
+    const past = new Date(Date.now() - 3600000);
+    await createUser({ walletAddress: wallet, isBanned: true, banCount: 1, bannedUntil: past });
+    const g1 = await createGoldTask("A");
+    const g2 = await createGoldTask("A");
+    const g3 = await createGoldTask("A");
+
+    await submit(validPayload({ walletAddress: wallet, taskId: g1.id, choice: "A" }));
+    await submit(validPayload({ walletAddress: wallet, taskId: g2.id, choice: "A" }));
+    await submit(validPayload({ walletAddress: wallet, taskId: g3.id, choice: "A" }));
+
+    const user = await prisma.user.findUnique({ where: { walletAddress: wallet } });
+    expect(user?.isBanned).toBe(false);
+    expect(user?.bannedUntil).toBeNull();
+    expect(user?.bannedReason).toBeNull();
+  });
+
+  it("escalates to tier 2 when retest failed (<60%)", async () => {
+    const wallet = makeWallet();
+    const past = new Date(Date.now() - 3600000);
+    const now = Date.now();
+    const lastBan = new Date(now - 7 * 24 * 60 * 60 * 1000); // 7 days ago, within 30 days
+    await createUser({ walletAddress: wallet, isBanned: true, banCount: 1, bannedUntil: past, lastBanAt: lastBan });
+    const g1 = await createGoldTask("A");
+    const g2 = await createGoldTask("A");
+    const g3 = await createGoldTask("A");
+
+    // 1 correct, 2 wrong = 33% < 60%
+    await submit(validPayload({ walletAddress: wallet, taskId: g1.id, choice: "A" }));
+    await submit(validPayload({ walletAddress: wallet, taskId: g2.id, choice: "B" }));
+    await submit(validPayload({ walletAddress: wallet, taskId: g3.id, choice: "B" }));
+
+    const user = await prisma.user.findUnique({ where: { walletAddress: wallet } });
+    expect(user?.isBanned).toBe(true);
+    expect(user?.banCount).toBe(2);
+    // 72h cooldown
+    expect(user!.bannedUntil!.getTime()).toBeGreaterThan(Date.now() + 71 * 60 * 60 * 1000);
+  });
+
+  it("escalates to permanent on 3rd retest failure", async () => {
+    const wallet = makeWallet();
+    const past = new Date(Date.now() - 3600000);
+    const now = Date.now();
+    const lastBan = new Date(now - 1 * 60 * 60 * 1000); // 1h ago
+    await createUser({ walletAddress: wallet, isBanned: true, banCount: 2, bannedUntil: past, lastBanAt: lastBan });
+    const g1 = await createGoldTask("A");
+    const g2 = await createGoldTask("A");
+    const g3 = await createGoldTask("A");
+
+    await submit(validPayload({ walletAddress: wallet, taskId: g1.id, choice: "B" }));
+    await submit(validPayload({ walletAddress: wallet, taskId: g2.id, choice: "B" }));
+    await submit(validPayload({ walletAddress: wallet, taskId: g3.id, choice: "B" }));
+
+    const user = await prisma.user.findUnique({ where: { walletAddress: wallet } });
+    expect(user?.isBanned).toBe(true);
+    expect(user?.banCount).toBe(3);
+    expect(user?.bannedUntil).toBeNull(); // permanent
   });
 });
 

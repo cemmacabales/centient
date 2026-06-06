@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { isMiniPay, connectMiniPay } from "@/lib/minipay";
 import TaskCard from "@/components/TaskCard";
@@ -29,6 +29,7 @@ type Screen =
   | "success"
   | "quality_failed"
   | "banned"
+  | "cooldown"
   | "wallet_error";
 
 interface TaskData {
@@ -91,6 +92,8 @@ export default function Home() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [onboardingCompleted, setOnboardingCompleted] = useState(false);
+  const [unbannedAt, setUnbannedAt] = useState<string | null>(null);
+  const [cooldownRemaining, setCooldownRemaining] = useState<string>("");
 
   const showToast = useCallback((message: string, kind: ToastKind = "info") => {
     setToast({ id: Date.now(), message, kind });
@@ -104,6 +107,10 @@ export default function Home() {
     setEarnings(data.totalEarned ?? "0");
     setSubmissionCount(data.submissionCount ?? 0);
     setOnboardingCompleted(data.onboardingCompleted ?? false);
+    setUnbannedAt(data.unbannedAt ?? null);
+    if (data.isCooldown) {
+      setScreen("cooldown");
+    }
     return data;
   }, []);
 
@@ -151,6 +158,27 @@ export default function Home() {
       })
       .catch(() => setScreen("wallet_error"));
   }, [fetchUserData]);
+
+  useEffect(() => {
+    if (!unbannedAt || screen !== "cooldown") return;
+    const tick = () => {
+      const end = new Date(unbannedAt).getTime();
+      const now = Date.now();
+      const diff = end - now;
+      if (diff <= 0) {
+        setCooldownRemaining("expired");
+        setScreen("landing");
+        return;
+      }
+      const hrs = Math.floor(diff / 3600000);
+      const mins = Math.floor((diff % 3600000) / 60000);
+      const secs = Math.floor((diff % 60000) / 1000);
+      setCooldownRemaining(`${hrs}h ${String(mins).padStart(2, "0")}m ${String(secs).padStart(2, "0")}s`);
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [unbannedAt, screen]);
 
   const handleStartEarning = useCallback(() => {
     if (!wallet) return;
@@ -385,6 +413,37 @@ export default function Home() {
             We noticed unusually low accuracy on recent tasks. Reach out if you think this is a
             mistake.
           </p>
+          <a href="mailto:support@centient.work" className="text-sm text-primary underline">
+            support@centient.work
+          </a>
+        </div>
+      </div>
+    );
+  } else if (screen === "cooldown") {
+    body = (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-6 text-center">
+        <div className="flex w-full max-w-sm flex-col items-center gap-6">
+          <div className="flex h-32 w-32 items-center justify-center rounded-full bg-error-container">
+            <span
+              className="material-symbols-outlined text-[64px] text-on-error-container"
+              aria-hidden="true"
+            >
+              timer_pause
+            </span>
+          </div>
+          <h2 className="text-2xl font-headline font-bold text-on-surface">Temporarily paused</h2>
+          <p className="font-body text-sm text-on-surface-variant">
+            Your account is on cooldown for low accuracy on gold tasks. After the timer
+            runs out, you will get a short re-test to restore access.
+          </p>
+          <div className="rounded-3xl bg-surface-container-low px-8 py-5">
+            <div className="font-label text-xs uppercase tracking-[0.18em] text-outline">
+              Cooldown ends in
+            </div>
+            <div className="mt-1 font-headline text-3xl font-extrabold tracking-tight text-on-surface">
+              {cooldownRemaining}
+            </div>
+          </div>
           <a href="mailto:support@centient.work" className="text-sm text-primary underline">
             support@centient.work
           </a>

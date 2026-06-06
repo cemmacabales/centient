@@ -5,7 +5,15 @@ import { payReward, resolveRewardWei } from "@/lib/payout";
 import { isSpamReason } from "@/lib/quality";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { validateReason } from "@/lib/validators";
-import { evaluateBanRule } from "@/lib/admin-data";
+import {
+  evaluateBanRule,
+  computeCooldownBan,
+  isPermanentlyBanned,
+  isInCooldown,
+  isInRetest,
+  RETEST_GOLD_COUNT,
+  RETEST_PASS_THRESHOLD,
+} from "@/lib/admin-data";
 
 const EXPLORER_URL = process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://celoscan.io";
 
@@ -60,8 +68,14 @@ export async function POST(req: NextRequest) {
       update: {},
     });
 
-    if (user.isBanned) {
-      return errorResponse("banned", 403, { walletAddress });
+    if (isPermanentlyBanned(user.isBanned, user.bannedUntil, user.banCount)) {
+      return errorResponse("banned", 403, { walletAddress, permanent: true });
+    }
+    if (isInCooldown(user.isBanned, user.bannedUntil)) {
+      return errorResponse("banned", 403, {
+        walletAddress,
+        unbannedAt: user.bannedUntil?.toISOString(),
+      });
     }
 
     const existing = await prisma.submission.findUnique({
@@ -89,8 +103,80 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Prevent retest users from submitting non-gold tasks
+    if (isInRetest(user.isBanned, user.bannedUntil, user.banCount) && !task.isGold) {
+      return errorResponse("invalid_task", 400, { walletAddress, taskId, reason: "retest_requires_gold_task" });
+    }
+
     if (task.isGold) {
       const correct = choice === task.goldAnswer;
+      const inRetest = isInRetest(user.isBanned, user.bannedUntil, user.banCount);
+
+      if (inRetest) {
+        const retestStart = user.bannedUntil!;
+
+        await prisma.$transaction(async (tx) => {
+          await tx.submission.create({
+            data: {
+              walletAddress,
+              taskId,
+              choice,
+              reason: reason.trim(),
+              isGoldCheck: true,
+              goldPassed: correct,
+              payoutAmountWei: 0n,
+              payoutStatus: "skipped",
+            },
+          });
+          await tx.user.update({
+            where: { walletAddress },
+            data: {
+              goldAttempted: { increment: 1 },
+              ...(correct ? { goldCorrect: { increment: 1 } } : {}),
+            },
+          });
+        });
+
+        const retestCount = await prisma.submission.count({
+          where: { walletAddress, isGoldCheck: true, createdAt: { gte: retestStart } },
+        });
+
+        if (retestCount >= RETEST_GOLD_COUNT) {
+          const retestGoldSubs = await prisma.submission.findMany({
+            where: { walletAddress, isGoldCheck: true, createdAt: { gte: retestStart } },
+            select: { goldPassed: true },
+            orderBy: { createdAt: "desc" },
+            take: RETEST_GOLD_COUNT,
+          });
+          const passed = retestGoldSubs.filter((s) => s.goldPassed).length;
+          const accuracy = passed / retestGoldSubs.length;
+
+          if (accuracy >= RETEST_PASS_THRESHOLD) {
+            await prisma.user.update({
+              where: { walletAddress },
+              data: { isBanned: false, bannedAt: null, bannedReason: null, bannedUntil: null },
+            });
+            console.warn("[submit] retest_passed", { walletAddress, accuracy, passed, total: retestGoldSubs.length });
+          } else {
+            const refreshed = await prisma.user.findUniqueOrThrow({ where: { walletAddress } });
+            const next = computeCooldownBan(refreshed.banCount, refreshed.lastBanAt);
+            await prisma.user.update({
+              where: { walletAddress },
+              data: {
+                isBanned: true,
+                bannedAt: new Date(),
+                bannedReason: next.reason,
+                banCount: next.banCount,
+                bannedUntil: next.bannedUntil.getTime() === 0 ? null : next.bannedUntil,
+                lastBanAt: new Date(),
+              },
+            });
+            console.warn("[submit] retest_failed", { walletAddress, accuracy, passed, total: retestGoldSubs.length, escalatedTo: next.banCount });
+          }
+        }
+
+        return NextResponse.json({ paid: false, reason: "quality_check_failed" });
+      }
 
       if (!correct) {
         await prisma.$transaction(async (tx) => {
@@ -123,19 +209,24 @@ export async function POST(req: NextRequest) {
           goldCorrect: refreshed.goldCorrect,
         });
         if (banDecision.shouldBan) {
+          const cooldown = computeCooldownBan(refreshed.banCount, refreshed.lastBanAt);
           await prisma.user.update({
             where: { walletAddress },
             data: {
               isBanned: true,
               bannedAt: new Date(),
-              bannedReason: banDecision.reason,
+              bannedReason: cooldown.reason,
+              banCount: cooldown.banCount,
+              bannedUntil: cooldown.bannedUntil.getTime() === 0 ? null : cooldown.bannedUntil,
+              lastBanAt: new Date(),
             },
           });
           console.warn("[submit] banned_wallet", {
             walletAddress,
             goldAttempted: refreshed.goldAttempted,
             goldCorrect: refreshed.goldCorrect,
-            reason: banDecision.reason,
+            banCount: cooldown.banCount,
+            reason: cooldown.reason,
           });
         }
 
