@@ -17,6 +17,9 @@ export interface UserProfileProps {
   isBanned: boolean;
   bannedAt: string | null;
   bannedReason: string | null;
+  banCount: number;
+  bannedUntil: string | null;
+  lastBanAt: string | null;
   country: string | null;
   gender: string | null;
   ageRange: string | null;
@@ -110,7 +113,10 @@ export default function UserProfileView({ profile }: { profile: UserProfileProps
           {profile.isBanned ? (
             <DefinitionList
               rows={[
+                ["Ban count", String(profile.banCount)],
                 ["Banned at", profile.bannedAt ? new Date(profile.bannedAt).toLocaleString("en-US") : "—"],
+                ["Banned until", profile.bannedUntil ? new Date(profile.bannedUntil).toLocaleString("en-US") : "permanent"],
+                ["Last ban at", profile.lastBanAt ? new Date(profile.lastBanAt).toLocaleString("en-US") : "—"],
                 ["Reason", profile.bannedReason ?? "—"],
               ]}
             />
