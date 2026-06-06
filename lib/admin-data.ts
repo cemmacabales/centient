@@ -309,13 +309,6 @@ export interface UserRow {
 export async function getUserRows(): Promise<UserRow[]> {
   const users = await prisma.user.findMany({
     orderBy: { createdAt: "desc" },
-    include: {
-      submissions: {
-        orderBy: { createdAt: "desc" },
-        take: 1,
-        select: { createdAt: true },
-      },
-    },
   });
   return users.map((u) => ({
     walletAddress: u.walletAddress,
@@ -333,7 +326,7 @@ export async function getUserRows(): Promise<UserRow[]> {
     gender: u.gender,
     ageRange: u.ageRange,
     onboardingCompleted: u.onboardingCompleted,
-    lastSubmissionAt: u.submissions[0]?.createdAt ?? null,
+    lastSubmissionAt: u.lastSubmissionAt,
   }));
 }
 
@@ -634,29 +627,32 @@ async function getGoldPassRateStats(): Promise<GoldPassRateStats> {
   return { totalAttempted, totalCorrect, ratePct };
 }
 
-async function getGoldAccuracyDistribution(): Promise<GoldAccuracyBucket[]> {
-  const users = await prisma.user.findMany({
-    select: { goldCorrect: true, goldAttempted: true },
-  });
-  const buckets: Record<string, number> = {
+export async function getGoldAccuracyDistribution(): Promise<GoldAccuracyBucket[]> {
+  const rows = await prisma.$queryRaw<{ bucket: string; count: bigint }[]>`
+    SELECT
+      CASE
+        WHEN "goldAttempted" = 0 THEN 'N/A'
+        WHEN "goldCorrect" * 1.0 / "goldAttempted" >= 0.9 THEN '90-100%'
+        WHEN "goldCorrect" * 1.0 / "goldAttempted" >= 0.7 THEN '70-89%'
+        WHEN "goldCorrect" * 1.0 / "goldAttempted" >= 0.5 THEN '50-69%'
+        ELSE '<50%'
+      END AS bucket,
+      COUNT(*)::int AS count
+    FROM "users"
+    GROUP BY bucket
+    ORDER BY bucket
+  `;
+  const result: Record<string, number> = {
     "N/A": 0,
     "90-100%": 0,
     "70-89%": 0,
     "50-69%": 0,
     "<50%": 0,
   };
-  for (const u of users) {
-    if (u.goldAttempted === 0) {
-      buckets["N/A"]++;
-    } else {
-      const pct = u.goldCorrect / u.goldAttempted;
-      if (pct >= 0.9) buckets["90-100%"]++;
-      else if (pct >= 0.7) buckets["70-89%"]++;
-      else if (pct >= 0.5) buckets["50-69%"]++;
-      else buckets["<50%"]++;
-    }
+  for (const r of rows) {
+    result[r.bucket] = Number(r.count);
   }
-  return Object.entries(buckets).map(([accuracyRange, count]) => ({
+  return Object.entries(result).map(([accuracyRange, count]) => ({
     accuracyRange,
     count,
   }));

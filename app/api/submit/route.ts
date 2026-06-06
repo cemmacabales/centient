@@ -108,7 +108,10 @@ export async function POST(req: NextRequest) {
           });
           await tx.user.update({
             where: { walletAddress },
-            data: { goldAttempted: { increment: 1 } },
+            data: {
+              goldAttempted: { increment: 1 },
+              lastSubmissionAt: new Date(),
+            },
           });
         });
 
@@ -168,6 +171,10 @@ export async function POST(req: NextRequest) {
             payoutStatus: "skipped",
           },
         });
+        await prisma.user.update({
+          where: { walletAddress },
+          data: { lastSubmissionAt: new Date() },
+        });
         return errorResponse("left_bias_detected", 400, {
           walletAddress,
           taskId,
@@ -203,6 +210,7 @@ export async function POST(req: NextRequest) {
           data: {
             submissionCount: { increment: 1 },
             totalEarnedWei: { increment: amount },
+            lastSubmissionAt: new Date(),
           },
         }),
       ]);
