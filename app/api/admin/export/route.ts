@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 import { auditLog } from "@/lib/audit";
+import { checkExportRateLimit } from "@/lib/rate-limit";
 
 type ExportFormat = "json" | "csv" | "txt";
 type SplitValue = "train" | "test" | "validation" | "all";
@@ -37,8 +38,28 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const forbidden = await requireRoleForRoute("SUPER_ADMIN", session);
+  const rateLimited = await checkExportRateLimit(session.sub);
+  if (rateLimited) {
+    return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+  }
+
+  const forbidden = await requireRoleForRoute("CUSTOMER", session);
   if (forbidden) return forbidden;
+
+  const campaignId = req.nextUrl.searchParams.get("campaignId");
+
+  if (session.role === "CUSTOMER") {
+    if (!campaignId) {
+      return NextResponse.json(
+        { error: "missing_campaign_id", message: "?campaignId is required for CUSTOMER role" },
+        { status: 400 }
+      );
+    }
+    const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });
+    if (!campaign || campaign.adminUserId !== session.sub) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+  }
 
   const rawFormat = req.nextUrl.searchParams.get("format");
   const format: ExportFormat = (rawFormat as ExportFormat) ?? "json";
@@ -60,11 +81,15 @@ export async function GET(req: NextRequest) {
   const category = req.nextUrl.searchParams.get("category");
   const limit = Math.min(Number(req.nextUrl.searchParams.get("limit") ?? "50000"), 50000);
 
+  const taskFilter: Record<string, string> = {};
+  if (campaignId) taskFilter.campaignId = campaignId;
+  if (category) taskFilter.category = category;
+
   const records = await prisma.submission.findMany({
     where: {
       payoutStatus: "sent",
       isGoldCheck: false,
-      ...(category ? { task: { category } } : {}),
+      ...(Object.keys(taskFilter).length > 0 ? { task: taskFilter } : {}),
     },
     include: {
       task: {
