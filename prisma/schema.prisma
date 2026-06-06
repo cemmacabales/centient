@@ -91,6 +91,7 @@ model Task {
   @@unique([campaignId, prompt])
   @@index([isGold])
   @@index([campaignId])
+  @@index([isGold, createdAt])
   @@map("tasks")
 }
 
@@ -113,6 +114,8 @@ model Submission {
   @@unique([walletAddress, taskId])
   @@index([walletAddress])
   @@index([payoutStatus])
+  @@index([payoutStatus, createdAt])
+  @@index([taskId])
   @@map("submissions")
 }
 
