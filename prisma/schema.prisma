@@ -18,6 +18,9 @@ model User {
   isBanned             Boolean  @default(false)
   bannedAt             DateTime?
   bannedReason         String?
+  banCount             Int      @default(0)
+  bannedUntil          DateTime?
+  lastBanAt            DateTime?
   country              String?
   gender               String?
   ageRange             String?

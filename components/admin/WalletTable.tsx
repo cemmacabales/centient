@@ -11,6 +11,8 @@ export interface WalletTableItem {
   goldAttempted: number;
   goldAccuracyPct: number | null;
   isBanned: boolean;
+  banCount: number;
+  bannedUntil: string | null;
 }
 
 type SortKey = "createdAt" | "submissionCount" | "totalEarned" | "goldAccuracyPct";
@@ -112,8 +114,18 @@ export default function WalletTable({ rows, rewardSymbol }: WalletTableProps) {
                 </td>
                 <td className="px-4 py-3">
                   {row.isBanned ? (
-                    <span className="rounded-full bg-error-container px-3 py-1 font-label text-xs font-bold text-on-error-container">
-                      paused
+                    <span
+                      className={`rounded-full px-3 py-1 font-label text-xs font-bold ${
+                        row.banCount >= 3 && !row.bannedUntil
+                          ? "bg-error-container text-on-error-container"
+                          : "bg-amber-100 text-amber-800"
+                      }`}
+                      title={[
+                        row.banCount > 0 ? `ban #${row.banCount}` : "",
+                        row.bannedUntil ? `until ${new Date(row.bannedUntil).toLocaleString()}` : "permanent",
+                      ].filter(Boolean).join(" · ")}
+                    >
+                      {row.banCount >= 3 && !row.bannedUntil ? "paused" : "cooldown"}
                     </span>
                   ) : (
                     <span className="rounded-full bg-surface-container-high px-3 py-1 font-label text-xs font-semibold text-on-surface-variant">

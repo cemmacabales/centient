@@ -56,12 +56,23 @@ export async function createCampaign(
 }
 
 export async function createUser(
-  overrides: Partial<{ walletAddress: string; isBanned: boolean; goldCorrect: number; goldAttempted: number }> = {},
+  overrides: Partial<{
+    walletAddress: string;
+    isBanned: boolean;
+    banCount: number;
+    bannedUntil: Date | null;
+    lastBanAt: Date | null;
+    goldCorrect: number;
+    goldAttempted: number;
+  }> = {},
 ) {
   return db.user.create({
     data: {
       walletAddress: overrides.walletAddress ?? makeWallet(),
       isBanned: overrides.isBanned ?? false,
+      banCount: overrides.banCount ?? (overrides.isBanned ? 1 : 0),
+      bannedUntil: overrides.bannedUntil ?? null,
+      lastBanAt: overrides.lastBanAt ?? null,
       goldCorrect: overrides.goldCorrect ?? 0,
       goldAttempted: overrides.goldAttempted ?? 0,
     },
