@@ -22,6 +22,7 @@ model User {
   gender               String?
   ageRange             String?
   onboardingCompleted  Boolean  @default(false)
+  lastSubmissionAt     DateTime?
 
   submissions Submission[]
 
