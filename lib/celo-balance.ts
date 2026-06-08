@@ -10,6 +10,10 @@ import {
 
 const MAX_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
 
+const WALLET_ADDRESS: `0x${string}` | null = process.env.PAYOUT_PRIVATE_KEY
+  ? (privateKeyToAccount(process.env.PAYOUT_PRIVATE_KEY as `0x${string}`).address ?? null)
+  : null;
+
 export interface BalanceThresholds {
   warnCelo: number;
   pageCelo: number;
@@ -85,10 +89,9 @@ export function recordAlertFired(key: string): void {
 }
 
 export async function getWalletHealth(): Promise<WalletHealth> {
-  const key = process.env.PAYOUT_PRIVATE_KEY;
   const thresholds = parseBalanceThresholds();
 
-  if (!key) {
+  if (!WALLET_ADDRESS) {
     return {
       address: "—",
       rewardTokenBalance: "—",
@@ -101,16 +104,15 @@ export async function getWalletHealth(): Promise<WalletHealth> {
     };
   }
 
-  const account = privateKeyToAccount(key as `0x${string}`);
   const client = createPublicClient({ chain: activeChain(), transport: http(activeRpcUrl()) });
 
   const [celoRaw, rewardRaw] = await Promise.all([
-    client.getBalance({ address: account.address }),
+    client.getBalance({ address: WALLET_ADDRESS }),
     client.readContract({
       address: REWARD_TOKEN_ADDRESS,
       abi: erc20Abi,
       functionName: "balanceOf",
-      args: [account.address],
+      args: [WALLET_ADDRESS],
     }),
   ]);
 
@@ -120,7 +122,7 @@ export async function getWalletHealth(): Promise<WalletHealth> {
   const { healthy, warnings, pages } = evaluateThresholds(celoBalance, rewardBalance, thresholds);
 
   return {
-    address: account.address,
+    address: WALLET_ADDRESS,
     rewardTokenBalance: rewardBalance.toFixed(4),
     rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
     celoBalance: celoBalance.toFixed(4),
