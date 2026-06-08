@@ -9,7 +9,6 @@ import LoadingScreen from "./LoadingScreen";
 import Toast, { type ToastKind, type ToastMessage } from "./Toast";
 
 interface OnboardingScreenProps {
-  wallet: string;
   onComplete: () => void;
 }
 
@@ -20,7 +19,7 @@ const GENDERS = [
   { label: "Prefer not to say", value: "prefer_not_to_say" },
 ];
 
-export default function OnboardingScreen({ wallet, onComplete }: OnboardingScreenProps) {
+export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) {
   const [country, setCountry] = useState<string | null>(null);
   const [ageRange, setAgeRange] = useState<string | null>(null);
   const [gender, setGender] = useState<string | null>(null);
@@ -42,7 +41,6 @@ export default function OnboardingScreen({ wallet, onComplete }: OnboardingScree
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          wallet,
           country,
           ageRange,
           ...(gender && { gender }),
