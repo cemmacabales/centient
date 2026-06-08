@@ -16,9 +16,18 @@ vi.mock("@/lib/rate-limit", async () => ({
   resetLoginFailures: vi.fn(async () => {}),
 }));
 
+vi.mock("@/lib/quality", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/quality")>();
+  return {
+    ...actual,
+    checkReasonRepetition: vi.fn(async () => ({ isRepetitive: false })),
+  };
+});
+
 import { POST } from "@/app/api/submit/route";
 import { payReward } from "@/lib/payout";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
+import { checkReasonRepetition } from "@/lib/quality";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 import {
   createUser,
@@ -35,6 +44,8 @@ beforeEach(async () => {
   vi.mocked(payReward).mockReset();
   vi.mocked(checkWalletRateLimit).mockReset();
   vi.mocked(checkWalletRateLimit).mockResolvedValue(false);
+  vi.mocked(checkReasonRepetition).mockReset();
+  vi.mocked(checkReasonRepetition).mockResolvedValue({ isRepetitive: false });
 });
 
 function makeReq(body: unknown): NextRequest {
@@ -132,6 +143,13 @@ describe("POST /api/submit - validation", () => {
     const res = await submit(validPayload({ reason: 12345 }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe("invalid_reason");
+  });
+
+  it("returns 400 repetitive_reason when checkReasonRepetition flags it", async () => {
+    vi.mocked(checkReasonRepetition).mockResolvedValueOnce({ isRepetitive: true });
+    const res = await submit(validPayload());
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("repetitive_reason");
   });
 });
 

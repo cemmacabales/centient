@@ -51,3 +51,14 @@ export function resolveRewardWei(
   if (campaignRewardWei != null && campaignRewardWei > 0n) return campaignRewardWei;
   return rewardInWei();
 }
+
+export class PayoutCapError extends Error {
+  constructor(
+    message: string,
+    public readonly currentWei: bigint,
+    public readonly capWei: bigint,
+  ) {
+    super(message);
+    this.name = "PayoutCapError";
+  }
+}
