@@ -30,6 +30,8 @@ export interface TaskRow {
   isGold: boolean;
   goldAnswer: string | null;
   submissionCount: number;
+  majorityAnswer: string | null;
+  agreementScore: number | null;
 }
 
 export interface TaskDetail {
@@ -40,6 +42,8 @@ export interface TaskDetail {
   category: string | null;
   isGold: boolean;
   goldAnswer: string | null;
+  majorityAnswer: string | null;
+  agreementScore: number | null;
   recentSubmissions: RecentSubmission[];
 }
 
@@ -174,6 +178,8 @@ export async function getTaskRows(): Promise<TaskRow[]> {
     isGold: t.isGold,
     goldAnswer: t.goldAnswer,
     submissionCount: t._count.submissions,
+    majorityAnswer: t.majorityAnswer,
+    agreementScore: t.agreementScore,
   }));
 }
 
@@ -197,6 +203,8 @@ export interface TaskTableItem {
   isGold: boolean;
   goldAnswer: string | null;
   submissionCount: number;
+  majorityAnswer: string | null;
+  agreementScore: number | null;
   recentSubmissions: TaskTableSubmission[];
 }
 
@@ -230,6 +238,8 @@ export async function getTaskTableItems(): Promise<TaskTableItem[]> {
     isGold: t.isGold,
     goldAnswer: t.goldAnswer,
     submissionCount: t._count.submissions,
+    majorityAnswer: t.majorityAnswer,
+    agreementScore: t.agreementScore,
     recentSubmissions: t.submissions.map((s) => ({
       id: s.id,
       walletAddress: s.walletAddress,
@@ -270,6 +280,8 @@ export async function getTaskDetail(id: string): Promise<TaskDetail | null> {
     category: task.category,
     isGold: task.isGold,
     goldAnswer: task.goldAnswer,
+    majorityAnswer: task.majorityAnswer,
+    agreementScore: task.agreementScore,
     recentSubmissions: task.submissions,
   };
 }

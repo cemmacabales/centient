@@ -22,6 +22,8 @@ export interface TaskTableItem {
   isGold: boolean;
   goldAnswer: string | null;
   submissionCount: number;
+  majorityAnswer?: string | null;
+  agreementScore?: number | null;
   recentSubmissions: TaskTableSubmission[];
 }
 
@@ -222,6 +224,27 @@ function TaskDetailBlock({ row }: { row: TaskTableItem }) {
           isGoldAnswer={row.isGold && row.goldAnswer === "B"}
         />
       </div>
+
+      {!row.isGold && row.agreementScore != null && (
+        <div className="rounded-xl bg-surface-container-lowest p-4">
+          <div className="flex items-center gap-3">
+            <div className="font-label text-[11px] font-bold uppercase tracking-[0.2em] text-outline">
+              Inter-Annotator Agreement
+            </div>
+            <span
+              className={`rounded-full px-2 py-0.5 font-label text-xs font-bold ${
+                row.agreementScore >= 0.7
+                  ? "bg-primary-container text-on-primary-container"
+                  : row.agreementScore >= 0.5
+                  ? "bg-tertiary-container text-on-tertiary-container"
+                  : "bg-error-container text-on-error-container"
+              }`}
+            >
+              {Math.round(row.agreementScore * 100)}% — Majority: {row.majorityAnswer}
+            </span>
+          </div>
+        </div>
+      )}
 
       <div>
         <div className="font-label text-[11px] font-bold uppercase tracking-[0.2em] text-outline">
