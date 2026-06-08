@@ -7,6 +7,7 @@ import {
   activeChain,
   activeRpcUrl,
 } from "./constants";
+import { checkPayoutCap, maybeSendCapAlert, PayoutCapError } from "./payout-cap";
 
 function publicClient() {
   return createPublicClient({ chain: activeChain(), transport: http(activeRpcUrl()) });
@@ -24,15 +25,24 @@ function walletClient() {
   });
 }
 
+export { PayoutCapError };
+
 export async function payReward(to: `0x${string}`, amountWei?: bigint): Promise<`0x${string}`> {
   const amount = amountWei ?? rewardInWei();
-  return walletClient().writeContract({
+
+  await checkPayoutCap(amount);
+
+  const txHash = await walletClient().writeContract({
     address: REWARD_TOKEN_ADDRESS,
     abi: erc20Abi,
     functionName: "transfer",
     args: [to, amount],
     gas: 100_000n,
   });
+
+  maybeSendCapAlert().catch(() => {});
+
+  return txHash;
 }
 
 export async function waitForTx(hash: `0x${string}`) {
