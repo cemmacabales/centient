@@ -1,20 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { waitForTx } from "@/lib/payout";
+import { authenticateCron } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 
-function authenticate(req: NextRequest): NextResponse | null {
-  const authHeader = req.headers.get("Authorization");
-  const expected = process.env.CRON_SECRET;
-  if (!expected || authHeader !== `Bearer ${expected}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  return null;
-}
-
 export async function POST(req: NextRequest) {
-  const authErr = authenticate(req);
+  const authErr = authenticateCron(req);
   if (authErr) return authErr;
 
   try {
@@ -36,7 +28,10 @@ export async function POST(req: NextRequest) {
         const receipt = await waitForTx(sub.payoutTxHash as `0x${string}`);
         await prisma.submission.update({
           where: { id: sub.id },
-          data: { payoutStatus: receipt.status === "success" ? "confirmed" : "failed" },
+          data: {
+            payoutStatus: receipt.status === "success" ? "confirmed" : "failed",
+            ...(receipt.status !== "success" ? { retryCount: { increment: 1 } } : {}),
+          },
         });
         if (receipt.status === "success") {
           results.confirmed++;
@@ -52,13 +47,25 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
+        const isDropped =
+          err?.name === "TransactionReceiptNotFoundError" ||
+          err?.message?.includes("not found");
+
+        if (!isDropped) {
+          console.error(
+            `[cron/payout-reconcile] receipt check failed for submission ${sub.id}:`,
+            err instanceof Error ? err.message : err,
+          );
+          continue;
+        }
+
         console.error(
-          `[cron/payout-reconcile] receipt check failed for submission ${sub.id}:`,
+          `[cron/payout-reconcile] transaction dropped for submission ${sub.id}:`,
           err instanceof Error ? err.message : err,
         );
         await prisma.submission.update({
           where: { id: sub.id },
-          data: { payoutStatus: "failed" },
+          data: { payoutStatus: "failed", retryCount: { increment: 1 } },
         });
         results.failed++;
       }

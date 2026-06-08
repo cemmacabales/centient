@@ -24,14 +24,15 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
       const txHash = await payReward(submission.walletAddress as `0x${string}`, amount);
 
       const wasPending = fresh.payoutStatus === "pending";
-      const shouldUpdateTotals = wasPending || fresh.payoutStatus === "failed";
+      const wasAlreadySent = fresh.payoutTxHash != null;
+      const shouldUpdateTotals = (wasPending || fresh.payoutStatus === "failed") && !wasAlreadySent;
 
       await tx.submission.update({
         where: { id: submissionId },
         data: {
           payoutStatus: "sent",
           payoutTxHash: txHash,
-          ...(wasPending ? { lastRetriedAt: new Date() } : {}),
+          lastRetriedAt: new Date(),
         },
       });
 
