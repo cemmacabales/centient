@@ -34,6 +34,9 @@ export async function POST(
     );
   }
 
+  const originalRetryCount = submission.retryCount;
+  const originalStatus = submission.payoutStatus;
+
   await prisma.submission.update({
     where: { id },
     data: { retryCount: 0, lastRetriedAt: null, payoutStatus: "pending" },
@@ -48,6 +51,15 @@ export async function POST(
     return NextResponse.json({ message: "Payout retry triggered successfully" }, { status: 200 });
   } catch (err: any) {
     console.error(`[admin/retry] manual retry failed for submission ${id}:`, err);
+
+    await prisma.submission.update({
+      where: { id },
+      data: {
+        retryCount: originalRetryCount,
+        payoutStatus: originalStatus,
+      },
+    });
+
     return NextResponse.json(
       { error: "payout_failed", detail: err instanceof Error ? err.message : String(err) },
       { status: 500 },

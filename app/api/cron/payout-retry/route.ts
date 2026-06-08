@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { isStuckPending } from "@/lib/admin-data";
 import { reprocessPayoutWithNonceSafety } from "@/lib/payout-service";
+import { authenticateCron } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -9,17 +10,8 @@ const MAX_RETRIES = 5;
 const BASE_BACKOFF_MS = 60_000;
 const MAX_BACKOFF_MS = 8 * 60_000;
 
-function authenticate(req: NextRequest): NextResponse | null {
-  const authHeader = req.headers.get("Authorization");
-  const expected = process.env.CRON_SECRET;
-  if (!expected || authHeader !== `Bearer ${expected}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-  return null;
-}
-
 export async function POST(req: NextRequest) {
-  const authErr = authenticate(req);
+  const authErr = authenticateCron(req);
   if (authErr) return authErr;
 
   try {
