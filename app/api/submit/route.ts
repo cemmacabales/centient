@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { payReward, resolveRewardWei } from "@/lib/payout";
+import { payReward, resolveRewardWei, PayoutCapError } from "@/lib/payout";
 import { isSpamReason } from "@/lib/quality";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { validateReason } from "@/lib/validators";
@@ -312,6 +312,20 @@ export async function POST(req: NextRequest) {
         explorerUrl: `${EXPLORER_URL}/tx/${txHash}`,
       });
     } catch (err) {
+      if (err instanceof PayoutCapError) {
+        await prisma.submission.update({
+          where: { id: submission.id },
+          data: { payoutStatus: "skipped" },
+        });
+        return errorResponse("daily_cap_reached", 429, {
+          walletAddress,
+          taskId,
+          submissionId: submission.id,
+          currentWei: String(err.currentWei),
+          capWei: String(err.capWei),
+        });
+      }
+
       Sentry.captureException(err, {
         extra: { walletAddress, taskId, submissionId: submission.id },
       });
