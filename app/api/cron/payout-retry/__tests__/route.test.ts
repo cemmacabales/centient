@@ -1,10 +1,11 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
-const { mockReprocess, mockFindMany, mockUpdate } = vi.hoisted(() => ({
+const { mockReprocess, mockFindMany, mockUpdate, mockUpdateMany } = vi.hoisted(() => ({
   mockReprocess: vi.fn(),
   mockFindMany: vi.fn(),
   mockUpdate: vi.fn(),
+  mockUpdateMany: vi.fn(),
 }));
 
 vi.mock("@/lib/payout-service", () => ({
@@ -17,6 +18,7 @@ vi.mock("@/lib/prisma", () => ({
     submission: {
       findMany: mockFindMany,
       update: mockUpdate,
+      updateMany: mockUpdateMany,
     },
   },
 }));
@@ -38,6 +40,7 @@ beforeEach(() => {
   mockReprocess.mockResolvedValue(undefined);
   mockFindMany.mockResolvedValue([]);
   mockUpdate.mockResolvedValue({});
+  mockUpdateMany.mockResolvedValue({ count: 0 });
 });
 
 afterEach(() => {
@@ -98,7 +101,6 @@ describe("/api/cron/payout-retry", () => {
             createdAt: new Date(Date.now() - 10 * 60 * 1000),
           },
         ])
-        .mockResolvedValueOnce([]);
 
       const res = await POST(cronReq());
       const body = await res.json();
@@ -119,7 +121,6 @@ describe("/api/cron/payout-retry", () => {
             createdAt: new Date(Date.now() - 10 * 60 * 1000),
           },
         ])
-        .mockResolvedValueOnce([]);
 
       const res = await POST(cronReq());
       const body = await res.json();
@@ -140,7 +141,6 @@ describe("/api/cron/payout-retry", () => {
             createdAt: sixMinutesAgo,
           },
         ])
-        .mockResolvedValueOnce([]);
 
       const res = await POST(cronReq());
       const body = await res.json();
@@ -161,7 +161,6 @@ describe("/api/cron/payout-retry", () => {
             createdAt: thirtySecondsAgo,
           },
         ])
-        .mockResolvedValueOnce([]);
 
       const res = await POST(cronReq());
       const body = await res.json();
@@ -180,7 +179,6 @@ describe("/api/cron/payout-retry", () => {
             createdAt: new Date(Date.now() - 30 * 60 * 1000),
           },
         ])
-        .mockResolvedValueOnce([]);
 
       const res = await POST(cronReq());
       const body = await res.json();
@@ -199,32 +197,26 @@ describe("/api/cron/payout-retry", () => {
             createdAt: new Date(Date.now() - 60 * 60 * 1000),
           },
         ])
-        .mockResolvedValueOnce([]);
 
       const res = await POST(cronReq());
       const body = await res.json();
       expect(body.retried).toBe(0);
     });
 
-    it("abandons submissions with retryCount >= 5", async () => {
+    it("abandons submissions with retryCount >= 5 via updateMany", async () => {
       mockFindMany
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([{ id: "sub-7" }, { id: "sub-8" }]);
+      mockUpdateMany.mockResolvedValueOnce({ count: 2 });
 
       const res = await POST(cronReq());
       const body = await res.json();
       expect(res.status).toBe(200);
       expect(body.abandoned).toBe(2);
-      expect(mockUpdate).toHaveBeenCalledTimes(2);
-      expect(mockUpdate).toHaveBeenCalledWith(
+      expect(mockUpdateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "sub-7" },
-          data: { payoutStatus: "abandoned" },
-        }),
-      );
-      expect(mockUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: "sub-8" },
+          where: {
+            payoutStatus: { in: ["failed", "pending"] },
+            retryCount: { gte: 5 },
+          },
           data: { payoutStatus: "abandoned" },
         }),
       );
@@ -249,7 +241,6 @@ describe("/api/cron/payout-retry", () => {
             createdAt: new Date(Date.now() - 10 * 60 * 1000),
           },
         ])
-        .mockResolvedValueOnce([]);
 
       mockReprocess.mockRejectedValueOnce(new Error("RPC down"));
       mockReprocess.mockResolvedValueOnce(undefined);

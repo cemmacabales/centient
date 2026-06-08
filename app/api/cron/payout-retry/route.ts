@@ -77,21 +77,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const abandonCandidates = await prisma.submission.findMany({
+    const { count: abandoned } = await prisma.submission.updateMany({
       where: {
         payoutStatus: { in: ["failed", "pending"] },
         retryCount: { gte: MAX_RETRIES },
       },
-      select: { id: true },
+      data: { payoutStatus: "abandoned" },
     });
-
-    for (const sub of abandonCandidates) {
-      await prisma.submission.update({
-        where: { id: sub.id },
-        data: { payoutStatus: "abandoned" },
-      });
-      results.abandoned++;
-    }
+    results.abandoned = abandoned;
 
     return NextResponse.json({ message: "Cron cycle complete", ...results }, { status: 200 });
   } catch (globalErr: any) {
