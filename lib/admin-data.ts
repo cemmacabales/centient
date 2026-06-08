@@ -460,6 +460,10 @@ export interface PoolHealth {
   hotWalletBalance: string;
   rewardSymbol: string;
   stuckPayoutThresholdMs: number;
+  dailyPayoutCapWei: string;
+  dailyPayoutSpentWei: string;
+  dailyPayoutRemainingWei: string;
+  dailyPayoutSpentPct: number;
 }
 
 const STUCK_PAYOUT_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
@@ -479,6 +483,7 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
     totalUsers,
     bannedUsers,
     wallet,
+    dailyPayoutAgg,
   ] = await Promise.all([
     prisma.submission.count({ where: { payoutStatus: "pending" } }),
     prisma.submission.findFirst({
@@ -496,7 +501,21 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
     prisma.user.count(),
     prisma.user.count({ where: { isBanned: true } }),
     hotWallet(),
+    prisma.submission.aggregate({
+      _sum: { payoutAmountWei: true },
+      where: {
+        payoutStatus: { in: ["sent", "confirmed"] },
+        createdAt: { gte: last24h },
+      },
+    }),
   ]);
+
+  const dailyCapRaw = process.env.DAILY_PAYOUT_CAP_WEI;
+  const dailyCapWei = dailyCapRaw ? BigInt(dailyCapRaw.trim()) : 200_000000000000000000n;
+  const dailySpentWei = dailyPayoutAgg._sum.payoutAmountWei ?? 0n;
+  const dailyRemainingWei = dailyCapWei > dailySpentWei ? dailyCapWei - dailySpentWei : 0n;
+  const dailyPayoutSpentPct =
+    dailyCapWei > 0n ? Math.round(Number((dailySpentWei * 10000n) / dailyCapWei)) / 100 : 0;
 
   return {
     pendingSubmissions: pending,
@@ -512,6 +531,10 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
     hotWalletBalance: wallet.balance,
     rewardSymbol: REWARD_TOKEN_SYMBOL,
     stuckPayoutThresholdMs: STUCK_PAYOUT_THRESHOLD_MS,
+    dailyPayoutCapWei: String(dailyCapWei),
+    dailyPayoutSpentWei: String(dailySpentWei),
+    dailyPayoutRemainingWei: String(dailyRemainingWei),
+    dailyPayoutSpentPct,
   };
 }
 

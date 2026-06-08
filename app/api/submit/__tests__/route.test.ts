@@ -17,7 +17,7 @@ vi.mock("@/lib/rate-limit", async () => ({
 }));
 
 import { POST } from "@/app/api/submit/route";
-import { payReward } from "@/lib/payout";
+import { payReward, PayoutCapError } from "@/lib/payout";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 import {
@@ -569,5 +569,26 @@ describe("POST /api/submit - response target cap", () => {
     const res = await submit(validPayload({ walletAddress: wallet, taskId: gold.id, choice: "A" }));
     expect(res.status).toBe(200);
     expect((await res.json()).paid).toBe(true);
+  });
+});
+
+describe("POST /api/submit - daily payout cap", () => {
+  it("returns 429 daily_cap_reached when payReward throws PayoutCapError and marks submission skipped", async () => {
+    const wallet = makeWallet();
+    const task = await createTask();
+
+    vi.mocked(payReward).mockRejectedValueOnce(
+      new PayoutCapError(200_000000000000000000n, 200_000000000000000000n),
+    );
+
+    const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id, choice: "A" }));
+    expect(res.status).toBe(429);
+    expect((await res.json())).toEqual({ error: "daily_cap_reached" });
+
+    const submission = await prisma.submission.findFirst({
+      where: { walletAddress: wallet, taskId: task.id },
+    });
+    expect(submission).not.toBeNull();
+    expect(submission?.payoutStatus).toBe("skipped");
   });
 });

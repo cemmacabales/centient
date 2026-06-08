@@ -52,7 +52,8 @@ Running log of shipped features and scaffolding milestones.
 
 ## Security
 
-- **Security headers (issue #192):** All HTTP responses include `Content-Security-Policy` (with `frame-ancestors 'self' https://*.minipay.app` to allow MiniPay iframe embedding while blocking all other origins), `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Content-Type-Options: nosniff`, and `Permissions-Policy`. See `next.config.ts`.
+
+- **Hot-wallet per-day spend cap (issue #193):** `lib/payout.ts` now enforces a rolling 24-hour payout cap before broadcasting any `transfer()`. The cap is configured via `DAILY_PAYOUT_CAP_WEI` (defaults to ~$200 in cUSD). When the cap is reached, payouts are rejected with `daily_cap_reached` (429), the submission is marked `skipped`, and a warning is logged. A Discord alert fires (via `DISCORD_WEBHOOK_URL`) when 80% of the daily cap is consumed. The admin health page (`/api/admin/health`) exposes `dailyPayoutCapWei`, `dailyPayoutSpentWei`, `dailyPayoutRemainingWei`, and `dailyPayoutSpentPct`.
 
 ## Configuration
 
