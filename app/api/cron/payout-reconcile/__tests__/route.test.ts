@@ -115,7 +115,7 @@ describe("/api/cron/payout-reconcile", () => {
       expect(mockUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "sub-2" },
-          data: { payoutStatus: "failed" },
+          data: { payoutStatus: "failed", retryCount: { increment: 1 } },
         }),
       );
     });
@@ -151,7 +151,7 @@ describe("/api/cron/payout-reconcile", () => {
       expect(mockUpdate).not.toHaveBeenCalled();
     });
 
-    it("marks submission failed on non-timeout receipt error", async () => {
+    it("skips generic non-timeout receipt errors so next cycle can retry", async () => {
       mockFindMany.mockResolvedValueOnce([
         { id: "sub-4", payoutTxHash: "0xjkl" },
       ]);
@@ -160,14 +160,9 @@ describe("/api/cron/payout-reconcile", () => {
       const res = await POST(cronReq());
       const body = await res.json();
       expect(res.status).toBe(200);
-      expect(body.failed).toBe(1);
+      expect(body.failed).toBe(0);
 
-      expect(mockUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { id: "sub-4" },
-          data: { payoutStatus: "failed" },
-        }),
-      );
+      expect(mockUpdate).not.toHaveBeenCalled();
     });
 
     it("skips submissions with null payoutTxHash", async () => {
@@ -196,8 +191,15 @@ describe("/api/cron/payout-reconcile", () => {
       const res = await POST(cronReq());
       const body = await res.json();
       expect(body.confirmed).toBe(1);
-      expect(body.failed).toBe(2);
+      expect(body.failed).toBe(1);
       expect(mockWaitForTx).toHaveBeenCalledTimes(3);
+
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "sub-7" },
+          data: { payoutStatus: "failed", retryCount: { increment: 1 } },
+        }),
+      );
     });
 
     it("handles global error gracefully", async () => {
