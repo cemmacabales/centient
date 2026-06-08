@@ -28,7 +28,14 @@ function walletClient() {
   });
 }
 
-const _walletClient = walletClient();
+let _walletClient: ReturnType<typeof walletClient> | null = null;
+
+function getWalletClient() {
+  if (!_walletClient) {
+    _walletClient = walletClient();
+  }
+  return _walletClient;
+}
 
 const nonceMutex = new Mutex();
 
@@ -39,7 +46,7 @@ export async function payReward(to: `0x${string}`, amountWei?: bigint): Promise<
 
   const txHash = await nonceMutex.runExclusive(async () => {
     try {
-      return await _walletClient.writeContract({
+      return await getWalletClient().writeContract({
         address: REWARD_TOKEN_ADDRESS,
         abi: erc20Abi,
         functionName: "transfer",
@@ -54,9 +61,9 @@ export async function payReward(to: `0x${string}`, amountWei?: bigint): Promise<
         err?.message?.includes("underpriced") ||
         (typeof err?.cause?.code === "string" && err.cause.code.includes("NONCE_"));
       if (isNonceError) {
-        const address = _walletClient.account.address;
+        const address = getWalletClient().account.address;
         const freshNonce = await publicClient().getTransactionCount({ address });
-        return await _walletClient.writeContract({
+        return await getWalletClient().writeContract({
           address: REWARD_TOKEN_ADDRESS,
           abi: erc20Abi,
           functionName: "transfer",
