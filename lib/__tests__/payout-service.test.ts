@@ -246,4 +246,39 @@ describe("reprocessPayoutWithNonceSafety", () => {
 
     expect(mockExecuteRaw).toHaveBeenCalled();
   });
+
+  it("does not burn retryCount on PayoutCapError", async () => {
+    mockFindUnique.mockResolvedValueOnce({
+      id: "sub-9",
+      walletAddress: "0x444",
+      payoutStatus: "failed",
+      payoutAmountWei: 100n,
+    });
+
+    mockTxFindUnique.mockResolvedValueOnce({
+      id: "sub-9",
+      walletAddress: "0x444",
+      payoutStatus: "failed",
+      payoutAmountWei: 100n,
+      retryCount: 2,
+      lastRetriedAt: new Date("2024-01-01"),
+    });
+
+    const CapError = class extends Error {
+      name = "PayoutCapError";
+    };
+    mockPayReward.mockRejectedValueOnce(new CapError("Daily cap reached"));
+
+    await reprocessPayoutWithNonceSafety("sub-9");
+
+    expect(mockTxUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "sub-9" },
+        data: expect.objectContaining({
+          payoutStatus: "pending",
+          retryCount: 2,
+        }),
+      }),
+    );
+  });
 });

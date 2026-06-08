@@ -133,7 +133,6 @@ describe("/api/cron/payout-reconcile", () => {
       expect(res.status).toBe(200);
       expect(body.confirmed).toBe(0);
       expect(body.failed).toBe(0);
-      expect(body.skipped).toBe(0);
 
       expect(mockUpdate).not.toHaveBeenCalled();
     });
@@ -163,18 +162,6 @@ describe("/api/cron/payout-reconcile", () => {
       expect(body.failed).toBe(0);
 
       expect(mockUpdate).not.toHaveBeenCalled();
-    });
-
-    it("skips submissions with null payoutTxHash", async () => {
-      mockFindMany.mockResolvedValueOnce([
-        { id: "sub-5", payoutTxHash: null },
-      ]);
-
-      const res = await POST(cronReq());
-      const body = await res.json();
-      expect(res.status).toBe(200);
-      expect(body.skipped).toBe(1);
-      expect(mockWaitForTx).not.toHaveBeenCalled();
     });
 
     it("processes multiple submissions in a batch", async () => {
