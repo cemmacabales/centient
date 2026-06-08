@@ -61,6 +61,7 @@ export default async function AdminUserProfilePage({
       payoutTxHash: s.payoutTxHash,
       createdAt: s.createdAt.toISOString(),
     })),
+    reasonRepetition: profile.reasonRepetition,
   };
 
   return (

@@ -16,9 +16,18 @@ vi.mock("@/lib/rate-limit", async () => ({
   resetLoginFailures: vi.fn(async () => {}),
 }));
 
+vi.mock("@/lib/quality", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/quality")>();
+  return {
+    ...actual,
+    checkReasonRepetition: vi.fn(async () => ({ isRepetitive: false })),
+  };
+});
+
 import { POST } from "@/app/api/submit/route";
-import { payReward } from "@/lib/payout";
+import { payReward, PayoutCapError } from "@/lib/payout";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
+import { checkReasonRepetition } from "@/lib/quality";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 import {
   createUser,
@@ -35,6 +44,8 @@ beforeEach(async () => {
   vi.mocked(payReward).mockReset();
   vi.mocked(checkWalletRateLimit).mockReset();
   vi.mocked(checkWalletRateLimit).mockResolvedValue(false);
+  vi.mocked(checkReasonRepetition).mockReset();
+  vi.mocked(checkReasonRepetition).mockResolvedValue({ isRepetitive: false });
 });
 
 function makeReq(body: unknown): NextRequest {
@@ -132,6 +143,13 @@ describe("POST /api/submit - validation", () => {
     const res = await submit(validPayload({ reason: 12345 }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe("invalid_reason");
+  });
+
+  it("returns 400 repetitive_reason when checkReasonRepetition flags it", async () => {
+    vi.mocked(checkReasonRepetition).mockResolvedValueOnce({ isRepetitive: true });
+    const res = await submit(validPayload());
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("repetitive_reason");
   });
 });
 
@@ -569,5 +587,26 @@ describe("POST /api/submit - response target cap", () => {
     const res = await submit(validPayload({ walletAddress: wallet, taskId: gold.id, choice: "A" }));
     expect(res.status).toBe(200);
     expect((await res.json()).paid).toBe(true);
+  });
+});
+
+describe("POST /api/submit - daily payout cap", () => {
+  it("returns 429 daily_cap_reached when payReward throws PayoutCapError and marks submission skipped", async () => {
+    const wallet = makeWallet();
+    const task = await createTask();
+
+    vi.mocked(payReward).mockRejectedValueOnce(
+      new PayoutCapError(200_000000000000000000n, 200_000000000000000000n),
+    );
+
+    const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id, choice: "A" }));
+    expect(res.status).toBe(429);
+    expect((await res.json())).toEqual({ error: "daily_cap_reached" });
+
+    const submission = await prisma.submission.findFirst({
+      where: { walletAddress: wallet, taskId: task.id },
+    });
+    expect(submission).not.toBeNull();
+    expect(submission?.payoutStatus).toBe("skipped");
   });
 });

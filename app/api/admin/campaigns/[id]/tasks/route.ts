@@ -31,6 +31,9 @@ export async function GET(
       prompt: true,
       responseTarget: true,
       rewardWei: true,
+      majorityAnswer: true,
+      agreementScore: true,
+      resolvedAt: true,
       _count: { select: { submissions: { where: { payoutStatus: { in: ["sent", "confirmed"] }, isGoldCheck: false } } } },
     },
   });
@@ -40,6 +43,7 @@ export async function GET(
     const responseCount = t._count.submissions;
     const pct = Math.min(100, Math.floor((responseCount / responseTarget) * 100));
     const resolvedRewardWei = t.rewardWei ?? campaign.rewardWei;
+    const agreementPct = t.agreementScore != null ? Math.round(t.agreementScore * 100) : null;
 
     return {
       taskId: t.id,
@@ -48,6 +52,10 @@ export async function GET(
       responseCount,
       pct,
       rewardWei: resolvedRewardWei.toString(),
+      majorityAnswer: t.majorityAnswer,
+      agreementScore: t.agreementScore,
+      agreementPct,
+      resolvedAt: t.resolvedAt?.toISOString() ?? null,
     };
   });
 
