@@ -16,14 +16,9 @@ export async function POST(req: NextRequest) {
       take: 50,
     });
 
-    const results = { confirmed: 0, failed: 0, skipped: 0 };
+    const results = { confirmed: 0, failed: 0 };
 
     for (const sub of unconfirmed) {
-      if (!sub.payoutTxHash) {
-        results.skipped++;
-        continue;
-      }
-
       try {
         const receipt = await waitForTx(sub.payoutTxHash as `0x${string}`);
         await prisma.submission.update({
@@ -49,7 +44,7 @@ export async function POST(req: NextRequest) {
 
         const isDropped =
           err?.name === "TransactionReceiptNotFoundError" ||
-          err?.message?.includes("not found");
+          err?.message?.includes("transaction receipt not found");
 
         if (!isDropped) {
           console.error(

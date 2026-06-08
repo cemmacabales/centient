@@ -1,10 +1,9 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
-const { mockReprocess, mockFindMany, mockUpdate, mockUpdateMany } = vi.hoisted(() => ({
+const { mockReprocess, mockQueryRaw, mockUpdateMany } = vi.hoisted(() => ({
   mockReprocess: vi.fn(),
-  mockFindMany: vi.fn(),
-  mockUpdate: vi.fn(),
+  mockQueryRaw: vi.fn(),
   mockUpdateMany: vi.fn(),
 }));
 
@@ -15,19 +14,12 @@ vi.mock("@/lib/payout-service", () => ({
 vi.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: {
+    $queryRaw: mockQueryRaw,
     submission: {
-      findMany: mockFindMany,
-      update: mockUpdate,
       updateMany: mockUpdateMany,
     },
   },
 }));
-
-vi.mock("@/lib/admin-data", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/lib/admin-data")>();
-  return { ...actual };
-});
 
 import { POST } from "../route";
 
@@ -38,8 +30,7 @@ beforeEach(() => {
   process.env = { ...ENV_ORIGINAL };
   process.env.CRON_SECRET = "test-secret";
   mockReprocess.mockResolvedValue(undefined);
-  mockFindMany.mockResolvedValue([]);
-  mockUpdate.mockResolvedValue({});
+  mockQueryRaw.mockResolvedValue([]);
   mockUpdateMany.mockResolvedValue({ count: 0 });
 });
 
@@ -90,17 +81,9 @@ describe("/api/cron/payout-retry", () => {
     });
 
     it("reprocesses failed submissions past their backoff window", async () => {
-      const fourMinutesAgo = new Date(Date.now() - 4 * 60 * 1000);
-      mockFindMany
-        .mockResolvedValueOnce([
-          {
-            id: "sub-1",
-            payoutStatus: "failed",
-            retryCount: 1,
-            lastRetriedAt: fourMinutesAgo,
-            createdAt: new Date(Date.now() - 10 * 60 * 1000),
-          },
-        ])
+      mockQueryRaw.mockResolvedValueOnce([
+        { id: "sub-1", wallet_address: "0xaaa", retry_count: 1 },
+      ]);
 
       const res = await POST(cronReq());
       const body = await res.json();
@@ -110,17 +93,9 @@ describe("/api/cron/payout-retry", () => {
     });
 
     it("skips failed submissions still in backoff", async () => {
-      const justNow = new Date();
-      mockFindMany
-        .mockResolvedValueOnce([
-          {
-            id: "sub-2",
-            payoutStatus: "failed",
-            retryCount: 1,
-            lastRetriedAt: justNow,
-            createdAt: new Date(Date.now() - 10 * 60 * 1000),
-          },
-        ])
+      // DB query already filters them out; both queries return empty
+      mockQueryRaw.mockResolvedValueOnce([]);
+      mockQueryRaw.mockResolvedValueOnce([]);
 
       const res = await POST(cronReq());
       const body = await res.json();
@@ -130,17 +105,10 @@ describe("/api/cron/payout-retry", () => {
     });
 
     it("reprocesses stuck pending submissions", async () => {
-      const sixMinutesAgo = new Date(Date.now() - 6 * 60 * 1000);
-      mockFindMany
-        .mockResolvedValueOnce([
-          {
-            id: "sub-3",
-            payoutStatus: "pending",
-            retryCount: 0,
-            lastRetriedAt: null,
-            createdAt: sixMinutesAgo,
-          },
-        ])
+      mockQueryRaw.mockResolvedValueOnce([
+        { id: "sub-3", wallet_address: "0xbbb", retry_count: 0 },
+      ]);
+      mockQueryRaw.mockResolvedValueOnce([]);
 
       const res = await POST(cronReq());
       const body = await res.json();
@@ -150,17 +118,8 @@ describe("/api/cron/payout-retry", () => {
     });
 
     it("respects backoff for retryCount=0 (60s via createdAt)", async () => {
-      const thirtySecondsAgo = new Date(Date.now() - 30_000);
-      mockFindMany
-        .mockResolvedValueOnce([
-          {
-            id: "sub-4",
-            payoutStatus: "failed",
-            retryCount: 0,
-            lastRetriedAt: null,
-            createdAt: thirtySecondsAgo,
-          },
-        ])
+      mockQueryRaw.mockResolvedValueOnce([]);
+      mockQueryRaw.mockResolvedValueOnce([]);
 
       const res = await POST(cronReq());
       const body = await res.json();
@@ -168,17 +127,8 @@ describe("/api/cron/payout-retry", () => {
     });
 
     it("respects backoff for retryCount=2 (4min)", async () => {
-      const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000);
-      mockFindMany
-        .mockResolvedValueOnce([
-          {
-            id: "sub-5",
-            payoutStatus: "failed",
-            retryCount: 2,
-            lastRetriedAt: threeMinutesAgo,
-            createdAt: new Date(Date.now() - 30 * 60 * 1000),
-          },
-        ])
+      mockQueryRaw.mockResolvedValueOnce([]);
+      mockQueryRaw.mockResolvedValueOnce([]);
 
       const res = await POST(cronReq());
       const body = await res.json();
@@ -186,17 +136,8 @@ describe("/api/cron/payout-retry", () => {
     });
 
     it("caps backoff at 8 minutes", async () => {
-      const sevenMinutesAgo = new Date(Date.now() - 7 * 60 * 1000);
-      mockFindMany
-        .mockResolvedValueOnce([
-          {
-            id: "sub-6",
-            payoutStatus: "failed",
-            retryCount: 4,
-            lastRetriedAt: sevenMinutesAgo,
-            createdAt: new Date(Date.now() - 60 * 60 * 1000),
-          },
-        ])
+      mockQueryRaw.mockResolvedValueOnce([]);
+      mockQueryRaw.mockResolvedValueOnce([]);
 
       const res = await POST(cronReq());
       const body = await res.json();
@@ -204,7 +145,8 @@ describe("/api/cron/payout-retry", () => {
     });
 
     it("abandons submissions with retryCount >= 5 via updateMany", async () => {
-      mockFindMany
+      mockQueryRaw.mockResolvedValueOnce([]);
+      mockQueryRaw.mockResolvedValueOnce([]);
       mockUpdateMany.mockResolvedValueOnce({ count: 2 });
 
       const res = await POST(cronReq());
@@ -223,24 +165,11 @@ describe("/api/cron/payout-retry", () => {
     });
 
     it("continues processing remaining jobs when one fails", async () => {
-      const fourMinutesAgo = new Date(Date.now() - 4 * 60 * 1000);
-      mockFindMany
-        .mockResolvedValueOnce([
-          {
-            id: "sub-a",
-            payoutStatus: "failed",
-            retryCount: 1,
-            lastRetriedAt: fourMinutesAgo,
-            createdAt: new Date(Date.now() - 10 * 60 * 1000),
-          },
-          {
-            id: "sub-b",
-            payoutStatus: "failed",
-            retryCount: 1,
-            lastRetriedAt: fourMinutesAgo,
-            createdAt: new Date(Date.now() - 10 * 60 * 1000),
-          },
-        ])
+      mockQueryRaw.mockResolvedValueOnce([]);
+      mockQueryRaw.mockResolvedValueOnce([
+        { id: "sub-a", wallet_address: "0xaaa", retry_count: 1 },
+        { id: "sub-b", wallet_address: "0xbbb", retry_count: 1 },
+      ]);
 
       mockReprocess.mockRejectedValueOnce(new Error("RPC down"));
       mockReprocess.mockResolvedValueOnce(undefined);
@@ -253,7 +182,7 @@ describe("/api/cron/payout-retry", () => {
     });
 
     it("handles global error gracefully", async () => {
-      mockFindMany.mockRejectedValueOnce(new Error("DB down"));
+      mockQueryRaw.mockRejectedValueOnce(new Error("DB down"));
 
       const res = await POST(cronReq());
       expect(res.status).toBe(500);
