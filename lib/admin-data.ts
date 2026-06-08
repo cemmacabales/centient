@@ -377,6 +377,7 @@ export interface UserProfile {
     sent: number;
     failed: number;
     skipped: number;
+    abandoned: number;
   };
   recentSubmissions: Array<{
     id: string;
@@ -424,7 +425,7 @@ export async function getUserProfile(walletAddress: string): Promise<UserProfile
       if (key in acc) acc[key] = row._count._all;
       return acc;
     },
-    { pending: 0, sent: 0, failed: 0, skipped: 0 } as { pending: number; sent: number; failed: number; skipped: number },
+    { pending: 0, sent: 0, failed: 0, skipped: 0, abandoned: 0 } as { pending: number; sent: number; failed: number; skipped: number; abandoned: number },
   );
 
   return {
@@ -470,6 +471,7 @@ export interface PoolHealth {
   pendingOldestAt: Date | null;
   failedSubmissions: number;
   failedLast24h: number;
+  abandonedSubmissions: number;
   totalTasks: number;
   totalCampaignTasks: number;
   totalPlatformGoldTasks: number;
@@ -496,6 +498,7 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
     pendingOldest,
     failedAll,
     failedLast24h,
+    abandonedAll,
     totalTasks,
     totalCampaignTasks,
     totalPlatformGoldTasks,
@@ -514,6 +517,7 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
     prisma.submission.count({
       where: { payoutStatus: "failed", createdAt: { gte: last24h } },
     }),
+    prisma.submission.count({ where: { payoutStatus: "abandoned" } }),
     prisma.task.count(),
     prisma.task.count({ where: { campaignId: { not: null } } }),
     prisma.task.count({ where: { isGold: true, campaignId: null } }),
@@ -541,6 +545,7 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
     pendingOldestAt: pendingOldest?.createdAt ?? null,
     failedSubmissions: failedAll,
     failedLast24h,
+    abandonedSubmissions: abandonedAll,
     totalTasks,
     totalCampaignTasks,
     totalPlatformGoldTasks,

@@ -38,8 +38,9 @@ export default async function AdminStatusHealthPage() {
               <div className="font-headline text-sm font-bold">Stuck payout detected</div>
               <p className="mt-1 font-body text-sm">
                 The oldest pending submission is {stuckAgeMin} minute{stuckAgeMin === 1 ? "" : "s"} old
-                (threshold: {Math.floor(snap.stuckPayoutThresholdMs / 60000)} min). Issue #99 will add
-                the retry job — until then, treat this as a manual alert.
+                (threshold: {Math.floor(snap.stuckPayoutThresholdMs / 60000)} min). The cron retry job
+                (app/api/cron/payout-retry) will automatically reprocess stuck submissions. Admins can
+                also manually retry individual submissions from the user profile view.
               </p>
             </div>
           </div>
@@ -84,7 +85,7 @@ export default async function AdminStatusHealthPage() {
         <h2 className="mb-3 font-label text-xs font-bold uppercase tracking-[0.2em] text-outline">
           Payout queue
         </h2>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
           <StatCard
             label="Pending"
             value={String(snap.pendingSubmissions)}
@@ -98,6 +99,11 @@ export default async function AdminStatusHealthPage() {
             label="Failed (total)"
             value={String(snap.failedSubmissions)}
             subline={`${snap.failedLast24h} in the last 24h`}
+          />
+          <StatCard
+            label="Abandoned"
+            value={String(snap.abandonedSubmissions)}
+            subline="Exhausted all 5 retry attempts"
           />
           <StatCard
             label="Total users"

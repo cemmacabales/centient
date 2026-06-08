@@ -103,17 +103,19 @@ model Task {
 }
 
 model Submission {
-  id              String   @id @default(uuid())
+  id              String    @id @default(uuid())
   walletAddress   String
   taskId          String
   choice          String
   reason          String
-  isGoldCheck     Boolean  @default(false)
+  isGoldCheck     Boolean   @default(false)
   goldPassed      Boolean?
   payoutAmountWei BigInt
   payoutTxHash    String?
-  payoutStatus    String   @default("pending")
-  createdAt       DateTime @default(now())
+  payoutStatus    String    @default("pending")
+  retryCount      Int       @default(0)
+  lastRetriedAt   DateTime?
+  createdAt       DateTime  @default(now())
 
   user User @relation(fields: [walletAddress], references: [walletAddress])
   task Task @relation(fields: [taskId], references: [id])
@@ -122,6 +124,8 @@ model Submission {
   @@index([walletAddress])
   @@index([payoutStatus])
   @@index([payoutStatus, createdAt])
+  @@index([payoutStatus, retryCount])
+  @@index([lastRetriedAt])
   @@index([taskId])
   @@map("submissions")
 }
