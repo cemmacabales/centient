@@ -13,6 +13,16 @@ export async function getWalletAddress(): Promise<string | null> {
   return accounts[0]?.toLowerCase() ?? null;
 }
 
+export async function signMessage(address: string, message: string): Promise<string> {
+  if (typeof window === "undefined") throw new Error("ssr");
+  const eth = (window as any).ethereum;
+  if (!eth) throw new Error("ethereum_not_present");
+  return eth.request({
+    method: "personal_sign",
+    params: [message, address],
+  }) as Promise<string>;
+}
+
 export async function connectMiniPay(timeoutMs = 10_000): Promise<string> {
   if (typeof window === "undefined") throw new Error("ssr");
   const eth = (window as any).ethereum;

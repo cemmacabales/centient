@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { isMiniPay, connectMiniPay } from "@/lib/minipay";
+import { isMiniPay, connectMiniPay, signMessage } from "@/lib/minipay";
 import TaskCard from "@/components/TaskCard";
 import EarningsBadge from "@/components/EarningsBadge";
 import WalletChip from "@/components/WalletChip";
@@ -101,6 +101,20 @@ export default function Home() {
 
   const dismissToast = useCallback(() => setToast(null), []);
 
+  const signInLabeler = useCallback(async (addr: string) => {
+    const nonceRes = await fetch(`/api/auth/nonce?address=${addr}`);
+    if (!nonceRes.ok) throw new Error("nonce_failed");
+    const { nonce } = await nonceRes.json();
+    const message = `Centient Labeler Authentication\nWallet: ${addr}\nNonce: ${nonce}`;
+    const signature = await signMessage(addr, message);
+    const verifyRes = await fetch("/api/auth/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address: addr, signature, nonce }),
+    });
+    if (!verifyRes.ok) throw new Error("verify_failed");
+  }, []);
+
   const fetchUserData = useCallback(async (addr: string) => {
     const res = await fetch(`/api/me?wallet=${addr}`);
     const data = await res.json();
@@ -145,6 +159,13 @@ export default function Home() {
     const connect = connectMiniPay().then(async (addr) => {
       setWallet(addr);
       const userData = await fetchUserData(addr);
+      if (!userData?.onboardingCompleted) {
+        try {
+          await signInLabeler(addr);
+        } catch {
+          // session cookie may already exist; proceed
+        }
+      }
       return userData;
     });
     const minDelay = new Promise<void>((resolve) => setTimeout(resolve, MIN_LOADING_MS));
@@ -157,7 +178,7 @@ export default function Home() {
         }
       })
       .catch(() => setScreen("wallet_error"));
-  }, [fetchUserData]);
+  }, [fetchUserData, signInLabeler]);
 
   useEffect(() => {
     if (!unbannedAt || screen !== "cooldown") return;
@@ -263,7 +284,7 @@ export default function Home() {
     body = <OutsideMiniPayPage />;
   } else if (screen === "onboarding") {
     body = wallet ? (
-      <OnboardingScreen wallet={wallet} onComplete={handleOnboardingComplete} />
+      <OnboardingScreen onComplete={handleOnboardingComplete} />
     ) : (
       <LoadingScreen />
     );

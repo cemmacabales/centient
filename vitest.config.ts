@@ -10,6 +10,10 @@ if (!process.env.DATABASE_URL) {
   process.env.DATABASE_URL = testDbUrl;
 }
 
+if (!process.env.LABELER_JWT_SECRET) {
+  process.env.LABELER_JWT_SECRET = "test-labeler-jwt-secret-at-least-32-chars";
+}
+
 export default defineConfig({
   resolve: {
     alias: {

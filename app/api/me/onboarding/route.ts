@@ -1,18 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { COUNTRIES } from "@/lib/countries";
+import { getLabelerSession, requireLabelerSession } from "@/lib/labeler-auth";
 
 export async function POST(req: NextRequest) {
-  let body: { wallet?: string; country?: string; ageRange?: string; gender?: string };
+  const walletSession = await getLabelerSession(req);
+  const unauthorized = requireLabelerSession(walletSession);
+  if (unauthorized) return unauthorized;
+  const wallet = walletSession!;
+
+  let body: { country?: string; ageRange?: string; gender?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
-  }
-
-  const wallet = body.wallet?.toLowerCase();
-  if (!wallet || !/^0x[a-f0-9]{40}$/.test(wallet)) {
-    return NextResponse.json({ error: "invalid_wallet" }, { status: 400 });
   }
 
   const { country, ageRange, gender } = body;

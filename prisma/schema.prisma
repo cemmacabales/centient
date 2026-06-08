@@ -123,6 +123,18 @@ model Submission {
   @@map("submissions")
 }
 
+model WalletNonce {
+  id            String    @id @default(uuid())
+  walletAddress String
+  nonce         String    @unique
+  expiresAt     DateTime
+  createdAt     DateTime  @default(now())
+
+  @@index([walletAddress])
+  @@index([expiresAt])
+  @@map("wallet_nonces")
+}
+
 model AdminAuditLog {
   id           String   @id @default(uuid())
   adminUserId  String
