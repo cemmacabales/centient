@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { payReward, resolveRewardWei } from "@/lib/payout";
-import { isSpamReason } from "@/lib/quality";
+import { isSpamReason, computeIAA } from "@/lib/quality";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { validateReason } from "@/lib/validators";
 import {
@@ -305,6 +305,25 @@ export async function POST(req: NextRequest) {
           },
         }),
       ]);
+
+      if (!task.isGold && task.responseTarget != null && !task.resolvedAt) {
+        const paidCount = await prisma.submission.count({
+          where: { taskId, isGoldCheck: false, payoutStatus: { in: ["sent", "confirmed"] } },
+        });
+        if (paidCount >= task.responseTarget) {
+          const iaa = await computeIAA(taskId);
+          if (iaa) {
+            await prisma.task.update({
+              where: { id: taskId },
+              data: {
+                majorityAnswer: iaa.majorityAnswer,
+                agreementScore: iaa.agreementScore,
+                resolvedAt: new Date(),
+              },
+            });
+          }
+        }
+      }
 
       return NextResponse.json({
         paid: true,
