@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { createPublicClient, erc20Abi, formatUnits, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import prisma from "./prisma";
+import { normalizeReason } from "./quality";
 import {
   REWARD_TOKEN_ADDRESS,
   REWARD_TOKEN_DECIMALS,
@@ -378,6 +379,11 @@ export interface UserProfile {
     payoutTxHash: string | null;
     createdAt: Date;
   }>;
+  reasonRepetition: {
+    hasRepetition: boolean;
+    maxDuplicateCount: number;
+    mostCommonReason: string | null;
+  };
 }
 
 export async function getUserProfile(walletAddress: string): Promise<UserProfile | null> {
@@ -443,6 +449,7 @@ export async function getUserProfile(walletAddress: string): Promise<UserProfile
       payoutTxHash: s.payoutTxHash,
       createdAt: s.createdAt,
     })),
+    reasonRepetition: computeRepetitionStats(recent.map((s) => s.reason)),
   };
 }
 
@@ -517,6 +524,37 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
 
 export function isStuckPending(createdAt: Date, now: Date = new Date()): boolean {
   return now.getTime() - createdAt.getTime() > STUCK_PAYOUT_THRESHOLD_MS;
+}
+
+function computeRepetitionStats(reasons: string[]): {
+  hasRepetition: boolean;
+  maxDuplicateCount: number;
+  mostCommonReason: string | null;
+} {
+  if (reasons.length === 0) {
+    return { hasRepetition: false, maxDuplicateCount: 0, mostCommonReason: null };
+  }
+
+  const normalized = reasons.map((r) => normalizeReason(r));
+  const freq = new Map<string, number>();
+  for (const r of normalized) {
+    freq.set(r, (freq.get(r) ?? 0) + 1);
+  }
+
+  let maxCount = 0;
+  let mostCommon: string | null = null;
+  for (const [r, count] of freq) {
+    if (count > maxCount) {
+      maxCount = count;
+      mostCommon = r;
+    }
+  }
+
+  const window = parseInt(process.env.REASON_REPEAT_WINDOW ?? "10", 10);
+  const max = parseInt(process.env.REASON_REPEAT_MAX ?? "3", 10);
+  const hasRepetition = normalized.length >= window && maxCount >= max;
+
+  return { hasRepetition, maxDuplicateCount: maxCount, mostCommonReason: mostCommon };
 }
 
 // ---------------------------------------------------------------------------
