@@ -109,7 +109,9 @@ model Submission {
   goldPassed      Boolean?
   payoutAmountWei BigInt
   payoutTxHash    String?
-  payoutStatus    String   @default("pending")
+  payoutStatus     String   @default("pending")
+  payoutRetryCount Int      @default(0)
+  payoutLastCheckedAt DateTime?
   createdAt       DateTime @default(now())
 
   user User @relation(fields: [walletAddress], references: [walletAddress])
