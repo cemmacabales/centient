@@ -93,7 +93,7 @@ describe("reprocessPayoutWithNonceSafety", () => {
     expect(mockPayReward).not.toHaveBeenCalled();
   });
 
-  it("reprocesses failed submission successfully", async () => {
+  it("reprocesses failed submission successfully and credits user", async () => {
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-4",
       walletAddress: "0xddd",
@@ -127,6 +127,12 @@ describe("reprocessPayoutWithNonceSafety", () => {
           payoutStatus: "sent",
           payoutTxHash: "0xdeadbeef",
         }),
+      }),
+    );
+    expect(mockUserUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { walletAddress: "0xddd" },
+        data: { submissionCount: 6, totalEarnedWei: 1500n },
       }),
     );
   });

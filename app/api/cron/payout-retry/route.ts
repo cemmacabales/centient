@@ -30,6 +30,11 @@ export async function POST(req: NextRequest) {
         payoutStatus: { in: ["failed", "pending"] },
         retryCount: { lt: MAX_RETRIES },
       },
+      orderBy: [
+        { lastRetriedAt: "asc" },
+        { createdAt: "asc" },
+      ],
+      take: 100,
       select: {
         id: true,
         payoutStatus: true,

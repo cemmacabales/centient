@@ -24,6 +24,7 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
       const txHash = await payReward(submission.walletAddress as `0x${string}`, amount);
 
       const wasPending = fresh.payoutStatus === "pending";
+      const shouldUpdateTotals = wasPending || fresh.payoutStatus === "failed";
 
       await tx.submission.update({
         where: { id: submissionId },
@@ -39,7 +40,7 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
         select: { submissionCount: true, totalEarnedWei: true },
       });
 
-      if (wasPending && user) {
+      if (shouldUpdateTotals && user) {
         await tx.user.update({
           where: { walletAddress: submission.walletAddress },
           data: {
