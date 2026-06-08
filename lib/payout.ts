@@ -8,6 +8,9 @@ import {
   activeChain,
   activeRpcUrl,
 } from "./constants";
+import { checkPayoutCap, maybeSendCapAlert, PayoutCapError } from "./payout-cap";
+
+export { PayoutCapError };
 
 function publicClient() {
   return createPublicClient({ chain: activeChain(), transport: http(activeRpcUrl()) });
@@ -31,7 +34,10 @@ const nonceMutex = new Mutex();
 
 export async function payReward(to: `0x${string}`, amountWei?: bigint): Promise<`0x${string}`> {
   const amount = amountWei ?? rewardInWei();
-  return nonceMutex.runExclusive(async () => {
+
+  await checkPayoutCap(amount);
+
+  const txHash = await nonceMutex.runExclusive(async () => {
     try {
       return await _walletClient.writeContract({
         address: REWARD_TOKEN_ADDRESS,
@@ -62,6 +68,10 @@ export async function payReward(to: `0x${string}`, amountWei?: bigint): Promise<
       throw err;
     }
   });
+
+  maybeSendCapAlert().catch(() => {});
+
+  return txHash;
 }
 
 export async function waitForTx(hash: `0x${string}`) {

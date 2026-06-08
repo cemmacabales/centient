@@ -7,6 +7,7 @@ import {
   isInCooldown,
   isInRetest,
 } from "@/lib/admin-data";
+import { computeAgreementFromCounts } from "@/lib/quality";
 
 describe("evaluateBanRule", () => {
   it("does not ban below the 3-attempt threshold", () => {
@@ -154,5 +155,54 @@ describe("isStuckPending", () => {
     expect(isStuckPending(justOver)).toBe(true);
     const justUnder = new Date(Date.now() - (5 * 60 * 1000 - 100));
     expect(isStuckPending(justUnder)).toBe(false);
+  });
+});
+
+describe("computeAgreementFromCounts", () => {
+  it("returns 100% agreement when all choose A", () => {
+    const r = computeAgreementFromCounts(5, 0);
+    expect(r).not.toBeNull();
+    expect(r!.agreementScore).toBe(1.0);
+    expect(r!.majorityAnswer).toBe("A");
+    expect(r!.aCount).toBe(5);
+    expect(r!.bCount).toBe(0);
+    expect(r!.totalCount).toBe(5);
+  });
+
+  it("returns 100% agreement when all choose B", () => {
+    const r = computeAgreementFromCounts(0, 3);
+    expect(r).not.toBeNull();
+    expect(r!.agreementScore).toBe(1.0);
+    expect(r!.majorityAnswer).toBe("B");
+    expect(r!.aCount).toBe(0);
+    expect(r!.bCount).toBe(3);
+  });
+
+  it("returns 80% agreement for 4A/1B", () => {
+    const r = computeAgreementFromCounts(4, 1);
+    expect(r).not.toBeNull();
+    expect(r!.agreementScore).toBe(0.8);
+    expect(r!.majorityAnswer).toBe("A");
+  });
+
+  it("returns 50% agreement when tied (tie-breaks to A)", () => {
+    const r = computeAgreementFromCounts(3, 3);
+    expect(r).not.toBeNull();
+    expect(r!.agreementScore).toBe(0.5);
+    expect(r!.majorityAnswer).toBe("A");
+  });
+
+  it("returns null for < 2 submissions", () => {
+    expect(computeAgreementFromCounts(1, 0)).toBeNull();
+    expect(computeAgreementFromCounts(0, 1)).toBeNull();
+    expect(computeAgreementFromCounts(0, 0)).toBeNull();
+  });
+
+  it("handles large counts", () => {
+    const r = computeAgreementFromCounts(87, 13);
+    expect(r).not.toBeNull();
+    expect(r!.agreementScore).toBe(0.87);
+    expect(r!.majorityAnswer).toBe("A");
+    expect(r!.totalCount).toBe(100);
   });
 });
