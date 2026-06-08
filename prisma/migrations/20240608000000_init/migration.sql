@@ -212,3 +212,4 @@ ALTER TABLE "upload_jobs" ADD CONSTRAINT "upload_jobs_campaignId_fkey" FOREIGN K
 -- AddForeignKey
 ALTER TABLE "upload_jobs" ADD CONSTRAINT "upload_jobs_adminUserId_fkey" FOREIGN KEY ("adminUserId") REFERENCES "admin_users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
+
