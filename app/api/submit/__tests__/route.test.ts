@@ -144,6 +144,13 @@ describe("POST /api/submit - validation", () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe("invalid_reason");
   });
+
+  it("returns 400 repetitive_reason when checkReasonRepetition flags it", async () => {
+    vi.mocked(checkReasonRepetition).mockResolvedValueOnce({ isRepetitive: true });
+    const res = await submit(validPayload());
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("repetitive_reason");
+  });
 });
 
 describe("POST /api/submit - guards", () => {

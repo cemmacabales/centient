@@ -14,6 +14,9 @@ interface TaskProgress {
   responseCount: number;
   pct: number;
   rewardWei?: string;
+  majorityAnswer?: string | null;
+  agreementScore?: number | null;
+  agreementPct?: number | null;
 }
 
 interface EditingRow {
@@ -97,6 +100,7 @@ export default function CampaignDetail({
   const [renameValue, setRenameValue] = useState<string>(initialCampaignName);
   const [renamingLoading, setRenamingLoading] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<"progress" | "agreement">("progress");
   const fileRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -537,7 +541,20 @@ export default function CampaignDetail({
     }
   }
 
-  const sorted = [...tasks].sort((a, b) => a.pct - b.pct);
+  const sorted = [...tasks].sort((a, b) => {
+    if (sortBy === "agreement") {
+      if (a.agreementPct == null && b.agreementPct == null) return 0;
+      if (a.agreementPct == null) return 1;
+      if (b.agreementPct == null) return -1;
+      return a.agreementPct - b.agreementPct;
+    }
+    return a.pct - b.pct;
+  });
+
+  const completedTasks = tasks.filter((t) => t.agreementScore != null);
+  const avgAgreement = completedTasks.length > 0
+    ? Math.round(completedTasks.reduce((sum, t) => sum + (t.agreementPct ?? 0), 0) / completedTasks.length)
+    : null;
 
   return (
     <div className="space-y-6">
@@ -743,9 +760,29 @@ export default function CampaignDetail({
 
       <section className="rounded-3xl border border-outline-variant/40 bg-surface-container-lowest shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
         <div className="flex items-center justify-between border-b border-outline-variant/30 px-6 py-4">
-          <h2 className="font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
-            Task Progress — sorted by lowest completion first
-          </h2>
+          <div className="flex items-center gap-4">
+            <h2 className="font-label text-xs font-bold uppercase tracking-[0.15em] text-outline">
+              Task Progress
+              {sortBy === "progress" ? " — sorted by lowest completion first" : " — sorted by lowest agreement first"}
+            </h2>
+            {avgAgreement != null && (
+              <span className={`rounded-full px-2 py-0.5 font-label text-xs font-bold ${
+                avgAgreement >= 70 ? "bg-primary-container text-on-primary-container"
+                : avgAgreement >= 50 ? "bg-tertiary-container text-on-tertiary-container"
+                : "bg-error-container text-on-error-container"
+              }`}>
+                Avg Agreement: {avgAgreement}%
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setSortBy(sortBy === "progress" ? "agreement" : "progress")}
+              className="flex items-center gap-1 rounded-lg border border-outline-variant px-2 py-1 font-label text-xs text-on-surface-variant hover:bg-surface-container-high transition-colors"
+            >
+              <span className="material-symbols-outlined text-[14px]">sort</span>
+              Sort by {sortBy === "progress" ? "agreement" : "progress"}
+            </button>
+          </div>
           {!addingNew && (
             <button
               onClick={handleStartAdd}
@@ -785,6 +822,9 @@ export default function CampaignDetail({
                 </th>
                 <th className="px-6 py-3 text-right font-label text-xs font-bold uppercase tracking-[0.15em] text-outline w-20">
                   %
+                </th>
+                <th className="px-6 py-3 text-right font-label text-xs font-bold uppercase tracking-[0.15em] text-outline w-24">
+                  Agreement
                 </th>
                 <th className="px-6 py-3 w-24" />
               </tr>
@@ -868,6 +908,24 @@ export default function CampaignDetail({
                         {t.pct}%
                       </span>
                     </td>
+                    <td className="px-6 py-3 text-right">
+                      {t.agreementPct != null ? (
+                        <span
+                          className={`rounded-full px-2 py-0.5 font-label text-xs font-bold ${
+                            t.agreementPct >= 70
+                              ? "bg-primary-container text-on-primary-container"
+                              : t.agreementPct >= 50
+                              ? "bg-tertiary-container text-on-tertiary-container"
+                              : "bg-error-container text-on-error-container"
+                          }`}
+                          title={t.majorityAnswer ? `Majority: ${t.majorityAnswer}` : undefined}
+                        >
+                          {t.agreementPct}% {t.majorityAnswer ? `(${t.majorityAnswer})` : ""}
+                        </span>
+                      ) : (
+                        <span className="text-on-surface-variant/40 font-body text-sm">—</span>
+                      )}
+                    </td>
                     <td className="px-6 py-3">
                       {isEditing ? (
                         <div className="flex items-center justify-end gap-1">
@@ -949,6 +1007,9 @@ export default function CampaignDetail({
                   <td className="px-6 py-3 text-right font-body text-sm text-on-surface-variant">0</td>
                   <td className="px-6 py-3 text-right">
                     <span className="rounded-full bg-error-container px-2 py-0.5 font-label text-xs font-bold text-on-error-container">0%</span>
+                  </td>
+                  <td className="px-6 py-3 text-right">
+                    <span className="text-on-surface-variant/40 font-body text-sm">—</span>
                   </td>
                   <td className="px-6 py-3">
                     <div className="flex items-center justify-end gap-1">

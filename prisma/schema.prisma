@@ -88,6 +88,9 @@ model Task {
   campaignId     String?
   responseTarget Int?
   rewardWei      BigInt?
+  majorityAnswer String?
+  agreementScore Float?
+  resolvedAt     DateTime?
 
   submissions Submission[]
   campaign    Campaign?    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
