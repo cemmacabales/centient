@@ -44,6 +44,11 @@ export interface UserProfileProps {
     payoutTxHash: string | null;
     createdAt: string;
   }>;
+  reasonRepetition?: {
+    hasRepetition: boolean;
+    maxDuplicateCount: number;
+    mostCommonReason: string | null;
+  };
 }
 
 export default function UserProfileView({ profile }: { profile: UserProfileProps }) {
@@ -93,6 +98,27 @@ export default function UserProfileView({ profile }: { profile: UserProfileProps
           tone={profile.isBanned ? "error" : "ok"}
         />
       </section>
+
+      {profile.reasonRepetition?.hasRepetition && (
+        <section className="rounded-2xl border border-amber-300 bg-amber-50 p-5">
+          <div className="flex items-center gap-2">
+            <span className="font-label text-xs font-bold uppercase tracking-[0.2em] text-amber-700">
+              Repetitive reasons
+            </span>
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 font-label text-[10px] font-bold text-amber-800">
+              flagged
+            </span>
+          </div>
+          <p className="mt-2 font-body text-sm text-amber-800">
+            {profile.reasonRepetition.maxDuplicateCount} out of the last submissions use the same reason:
+          </p>
+          {profile.reasonRepetition.mostCommonReason && (
+            <p className="mt-1 rounded-lg bg-amber-100/60 px-3 py-2 font-mono text-xs text-amber-900">
+              &ldquo;{profile.reasonRepetition.mostCommonReason}&rdquo;
+            </p>
+          )}
+        </section>
+      )}
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Panel title="Demographics">

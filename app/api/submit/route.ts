@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { payReward, resolveRewardWei, PayoutCapError } from "@/lib/payout";
-import { isSpamReason } from "@/lib/quality";
+import { isSpamReason, checkReasonRepetition } from "@/lib/quality";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { validateReason } from "@/lib/validators";
 import {
@@ -55,6 +55,11 @@ export async function POST(req: NextRequest) {
   
   if (typeof reason !== "string" || isSpamReason(reason) || !validateReason(reason)) {
     return errorResponse("invalid_reason", 400, { walletAddress, taskId });
+  }
+
+  const repetitionCheck = await checkReasonRepetition(walletAddress, reason);
+  if (repetitionCheck.isRepetitive) {
+    return errorResponse("repetitive_reason", 400, { walletAddress, taskId });
   }
 
   if (await checkWalletRateLimit(walletAddress)) {

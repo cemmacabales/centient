@@ -69,6 +69,8 @@ function submitErrorMessage(status: number, code?: string): string {
       return "Submission couldn't be read. Please try again.";
     case "left_bias_detected":
       return "Please vary your answers — submission rejected.";
+    case "repetitive_reason":
+      return "Please write a unique, thoughtful reason for each submission.";
     case "task_not_found":
       return "This task is no longer available.";
     case "response_target_reached":
