@@ -113,8 +113,8 @@ model Submission {
   payoutAmountWei BigInt
   payoutTxHash    String?
   payoutStatus     String   @default("pending")
-  payoutRetryCount Int      @default(0)
-  payoutLastCheckedAt DateTime?
+  retryCount     Int      @default(0)
+  lastRetriedAt  DateTime?
   createdAt       DateTime @default(now())
 
   user User @relation(fields: [walletAddress], references: [walletAddress])
