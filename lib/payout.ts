@@ -1,5 +1,6 @@
 import { createPublicClient, createWalletClient, http, parseUnits, erc20Abi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { Mutex } from "async-mutex";
 import {
   REWARD_AMOUNT,
   REWARD_TOKEN_ADDRESS,
@@ -8,6 +9,8 @@ import {
   activeRpcUrl,
 } from "./constants";
 import { checkPayoutCap, maybeSendCapAlert, PayoutCapError } from "./payout-cap";
+
+export { PayoutCapError };
 
 function publicClient() {
   return createPublicClient({ chain: activeChain(), transport: http(activeRpcUrl()) });
@@ -25,19 +28,52 @@ function walletClient() {
   });
 }
 
-export { PayoutCapError };
+let _walletClient: ReturnType<typeof walletClient> | null = null;
+
+function getWalletClient() {
+  if (!_walletClient) {
+    _walletClient = walletClient();
+  }
+  return _walletClient;
+}
+
+const nonceMutex = new Mutex();
 
 export async function payReward(to: `0x${string}`, amountWei?: bigint): Promise<`0x${string}`> {
   const amount = amountWei ?? rewardInWei();
 
   await checkPayoutCap(amount);
 
-  const txHash = await walletClient().writeContract({
-    address: REWARD_TOKEN_ADDRESS,
-    abi: erc20Abi,
-    functionName: "transfer",
-    args: [to, amount],
-    gas: 100_000n,
+  const txHash = await nonceMutex.runExclusive(async () => {
+    try {
+      return await getWalletClient().writeContract({
+        address: REWARD_TOKEN_ADDRESS,
+        abi: erc20Abi,
+        functionName: "transfer",
+        args: [to, amount],
+        gas: 100_000n,
+      });
+    } catch (err: any) {
+      const isNonceError =
+        err?.cause?.message?.includes("nonce too low") ||
+        err?.cause?.message?.includes("underpriced") ||
+        err?.message?.includes("nonce too low") ||
+        err?.message?.includes("underpriced") ||
+        (typeof err?.cause?.code === "string" && err.cause.code.includes("NONCE_"));
+      if (isNonceError) {
+        const address = getWalletClient().account.address;
+        const freshNonce = await publicClient().getTransactionCount({ address });
+        return await getWalletClient().writeContract({
+          address: REWARD_TOKEN_ADDRESS,
+          abi: erc20Abi,
+          functionName: "transfer",
+          args: [to, amount],
+          gas: 100_000n,
+          nonce: freshNonce,
+        });
+      }
+      throw err;
+    }
   });
 
   maybeSendCapAlert().catch(() => {});

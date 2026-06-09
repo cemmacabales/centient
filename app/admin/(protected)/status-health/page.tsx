@@ -1,5 +1,6 @@
 import { requireRoleForPage } from "@/lib/admin-auth";
 import { getHealthSnapshot, isStuckPending } from "@/lib/admin-data";
+import { getWalletHealth } from "@/lib/celo-balance";
 import StatCard from "@/components/admin/StatCard";
 
 export const dynamic = "force-dynamic";
@@ -7,7 +8,7 @@ export const dynamic = "force-dynamic";
 export default async function AdminStatusHealthPage() {
   await requireRoleForPage("SUPER_ADMIN");
 
-  const snap = await getHealthSnapshot();
+  const [snap, walletHealth] = await Promise.all([getHealthSnapshot(), getWalletHealth()]);
   const stuck = snap.pendingOldestAt ? isStuckPending(snap.pendingOldestAt) : false;
   const stuckAgeMs = snap.pendingOldestAt
     ? Date.now() - snap.pendingOldestAt.getTime()
@@ -39,9 +40,35 @@ export default async function AdminStatusHealthPage() {
               <p className="mt-1 font-body text-sm">
                 The oldest pending submission is {stuckAgeMin} minute{stuckAgeMin === 1 ? "" : "s"} old
                 (threshold: {Math.floor(snap.stuckPayoutThresholdMs / 60000)} min). The cron retry job
-                (app/api/cron/payout-retry) will automatically reprocess stuck submissions. Admins can
-                also manually retry individual submissions from the user profile view.
+                (app/api/cron/payout-retry) will automatically reprocess stuck submissions; the
+                reconciler confirms on-chain receipts and marks them confirmed/failed. Admins can also
+                manually retry individual submissions from the user profile view.
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!walletHealth.healthy && (
+        <div className="rounded-2xl border border-error/40 bg-error-container p-4 text-on-error-container">
+          <div className="flex items-start gap-3">
+            <span className="material-symbols-outlined text-[24px]" aria-hidden="true">
+              account_balance_wallet
+            </span>
+            <div>
+              <div className="font-headline text-sm font-bold">Hot-wallet threshold breached</div>
+              <ul className="mt-1 font-body text-sm">
+                {[...walletHealth.warnings, ...walletHealth.pages].map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+              <a
+                href="/api/health/wallet"
+                target="_blank"
+                className="mt-2 inline-block text-xs underline hover:no-underline"
+              >
+                /api/health/wallet
+              </a>
             </div>
           </div>
         </div>
@@ -51,7 +78,7 @@ export default async function AdminStatusHealthPage() {
         <h2 className="mb-3 font-label text-xs font-bold uppercase tracking-[0.2em] text-outline">
           Hot wallet
         </h2>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <StatCard
             label="Hot-wallet address"
             value={
@@ -66,7 +93,7 @@ export default async function AdminStatusHealthPage() {
             }
           />
           <StatCard
-            label="Balance"
+            label={`${snap.rewardSymbol} balance`}
             value={
               snap.hotWalletBalance === "—"
                 ? "—"
@@ -75,7 +102,20 @@ export default async function AdminStatusHealthPage() {
             subline={
               snap.hotWalletBalance === "—"
                 ? "RPC lookup failed or wallet not configured"
-                : "Reads via the active chain RPC at page render"
+                : `Warning: <${walletHealth.thresholds.warnReward} | Page: <${walletHealth.thresholds.pageReward}`
+            }
+          />
+          <StatCard
+            label="CELO (gas) balance"
+            value={
+              walletHealth.celoBalance === "—"
+                ? "—"
+                : `${walletHealth.celoBalance} CELO`
+            }
+            subline={
+              walletHealth.celoBalance === "—"
+                ? "RPC lookup failed"
+                : `Warning: <${walletHealth.thresholds.warnCelo} | Page: <${walletHealth.thresholds.pageCelo}`
             }
           />
         </div>
