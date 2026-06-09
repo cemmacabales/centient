@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { formatUnits } from "viem";
 import { REWARD_TOKEN_DECIMALS } from "@/lib/constants";
+import RetryPayoutButton from "./RetryPayoutButton";
 
 export interface UserProfileProps {
   walletAddress: string;
@@ -29,6 +30,7 @@ export interface UserProfileProps {
     sent: number;
     failed: number;
     skipped: number;
+    abandoned: number;
   };
   rewardSymbol: string;
   recentSubmissions: Array<{
@@ -178,11 +180,12 @@ export default function UserProfileView({ profile }: { profile: UserProfileProps
       </section>
 
       <Panel title="Payout history">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           <MiniStat label="Pending" value={profile.payoutTotals.pending} tone={profile.payoutTotals.pending > 0 ? "warn" : "neutral"} />
           <MiniStat label="Sent" value={profile.payoutTotals.sent} tone="ok" />
           <MiniStat label="Failed" value={profile.payoutTotals.failed} tone={profile.payoutTotals.failed > 0 ? "error" : "neutral"} />
           <MiniStat label="Skipped" value={profile.payoutTotals.skipped} tone="neutral" />
+          <MiniStat label="Abandoned" value={profile.payoutTotals.abandoned} tone={profile.payoutTotals.abandoned > 0 ? "error" : "neutral"} />
         </div>
       </Panel>
 
@@ -195,23 +198,30 @@ export default function UserProfileView({ profile }: { profile: UserProfileProps
           <ul className="divide-y divide-outline-variant/20">
             {profile.recentSubmissions.map((s) => (
               <li key={s.id} className="py-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 font-label text-xs font-semibold">
-                    <PayoutStatusChip status={s.payoutStatus} />
-                    {s.isGoldCheck && (
-                      <span className="rounded-full bg-amber-100 px-2 py-0.5 font-label text-[10px] font-bold uppercase tracking-wider text-amber-800">
-                        gold · {s.goldPassed ? "pass" : "fail"}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 font-label text-xs font-semibold">
+                      <PayoutStatusChip status={s.payoutStatus} />
+                      {s.isGoldCheck && (
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 font-label text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                          gold · {s.goldPassed ? "pass" : "fail"}
+                        </span>
+                      )}
+                      <span className="font-body text-xs text-on-surface-variant">
+                        {new Date(s.createdAt).toLocaleString("en-US")}
                       </span>
-                    )}
-                    <span className="font-body text-xs text-on-surface-variant">
-                      {new Date(s.createdAt).toLocaleString("en-US")}
-                    </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="font-label text-xs text-on-surface-variant">
+                        chose <span className="font-bold text-on-surface">{s.choice}</span> ·{" "}
+                        {formatUnits(BigInt(s.payoutAmountWei), REWARD_TOKEN_DECIMALS)} {profile.rewardSymbol}
+                      </div>
+                      <RetryPayoutButton
+                        submissionId={s.id}
+                        currentStatus={s.payoutStatus}
+                        onSuccess={() => startTransition(() => router.refresh())}
+                      />
+                    </div>
                   </div>
-                  <div className="font-label text-xs text-on-surface-variant">
-                    chose <span className="font-bold text-on-surface">{s.choice}</span> ·{" "}
-                    {formatUnits(BigInt(s.payoutAmountWei), REWARD_TOKEN_DECIMALS)} {profile.rewardSymbol}
-                  </div>
-                </div>
                 <p className="mt-1 line-clamp-2 font-body text-sm text-on-surface">
                   {s.taskPrompt}
                 </p>
@@ -320,7 +330,9 @@ function PayoutStatusChip({ status }: { status: string }) {
         ? "bg-error-container text-on-error-container"
         : status === "pending"
           ? "bg-yellow-100 text-yellow-800"
-          : "bg-surface-container-high text-on-surface-variant";
+          : status === "abandoned"
+            ? "bg-surface-container-high text-on-surface-variant line-through"
+            : "bg-surface-container-high text-on-surface-variant";
   return (
     <span className={`rounded-full px-2 py-0.5 font-label text-[10px] font-bold uppercase tracking-wider ${tone}`}>
       {status}
