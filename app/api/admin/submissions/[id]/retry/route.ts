@@ -74,14 +74,23 @@ export async function POST(
   } catch (err: any) {
     console.error(`[admin/retry] manual retry failed for submission ${id}:`, err);
 
-    await prisma.submission.update({
+    // Only restore the original status if the txHash was never persisted. If it was
+    // saved, the submission is already "sent"; overwriting it to "failed" would create
+    // contradictory state — the reconciler verifies on-chain and transitions correctly.
+    const current = await prisma.submission.findUnique({
       where: { id },
-      data: {
-        retryCount: claim.originals.retryCount,
-        lastRetriedAt: claim.originals.lastRetriedAt,
-        payoutStatus: claim.originals.status,
-      },
+      select: { payoutTxHash: true },
     });
+    if (!current?.payoutTxHash) {
+      await prisma.submission.update({
+        where: { id },
+        data: {
+          retryCount: claim.originals.retryCount,
+          lastRetriedAt: claim.originals.lastRetriedAt,
+          payoutStatus: claim.originals.status,
+        },
+      });
+    }
 
     return NextResponse.json(
       { error: "payout_failed", detail: err instanceof Error ? err.message : String(err) },

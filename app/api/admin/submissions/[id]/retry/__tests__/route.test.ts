@@ -1,12 +1,13 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
-const { mockReprocess, mockQueryRaw, mockTxUpdate, mockUpdate, mockGetSession, mockRequireRole } =
+const { mockReprocess, mockQueryRaw, mockTxUpdate, mockUpdate, mockFindUnique, mockGetSession, mockRequireRole } =
   vi.hoisted(() => ({
     mockReprocess: vi.fn(),
     mockQueryRaw: vi.fn(),
     mockTxUpdate: vi.fn(),
     mockUpdate: vi.fn(),
+    mockFindUnique: vi.fn(),
     mockGetSession: vi.fn(),
     mockRequireRole: vi.fn(),
   }));
@@ -19,6 +20,7 @@ vi.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: {
     submission: {
+      findUnique: mockFindUnique,
       update: mockUpdate,
     },
     $transaction: vi.fn(async (fn: any) => {
@@ -45,6 +47,7 @@ beforeEach(() => {
   mockReprocess.mockResolvedValue(undefined);
   mockTxUpdate.mockResolvedValue({});
   mockUpdate.mockResolvedValue({});
+  mockFindUnique.mockResolvedValue({ payoutTxHash: null });
   mockRequireRole.mockResolvedValue(null);
 });
 
@@ -187,7 +190,7 @@ describe("/api/admin/submissions/[id]/retry", () => {
       expect(res.status).toBe(500);
     });
 
-    it("restores original state in rollback when reprocess fails", async () => {
+    it("restores original state in rollback when reprocess fails and no txHash saved", async () => {
       const originalLast = new Date("2024-06-01");
       mockQueryRaw.mockResolvedValueOnce([
         makeRow({
@@ -198,6 +201,8 @@ describe("/api/admin/submissions/[id]/retry", () => {
         }),
       ]);
       mockReprocess.mockRejectedValueOnce(new Error("RPC timeout"));
+      // payoutTxHash is null — safe to restore original status
+      mockFindUnique.mockResolvedValueOnce({ payoutTxHash: null });
 
       const res = await POST(makeReq("sub-6"), {
         params: Promise.resolve({ id: "sub-6" }),
@@ -214,6 +219,22 @@ describe("/api/admin/submissions/[id]/retry", () => {
           }),
         }),
       );
+    });
+
+    it("does not overwrite sent status when txHash is already saved on failure", async () => {
+      mockQueryRaw.mockResolvedValueOnce([
+        makeRow({ id: "sub-7", payoutStatus: "failed", retryCount: 1 }),
+      ]);
+      mockReprocess.mockRejectedValueOnce(new Error("creditUserTotals DB error"));
+      // txHash was persisted before the error — submission is already "sent"
+      mockFindUnique.mockResolvedValueOnce({ payoutTxHash: "0xalreadysaved" });
+
+      const res = await POST(makeReq("sub-7"), {
+        params: Promise.resolve({ id: "sub-7" }),
+      } as any);
+      expect(res.status).toBe(500);
+      // Must NOT call update — reconciler handles the on-chain verification
+      expect(mockUpdate).not.toHaveBeenCalled();
     });
   });
 });

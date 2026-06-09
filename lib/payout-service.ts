@@ -23,6 +23,9 @@ async function claimForRetry(
   const fresh = await tx.submission.findUnique({ where: { id: submissionId } });
   if (!fresh) throw new Error("Submission vanished during retry.");
   if (isTerminalStatus(fresh.payoutStatus)) return null;
+  // A saved txHash means the on-chain transfer was already broadcast. Returning null
+  // here prevents re-broadcast even if a prior error left the status as "failed".
+  if (fresh.payoutTxHash) return null;
 
   return fresh;
 }

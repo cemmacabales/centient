@@ -177,7 +177,9 @@ describe("reprocessPayoutWithNonceSafety", () => {
     );
   });
 
-  it("does not double-count totals if a txHash already exists", async () => {
+  it("does not re-broadcast when a txHash is already persisted", async () => {
+    // Simulates the state left by an admin-catch rollback that overwrote "sent"
+    // back to "failed" while leaving payoutTxHash set — claimForRetry must bail.
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-4b",
       walletAddress: "0xd2d",
@@ -194,10 +196,9 @@ describe("reprocessPayoutWithNonceSafety", () => {
       retryCount: 1,
     });
 
-    mockPayReward.mockResolvedValueOnce("0xnew");
-
     await reprocessPayoutWithNonceSafety("sub-4b");
 
+    expect(mockPayReward).not.toHaveBeenCalled();
     expect(mockUserUpdate).not.toHaveBeenCalled();
   });
 
