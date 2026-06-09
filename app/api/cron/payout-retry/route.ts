@@ -16,23 +16,23 @@ export async function POST(req: NextRequest) {
 
   try {
     const stuckPending = await prisma.$queryRaw`
-      SELECT id, wallet_address, retry_count
+      SELECT id, "walletAddress", "retryCount"
       FROM "submissions"
-      WHERE payout_status = 'pending'
-        AND retry_count < ${MAX_RETRIES}
-        AND EXTRACT(EPOCH FROM (NOW() - created_at)) * 1000 > ${STUCK_PAYOUT_THRESHOLD_MS}
-      ORDER BY created_at ASC
+      WHERE "payoutStatus" = 'pending'
+        AND "retryCount" < ${MAX_RETRIES}
+        AND EXTRACT(EPOCH FROM (NOW() - "createdAt")) * 1000 > ${STUCK_PAYOUT_THRESHOLD_MS}
+      ORDER BY "createdAt" ASC
       LIMIT 100
     `;
 
     const eligibleFailed = await prisma.$queryRaw`
-      SELECT id, wallet_address, retry_count
+      SELECT id, "walletAddress", "retryCount"
       FROM "submissions"
-      WHERE payout_status = 'failed'
-        AND retry_count < ${MAX_RETRIES}
-        AND EXTRACT(EPOCH FROM (NOW() - COALESCE(last_retried_at, created_at))) * 1000
-            >= LEAST(POWER(2, retry_count) * ${BASE_BACKOFF_MS}, ${MAX_BACKOFF_MS})
-      ORDER BY last_retried_at ASC NULLS FIRST, created_at ASC
+      WHERE "payoutStatus" = 'failed'
+        AND "retryCount" < ${MAX_RETRIES}
+        AND EXTRACT(EPOCH FROM (NOW() - COALESCE("lastRetriedAt", "createdAt"))) * 1000
+            >= LEAST(POWER(2, "retryCount") * ${BASE_BACKOFF_MS}, ${MAX_BACKOFF_MS})
+      ORDER BY "lastRetriedAt" ASC NULLS FIRST, "createdAt" ASC
       LIMIT 100
     `;
 
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
     // Group by wallet so parallelization is safe (advisory lock prevents wallet collisions)
     const byWallet = new Map<string, any[]>();
     for (const job of cappedJobs) {
-      const wallet = job.wallet_address;
+      const wallet = job.walletAddress;
       if (!byWallet.has(wallet)) byWallet.set(wallet, []);
       byWallet.get(wallet)!.push(job);
     }
