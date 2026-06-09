@@ -62,6 +62,21 @@ describe("reprocessPayoutWithNonceSafety", () => {
     );
   });
 
+  it("throws when submission vanishes between initial check and claim transaction", async () => {
+    mockFindUnique.mockResolvedValueOnce({
+      id: "sub-vanish",
+      walletAddress: "0xvvv",
+      payoutStatus: "failed",
+      payoutAmountWei: 100n,
+    });
+    // Submission deleted after the initial check but before the advisory lock re-check
+    mockTxFindUnique.mockResolvedValueOnce(null);
+
+    await expect(reprocessPayoutWithNonceSafety("sub-vanish")).rejects.toThrow(
+      "Submission vanished during retry.",
+    );
+  });
+
   it("no-ops for confirmed status", async () => {
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-1",

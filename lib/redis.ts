@@ -9,8 +9,14 @@ export const redis =
   (() => {
     const url = process.env.REDIS_URL;
     if (!url) {
-      // ioredis accepts undefined URL; operations will fail gracefully
-      return new Redis();
+      // No URL configured — create a stub that won't spam connection errors.
+      // Any Redis command will fail immediately rather than queuing indefinitely.
+      return new Redis({
+        lazyConnect: true,
+        enableOfflineQueue: false,
+        maxRetriesPerRequest: 0,
+        retryStrategy: () => null,
+      });
     }
     const instance = new Redis(url, {
       maxRetriesPerRequest: 3,
