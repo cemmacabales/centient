@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 
 interface Props {
   submissionId: string;
@@ -23,6 +24,7 @@ export default function RetryPayoutButton({ submissionId, currentStatus, onSucce
     }
 
     setPending(true);
+    const loadingToast = toast.loading("Retrying payout…");
     try {
       const res = await fetch(`/api/admin/submissions/${submissionId}/retry`, {
         method: "POST",
@@ -31,10 +33,10 @@ export default function RetryPayoutButton({ submissionId, currentStatus, onSucce
       if (!res.ok) {
         throw new Error(data.error || "Retry request failed");
       }
-      alert("Payout retry triggered successfully.");
+      toast.success("Payout retry triggered successfully.", { id: loadingToast });
       if (onSuccess) onSuccess();
     } catch (err: any) {
-      alert(`Retry error: ${err.message}`);
+      toast.error(`Retry error: ${err.message}`, { id: loadingToast });
     } finally {
       setPending(false);
     }
