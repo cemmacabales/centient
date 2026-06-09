@@ -35,17 +35,9 @@ async function claimForRetry(
  * Runs as a best-effort follow-up: a failure here can leave totals uncredited
  * but can never trigger a re-send (the submission is already "sent").
  */
-async function creditUserTotals(
-  walletAddress: string,
-  amount: bigint,
-  fresh: { payoutStatus: string; payoutTxHash: string | null },
-): Promise<void> {
-  const wasAlreadySent = fresh.payoutTxHash != null;
-  const isFirstSend =
-    !wasAlreadySent &&
-    (fresh.payoutStatus === "pending" || fresh.payoutStatus === "failed");
-  if (!isFirstSend) return;
-
+async function creditUserTotals(walletAddress: string, amount: bigint): Promise<void> {
+  // claimForRetry already ensures payoutTxHash is null and status is pending/failed,
+  // so no first-send guard is needed here.
   const user = await prisma.user.findUnique({
     where: { walletAddress },
     select: { submissionCount: true, totalEarnedWei: true },
@@ -130,5 +122,5 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
     },
   });
 
-  await creditUserTotals(walletAddress, amount, fresh);
+  await creditUserTotals(walletAddress, amount);
 }
