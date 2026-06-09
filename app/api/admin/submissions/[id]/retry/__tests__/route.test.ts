@@ -1,27 +1,31 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
-const { mockReprocessTx, mockQueryRaw, mockUpdate, mockGetSession, mockRequireRole } =
+const { mockReprocess, mockQueryRaw, mockTxUpdate, mockUpdate, mockGetSession, mockRequireRole } =
   vi.hoisted(() => ({
-    mockReprocessTx: vi.fn(),
+    mockReprocess: vi.fn(),
     mockQueryRaw: vi.fn(),
+    mockTxUpdate: vi.fn(),
     mockUpdate: vi.fn(),
     mockGetSession: vi.fn(),
     mockRequireRole: vi.fn(),
   }));
 
 vi.mock("@/lib/payout-service", () => ({
-  reprocessPayoutWithNonceSafetyTx: mockReprocessTx,
+  reprocessPayoutWithNonceSafety: mockReprocess,
 }));
 
 vi.mock("@/lib/prisma", () => ({
   __esModule: true,
   default: {
+    submission: {
+      update: mockUpdate,
+    },
     $transaction: vi.fn(async (fn: any) => {
       const tx = {
         $queryRaw: mockQueryRaw,
         submission: {
-          update: mockUpdate,
+          update: mockTxUpdate,
         },
       };
       return fn(tx);
@@ -38,7 +42,8 @@ import { POST } from "../route";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockReprocessTx.mockResolvedValue(undefined);
+  mockReprocess.mockResolvedValue(undefined);
+  mockTxUpdate.mockResolvedValue({});
   mockUpdate.mockResolvedValue({});
   mockRequireRole.mockResolvedValue(null);
 });
@@ -52,19 +57,19 @@ function makeReq(submissionId: string): NextRequest {
 
 function makeRow(opts: {
   id: string;
-  payout_status: string;
-  retry_count: number;
-  last_retried_at?: Date | null;
-  wallet_address?: string;
-  payout_amount_wei?: string;
+  payoutStatus: string;
+  retryCount: number;
+  lastRetriedAt?: Date | null;
+  walletAddress?: string;
+  payoutAmountWei?: string;
 }) {
   return {
     id: opts.id,
-    payout_status: opts.payout_status,
-    retry_count: opts.retry_count,
-    last_retried_at: opts.last_retried_at ?? null,
-    wallet_address: opts.wallet_address ?? "0xabc",
-    payout_amount_wei: opts.payout_amount_wei ?? "100",
+    payoutStatus: opts.payoutStatus,
+    retryCount: opts.retryCount,
+    lastRetriedAt: opts.lastRetriedAt ?? null,
+    walletAddress: opts.walletAddress ?? "0xabc",
+    payoutAmountWei: opts.payoutAmountWei ?? "100",
   };
 }
 
@@ -108,7 +113,7 @@ describe("/api/admin/submissions/[id]/retry", () => {
 
     it("returns 400 for non-retryable statuses", async () => {
       mockQueryRaw.mockResolvedValueOnce([
-        makeRow({ id: "sub-1", payout_status: "pending", retry_count: 0 }),
+        makeRow({ id: "sub-1", payoutStatus: "pending", retryCount: 0 }),
       ]);
 
       const res = await POST(makeReq("sub-1"), {
@@ -119,37 +124,32 @@ describe("/api/admin/submissions/[id]/retry", () => {
 
     it("retries a failed submission", async () => {
       mockQueryRaw.mockResolvedValueOnce([
-        makeRow({ id: "sub-2", payout_status: "failed", retry_count: 3 }),
+        makeRow({ id: "sub-2", payoutStatus: "failed", retryCount: 3 }),
       ]);
 
       const res = await POST(makeReq("sub-2"), {
         params: Promise.resolve({ id: "sub-2" }),
       } as any);
       expect(res.status).toBe(200);
-      expect(mockUpdate).toHaveBeenCalledWith(
+      expect(mockTxUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "sub-2" },
           data: { retryCount: 0, lastRetriedAt: null, payoutStatus: "pending" },
         }),
       );
-      expect(mockReprocessTx).toHaveBeenCalledWith(
-        expect.anything(),
-        "sub-2",
-        "0xabc",
-        100n,
-      );
+      expect(mockReprocess).toHaveBeenCalledWith("sub-2");
     });
 
     it("retries an abandoned submission", async () => {
       mockQueryRaw.mockResolvedValueOnce([
-        makeRow({ id: "sub-3", payout_status: "abandoned", retry_count: 5 }),
+        makeRow({ id: "sub-3", payoutStatus: "abandoned", retryCount: 5 }),
       ]);
 
       const res = await POST(makeReq("sub-3"), {
         params: Promise.resolve({ id: "sub-3" }),
       } as any);
       expect(res.status).toBe(200);
-      expect(mockUpdate).toHaveBeenCalledWith(
+      expect(mockTxUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "sub-3" },
           data: { retryCount: 0, lastRetriedAt: null, payoutStatus: "pending" },
@@ -159,7 +159,7 @@ describe("/api/admin/submissions/[id]/retry", () => {
 
     it("resets retryCount to 0 on manual retry", async () => {
       mockQueryRaw.mockResolvedValueOnce([
-        makeRow({ id: "sub-4", payout_status: "failed", retry_count: 4 }),
+        makeRow({ id: "sub-4", payoutStatus: "failed", retryCount: 4 }),
       ]);
 
       const res = await POST(makeReq("sub-4"), {
@@ -167,7 +167,7 @@ describe("/api/admin/submissions/[id]/retry", () => {
       } as any);
       expect(res.status).toBe(200);
 
-      expect(mockUpdate).toHaveBeenCalledWith(
+      expect(mockTxUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "sub-4" },
           data: expect.objectContaining({ retryCount: 0 }),
@@ -177,9 +177,9 @@ describe("/api/admin/submissions/[id]/retry", () => {
 
     it("returns 500 when reprocess fails", async () => {
       mockQueryRaw.mockResolvedValueOnce([
-        makeRow({ id: "sub-5", payout_status: "failed", retry_count: 1 }),
+        makeRow({ id: "sub-5", payoutStatus: "failed", retryCount: 1 }),
       ]);
-      mockReprocessTx.mockRejectedValueOnce(new Error("RPC timeout"));
+      mockReprocess.mockRejectedValueOnce(new Error("RPC timeout"));
 
       const res = await POST(makeReq("sub-5"), {
         params: Promise.resolve({ id: "sub-5" }),
@@ -187,23 +187,24 @@ describe("/api/admin/submissions/[id]/retry", () => {
       expect(res.status).toBe(500);
     });
 
-    it("restores lastRetriedAt in rollback", async () => {
+    it("restores original state in rollback when reprocess fails", async () => {
       const originalLast = new Date("2024-06-01");
       mockQueryRaw.mockResolvedValueOnce([
         makeRow({
           id: "sub-6",
-          payout_status: "failed",
-          retry_count: 2,
-          last_retried_at: originalLast,
+          payoutStatus: "failed",
+          retryCount: 2,
+          lastRetriedAt: originalLast,
         }),
       ]);
-      mockReprocessTx.mockRejectedValueOnce(new Error("RPC timeout"));
+      mockReprocess.mockRejectedValueOnce(new Error("RPC timeout"));
 
       const res = await POST(makeReq("sub-6"), {
         params: Promise.resolve({ id: "sub-6" }),
       } as any);
       expect(res.status).toBe(500);
-      expect(mockUpdate).toHaveBeenLastCalledWith(
+      // Rollback runs on the top-level client, outside the claim transaction.
+      expect(mockUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "sub-6" },
           data: expect.objectContaining({

@@ -82,7 +82,7 @@ describe("/api/cron/payout-retry", () => {
 
     it("reprocesses failed submissions past their backoff window", async () => {
       mockQueryRaw.mockResolvedValueOnce([
-        { id: "sub-1", wallet_address: "0xaaa", retry_count: 1 },
+        { id: "sub-1", walletAddress: "0xaaa", retryCount: 1 },
       ]);
 
       const res = await POST(cronReq());
@@ -106,7 +106,7 @@ describe("/api/cron/payout-retry", () => {
 
     it("reprocesses stuck pending submissions", async () => {
       mockQueryRaw.mockResolvedValueOnce([
-        { id: "sub-3", wallet_address: "0xbbb", retry_count: 0 },
+        { id: "sub-3", walletAddress: "0xbbb", retryCount: 0 },
       ]);
       mockQueryRaw.mockResolvedValueOnce([]);
 
@@ -167,8 +167,8 @@ describe("/api/cron/payout-retry", () => {
     it("continues processing remaining jobs when one fails", async () => {
       mockQueryRaw.mockResolvedValueOnce([]);
       mockQueryRaw.mockResolvedValueOnce([
-        { id: "sub-a", wallet_address: "0xaaa", retry_count: 1 },
-        { id: "sub-b", wallet_address: "0xbbb", retry_count: 1 },
+        { id: "sub-a", walletAddress: "0xaaa", retryCount: 1 },
+        { id: "sub-b", walletAddress: "0xbbb", retryCount: 1 },
       ]);
 
       mockReprocess.mockRejectedValueOnce(new Error("RPC down"));
