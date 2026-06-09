@@ -1,4 +1,4 @@
-export type PayoutStatus = "pending" | "sent" | "confirmed" | "failed" | "skipped";
+export type PayoutStatus = "pending" | "sent" | "confirmed" | "failed" | "skipped" | "abandoned";
 
 export type Choice = "A" | "B";
 
