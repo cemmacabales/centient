@@ -20,11 +20,11 @@ async function claimNextSubmission(): Promise<{ id: string; payoutTxHash: string
       payoutStatus: "sent",
       payoutTxHash: { not: null },
       OR: [
-        { payoutLastCheckedAt: null },
-        { payoutLastCheckedAt: { lt: staleBefore } },
+        { lastRetriedAt: null },
+        { lastRetriedAt: { lt: staleBefore } },
       ],
     },
-    orderBy: { payoutLastCheckedAt: "asc" },
+    orderBy: { lastRetriedAt: "asc" },
     take: BATCH_SIZE,
     select: { id: true, payoutTxHash: true },
   });
@@ -34,9 +34,8 @@ async function claimNextSubmission(): Promise<{ id: string; payoutTxHash: string
   const first = claimed[0];
   await prisma.submission.update({
     where: { id: first.id },
-    data: { payoutLastCheckedAt: new Date() },
+data: { lastRetriedAt: new Date() },
   });
-
   return { id: first.id, payoutTxHash: first.payoutTxHash! };
 }
 
@@ -49,7 +48,7 @@ async function processSubmission(id: string, txHash: string): Promise<void> {
     if (receipt.status === "success") {
       await prisma.submission.update({
         where: { id },
-        data: { payoutStatus: "confirmed", payoutLastCheckedAt: new Date() },
+        data: { payoutStatus: "confirmed", lastRetriedAt: new Date() },
       });
       console.log(`[reconciler] confirmed submission ${id}`);
     } else {
@@ -76,15 +75,15 @@ async function handleRetry(id: string, reason: string): Promise<void> {
   const sub = await prisma.submission.findUnique({ where: { id } });
   if (!sub) return;
 
-  const newCount = (sub.payoutRetryCount ?? 0) + 1;
+  const newCount = (sub.retryCount ?? 0) + 1;
 
   if (newCount >= MAX_RETRIES) {
     await prisma.submission.update({
       where: { id },
       data: {
         payoutStatus: "failed",
-        payoutRetryCount: newCount,
-        payoutLastCheckedAt: new Date(),
+        retryCount: newCount,
+        lastRetriedAt: new Date(),
       },
     });
     console.warn(`[reconciler] submission ${id} marked failed after ${MAX_RETRIES} retries: ${reason}`);
@@ -93,8 +92,8 @@ async function handleRetry(id: string, reason: string): Promise<void> {
     await prisma.submission.update({
       where: { id },
       data: {
-        payoutRetryCount: newCount,
-        payoutLastCheckedAt: new Date(),
+        retryCount: newCount,
+        lastRetriedAt: new Date(),
       },
     });
     console.log(`[reconciler] submission ${id} retry ${newCount}/${MAX_RETRIES}: ${reason}`);
