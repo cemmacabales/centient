@@ -291,12 +291,16 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    await prisma.payoutJob.create({
-      data: {
-        submissionId: submission.id,
-        status: "queued",
-      },
-    });
+    try {
+      await prisma.payoutJob.create({
+        data: {
+          submissionId: submission.id,
+          status: "queued",
+        },
+      });
+    } catch (err) {
+      console.warn("[submit] failed to enqueue payout job (table may not exist yet):", err);
+    }
 
     return NextResponse.json({
       status: "pending",
