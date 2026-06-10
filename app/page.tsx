@@ -217,6 +217,23 @@ export default function Home() {
     }
   }, [wallet]);
 
+  const handleMetaMaskConnect = useCallback(async (addr: string) => {
+    setScreen("loading");
+    setWallet(addr);
+    const userData = await fetchUserData(addr);
+    if (!userData?.onboardingCompleted) {
+      try {
+        await signInLabeler(addr);
+      } catch {
+      }
+    }
+    if (userData?.onboardingCompleted) {
+      setScreen("landing");
+    } else {
+      setScreen("onboarding");
+    }
+  }, [fetchUserData, signInLabeler]);
+
   async function handleSubmit(choice: "A" | "B", reason: string) {
     if (!wallet || !task) return;
     setSubmitting(true);
@@ -283,7 +300,7 @@ export default function Home() {
   if (screen === "checking" || screen === "loading") {
     body = <LoadingScreen />;
   } else if (screen === "not_minipay") {
-    body = <OutsideMiniPayPage />;
+    body = <OutsideMiniPayPage onMetaMaskConnect={handleMetaMaskConnect} />;
   } else if (screen === "onboarding") {
     body = wallet ? (
       <OnboardingScreen onComplete={handleOnboardingComplete} />
