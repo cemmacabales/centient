@@ -33,6 +33,18 @@ export async function truncateAll(): Promise<void> {
   await prisma.walletNonce.deleteMany();
   await prisma.user.deleteMany();
 }
+  };
+
+  await tryDelete(() => prisma.submission.deleteMany());
+  await tryDelete(() => prisma.payoutJob.deleteMany());
+  await tryDelete(() => prisma.uploadJob.deleteMany());
+  await tryDelete(() => prisma.task.deleteMany());
+  await tryDelete(() => prisma.campaign.deleteMany());
+  await tryDelete(() => prisma.adminAuditLog.deleteMany());
+  await tryDelete(() => prisma.adminUser.deleteMany());
+  await tryDelete(() => prisma.walletNonce.deleteMany());
+  await tryDelete(() => prisma.user.deleteMany());
+}
 
 export async function disconnect(): Promise<void> {
   await prisma.$disconnect();
