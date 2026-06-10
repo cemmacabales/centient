@@ -30,5 +30,6 @@ export async function GET(req: NextRequest) {
     isPermanentlyBanned: permanent,
     unbannedAt: user?.bannedUntil?.toISOString() ?? null,
     banCount: user?.banCount ?? 0,
+    bannedReason: user?.bannedReason ?? null,
   });
 }

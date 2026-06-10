@@ -13,6 +13,7 @@ import InAppLanding from "@/components/InAppLanding";
 import OutsideMiniPayPage from "@/components/OutsideMiniPayPage";
 import Toast, { type ToastKind, type ToastMessage } from "@/components/Toast";
 import OnboardingScreen from "@/components/OnboardingScreen";
+import DisputeForm from "@/components/DisputeForm";
 import { posthog } from "@/components/PostHogProvider";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
@@ -96,6 +97,8 @@ export default function Home() {
   const [onboardingCompleted, setOnboardingCompleted] = useState(false);
   const [unbannedAt, setUnbannedAt] = useState<string | null>(null);
   const [cooldownRemaining, setCooldownRemaining] = useState<string>("");
+  const [bannedReason, setBannedReason] = useState<string | null>(null);
+  const [disputeOpen, setDisputeOpen] = useState(false);
 
   const showToast = useCallback((message: string, kind: ToastKind = "info") => {
     setToast({ id: Date.now(), message, kind });
@@ -124,6 +127,7 @@ export default function Home() {
     setSubmissionCount(data.submissionCount ?? 0);
     setOnboardingCompleted(data.onboardingCompleted ?? false);
     setUnbannedAt(data.unbannedAt ?? null);
+    setBannedReason(data.bannedReason ?? null);
     if (data.isCooldown) {
       setScreen("cooldown");
     }
@@ -432,10 +436,31 @@ export default function Home() {
             </span>
           </div>
           <h2 className="text-2xl font-headline font-bold text-on-surface">Account paused</h2>
-          <p className="font-body text-sm text-on-surface-variant">
-            We noticed unusually low accuracy on recent tasks. Reach out if you think this is a
-            mistake.
-          </p>
+          {bannedReason ? (
+            <div className="w-full rounded-2xl bg-surface-container-low px-5 py-4 text-left">
+              <span className="font-label text-[10px] font-bold uppercase tracking-[0.2em] text-outline">
+                Reason
+              </span>
+              <p className="mt-1 font-body text-sm text-on-surface">{bannedReason}</p>
+            </div>
+          ) : (
+            <p className="font-body text-sm text-on-surface-variant">
+              We noticed unusually low accuracy on recent tasks.
+            </p>
+          )}
+          {!disputeOpen ? (
+            <button
+              type="button"
+              onClick={() => setDisputeOpen(true)}
+              className="w-full rounded-xl bg-primary py-3 font-label text-sm font-bold text-on-primary hover:opacity-90 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            >
+              Appeal this decision
+            </button>
+          ) : (
+            <div className="w-full text-left">
+              <DisputeForm walletAddress={wallet ?? ""} onDone={() => setDisputeOpen(false)} />
+            </div>
+          )}
           <a href="mailto:support@centient.work" className="text-sm text-primary underline">
             support@centient.work
           </a>
