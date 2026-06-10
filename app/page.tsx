@@ -221,6 +221,26 @@ export default function Home() {
     }
   }, [wallet]);
 
+  const handleMetaMaskConnect = useCallback(async (addr: string) => {
+    setScreen("loading");
+    setWallet(addr);
+    
+    try {
+      await signInLabeler(addr);
+  
+      const userData = await fetchUserData(addr);
+  
+      if (userData?.onboardingCompleted) {
+        setScreen("landing");
+      } else {
+        setScreen("onboarding");
+      }
+    } catch (err) {
+      console.error("MetaMask auth flow failed:", err);
+      setScreen("wallet_error");
+    }
+  }, [fetchUserData, signInLabeler]);
+
   async function handleSubmit(choice: "A" | "B", reason: string) {
     if (!wallet || !task) return;
     setSubmitting(true);
@@ -287,7 +307,7 @@ export default function Home() {
   if (screen === "checking" || screen === "loading") {
     body = <LoadingScreen />;
   } else if (screen === "not_minipay") {
-    body = <OutsideMiniPayPage />;
+    body = <OutsideMiniPayPage onMetaMaskConnect={handleMetaMaskConnect} />;
   } else if (screen === "onboarding") {
     body = wallet ? (
       <OnboardingScreen onComplete={handleOnboardingComplete} />
@@ -528,6 +548,7 @@ export default function Home() {
         </div>
       </div>
     );
+  // ✅ FIX 2: Add explicit handling for wallet_error state
   } else if (screen === "wallet_error") {
     body = (
       <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-6 text-center">
@@ -541,10 +562,10 @@ export default function Home() {
             </span>
           </div>
           <h2 className="text-2xl font-headline font-bold text-on-surface">
-            Couldn&apos;t connect to MiniPay
+            Connection failed
           </h2>
           <p className="font-body text-sm text-on-surface-variant">
-            Open the app from MiniPay or try again.
+            We couldn&apos;t establish a secure session. Please try again.
           </p>
           <SubmitButton label="Try again" onClick={() => window.location.reload()} />
         </div>
