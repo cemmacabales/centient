@@ -220,17 +220,22 @@ export default function Home() {
   const handleMetaMaskConnect = useCallback(async (addr: string) => {
     setScreen("loading");
     setWallet(addr);
-    const userData = await fetchUserData(addr);
-    if (!userData?.onboardingCompleted) {
-      try {
+    
+    try {
+      const userData = await fetchUserData(addr);
+      
+      if (!userData?.onboardingCompleted) {
         await signInLabeler(addr);
-      } catch {
       }
-    }
-    if (userData?.onboardingCompleted) {
-      setScreen("landing");
-    } else {
-      setScreen("onboarding");
+  
+      if (userData?.onboardingCompleted) {
+        setScreen("landing");
+      } else {
+        setScreen("onboarding");
+      }
+    } catch (err) {
+      console.error("MetaMask auth flow failed:", err);
+      setScreen("wallet_error"); 
     }
   }, [fetchUserData, signInLabeler]);
 
