@@ -24,7 +24,7 @@ if (process.env.NODE_ENV !== "production") {
 
 export async function truncateAll(): Promise<void> {
   const P2021 = "P2021";
-  const tryDelete = async (fn: () => Promise<void>) => {
+  const tryDelete = async (fn: () => unknown) => {
     try {
       await fn();
     } catch (err: any) {
