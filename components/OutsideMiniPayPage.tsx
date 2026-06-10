@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Image from "next/image";
+import { connectMetaMask, switchToCelo } from "@/lib/metamask";
 
 // ─── FAQ data ────────────────────────────────────────────────────────────────
 const FAQ_ITEMS = [
@@ -70,8 +71,33 @@ const STEPS = [
   },
 ];
 
-export default function OutsideMiniPayPage() {
+interface OutsideMiniPayPageProps {
+  onMetaMaskConnect?: (address: string) => void;
+}
+
+export default function OutsideMiniPayPage({ onMetaMaskConnect }: OutsideMiniPayPageProps) {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
+  const [metaMaskError, setMetaMaskError] = useState<string | null>(null);
+  const [connectingMetaMask, setConnectingMetaMask] = useState(false);
+
+  const handleMetaMaskConnect = async () => {
+    setMetaMaskError(null);
+    setConnectingMetaMask(true);
+    try {
+      const address = await connectMetaMask();
+      await switchToCelo();
+      if (!onMetaMaskConnect) return;
+      await onMetaMaskConnect(address);
+    } catch (err) {
+      setMetaMaskError(
+        err instanceof Error
+          ? err.message
+          : "MetaMask connection failed. Please try again.",
+      );
+    } finally {
+      setConnectingMetaMask(false);
+    }
+  };
 
   return (
     <div className="relative min-h-screen bg-surface">
@@ -134,6 +160,18 @@ export default function OutsideMiniPayPage() {
               arrow_forward
             </span>
           </a>
+
+          <button
+            type="button"
+            onClick={handleMetaMaskConnect}
+            disabled={connectingMetaMask}
+            className="flex h-14 w-full max-w-xs items-center justify-center gap-2 rounded-full border border-outline bg-surface-container-high text-on-surface shadow-[0_8px_24px_rgba(25,28,30,0.06)] transition duration-200 hover:bg-surface-container-low active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {connectingMetaMask ? "Connecting MetaMask..." : "Continue with MetaMask"}
+          </button>
+          {metaMaskError && (
+            <p className="max-w-xs text-sm text-error">{metaMaskError}</p>
+          )}
         </section>
 
         {/* ── HOW IT WORKS ─────────────────────────────────────────────────── */}
