@@ -27,7 +27,7 @@ export default function DisputeForm({ walletAddress, onDone }: DisputeFormProps)
       const data = await res.json().catch(() => ({}));
       if (res.status === 201) {
         setResult("success");
-        onDone?.();
+        setTimeout(() => onDone?.(), 2500);
       } else if (res.status === 409) {
         setResult("duplicate");
       } else {

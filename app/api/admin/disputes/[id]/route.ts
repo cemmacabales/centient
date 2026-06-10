@@ -45,7 +45,6 @@ export async function PATCH(
           isBanned: false,
           bannedAt: null,
           bannedReason: null,
-          banCount: 0,
           bannedUntil: null,
           lastBanAt: null,
         },

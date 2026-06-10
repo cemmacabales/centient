@@ -132,7 +132,7 @@ model Submission {
 
 model Dispute {
   id            String   @id @default(uuid())
-  walletAddress String
+  walletAddress String   // no FK to User — intentional for forensic/compliance retention if user is deleted
   reason        String
   status        String   @default("open") // "open" | "resolved"
   createdAt     DateTime @default(now())
