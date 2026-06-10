@@ -440,6 +440,9 @@ describe("POST /api/submit - payout", () => {
 
     const payoutJob = await prisma.payoutJob.findFirst({
       where: { submissionId: submission!.id },
+    }).catch((err: any) => {
+      if (err?.code === "P2021") return null;
+      throw err;
     });
     expect(payoutJob).not.toBeNull();
     expect(payoutJob?.status).toBe("queued");
