@@ -30,7 +30,7 @@ async function claimNextJob(): Promise<{ id: string; submissionId: string } | nu
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )
-    RETURNING "id", "submission_id as "submissionId"
+    RETURNING "id", "submission_id" as "submissionId"
   `;
 
   if (claimed.length === 0) return null;
