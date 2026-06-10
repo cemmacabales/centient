@@ -14,17 +14,18 @@ export function isMetaMask(): boolean {
 export async function connectMetaMask(timeoutMs = 10_000): Promise<string> {
   if (typeof window === "undefined") throw new Error("ssr");
   const eth = (window as any).ethereum;
-  if (!eth) throw new Error("ethereum_not_present");
-  if (!isMetaMask()) throw new Error("metamask_not_present");
+  
+  if (!eth) throw new Error("MetaMask is not installed. Please install it from metamask.io.");
+  if (!eth.isMetaMask) throw new Error("MetaMask not detected. Please make sure it's enabled.");
 
   const timeout = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error("connect_timeout")), timeoutMs),
+    setTimeout(() => reject(new Error("Connection timed out. Please try again.")), timeoutMs),
   );
 
   const request = eth.request({ method: "eth_requestAccounts" }).then((accounts: unknown) => {
     const list = Array.isArray(accounts) ? accounts : [];
     const account = String(list[0] ?? "").toLowerCase();
-    if (!account) throw new Error("no_accounts");
+    if (!account) throw new Error("No accounts found. Please unlock your wallet.");
     return account;
   });
 

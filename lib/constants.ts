@@ -1,6 +1,8 @@
 import type { Chain } from "viem";
 import { celo, celoSepolia } from "viem/chains";
 
+const toHex = (id: number) => `0x${id.toString(16)}`;
+
 export const CELO_MAINNET = {
   id: celo.id,
   name: "Celo",
@@ -9,13 +11,9 @@ export const CELO_MAINNET = {
 };
 
 export const CELO_MAINNET_CHAIN_PARAMS = {
-  chainId: "0xa4ec",
+  chainId: toHex(celo.id),
   chainName: "Celo",
-  nativeCurrency: {
-    name: "Celo",
-    symbol: "CELO",
-    decimals: 18,
-  },
+  nativeCurrency: { name: "Celo", symbol: "CELO", decimals: 18 },
   rpcUrls: ["https://forno.celo.org"],
   blockExplorerUrls: ["https://celoscan.io"],
 } as const;
@@ -28,13 +26,9 @@ export const CELO_SEPOLIA = {
 };
 
 export const CELO_SEPOLIA_CHAIN_PARAMS = {
-  chainId: "0xaa044c",
+  chainId: toHex(celoSepolia.id), 
   chainName: "Celo Sepolia",
-  nativeCurrency: {
-    name: "Celo",
-    symbol: "CELO",
-    decimals: 18,
-  },
+  nativeCurrency: { name: "Celo", symbol: "CELO", decimals: 18 },
   rpcUrls: ["https://forno.celo-sepolia.celo-testnet.org"],
   blockExplorerUrls: ["https://celo-sepolia.blockscout.com"],
 } as const;
