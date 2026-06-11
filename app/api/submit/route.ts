@@ -299,11 +299,7 @@ export async function POST(req: NextRequest) {
         },
       });
     } catch (err) {
-      await prisma.submission.update({
-        where: { id: submission.id },
-        data: { payoutStatus: "failed" },
-      });
-      return errorResponse("payout_enqueue_failed", 500, { submissionId: submission.id });
+      console.warn("[submit] failed to enqueue payout job:", err);
     }
 
     return NextResponse.json({
