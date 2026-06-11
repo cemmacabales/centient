@@ -1,7 +1,7 @@
 import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "./prisma";
-import { payReward, waitForTx, PayoutCapError } from "./payout";
+import { payReward, PayoutCapError } from "./payout";
 import { checkAndAlert } from "./celo-balance";
 import { computeIAA } from "./quality";
 
