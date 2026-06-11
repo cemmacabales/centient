@@ -299,7 +299,11 @@ export async function POST(req: NextRequest) {
         },
       });
     } catch (err) {
-      console.warn("[submit] failed to enqueue payout job (table may not exist yet):", err);
+      await prisma.submission.update({
+        where: { id: submission.id },
+        data: { payoutStatus: "failed" },
+      });
+      return errorResponse("payout_enqueue_failed", 500, { submissionId: submission.id });
     }
 
     return NextResponse.json({

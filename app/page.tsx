@@ -212,7 +212,7 @@ export default function Home() {
 
     const pollInterval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/submissions/${pendingSubmissionId}`);
+        const res = await fetch(`/api/submissions/${pendingSubmissionId}?walletAddress=${encodeURIComponent(wallet ?? "")}`);
         if (!res.ok) return;
         const data = await res.json();
 
