@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { rewardInWei } from "@/lib/payout";
+import { rewardInWei, resolveRewardWei } from "@/lib/payout";
 import { isSpamReason, checkReasonRepetition } from "@/lib/quality";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { validateReason } from "@/lib/validators";
@@ -318,11 +318,4 @@ export async function POST(req: NextRequest) {
   }
 }
 
-function resolveRewardWei(
-  taskRewardWei: bigint | null,
-  campaignRewardWei: bigint | null,
-): bigint {
-  if (taskRewardWei != null && taskRewardWei > 0n) return taskRewardWei;
-  if (campaignRewardWei != null && campaignRewardWei > 0n) return campaignRewardWei;
-  return rewardInWei();
-}
+
