@@ -299,7 +299,14 @@ export async function POST(req: NextRequest) {
         },
       });
     } catch (err) {
-      console.warn("[submit] failed to enqueue payout job:", err);
+      Sentry.captureException(err, {
+        extra: { context: "enqueue_payout_job", submissionId: submission.id },
+      });
+      await prisma.submission.update({
+        where: { id: submission.id },
+        data: { payoutStatus: "failed" },
+      });
+      return errorResponse("payout_enqueue_failed", 500, { submissionId: submission.id });
     }
 
     return NextResponse.json({

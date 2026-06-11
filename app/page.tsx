@@ -208,7 +208,7 @@ export default function Home() {
   }, [unbannedAt, screen]);
 
   useEffect(() => {
-    if (!pendingSubmissionId || screen !== "success") return;
+    if (!pendingSubmissionId || screen !== "success" || !wallet) return;
 
     const pollInterval = setInterval(async () => {
       try {
@@ -287,7 +287,7 @@ export default function Home() {
         return;
       }
 
-      if (data.paid || data.status === "pending") {
+      if (data.status === "pending") {
         if (data.status === "pending" && data.submissionId) {
           setPendingSubmissionId(data.submissionId);
         } else if (data.txHash) {
