@@ -89,6 +89,7 @@ export async function createTask(
     goldAnswer: "A" | "B" | null;
     campaignId: string | null;
     responseTarget: number | null;
+    category: string | null;
     createdAt: Date;
   }> = {},
 ) {
@@ -102,6 +103,7 @@ export async function createTask(
       goldAnswer: overrides.goldAnswer ?? null,
       campaignId: overrides.campaignId ?? null,
       responseTarget: overrides.responseTarget ?? null,
+      category: overrides.category ?? null,
       createdAt: overrides.createdAt ?? undefined,
     },
   });
