@@ -6,6 +6,10 @@ import { checkAndAlert } from "./celo-balance";
 import { computeIAA } from "./quality";
 
 const STALE_PROCESSING_MS = 60_000;
+// Refresh the in-flight job's heartbeat well within STALE_PROCESSING_MS so a slow
+// payout (waitForTransactionReceipt alone can take up to 30s) is not mistaken for a
+// stale job and reclaimed — and double-paid — by a second worker.
+const HEARTBEAT_REFRESH_MS = 20_000;
 const POLL_IDLE_MS = 5_000;
 const MAX_RETRIES = 3;
 const BATCH_SIZE = 20;
@@ -80,6 +84,13 @@ async function processJob(jobId: string, submissionId: string): Promise<void> {
 
   const walletAddress = submission.walletAddress as `0x${string}`;
   const amount = submission.payoutAmountWei;
+
+  // Keep this job's claim fresh while payReward is in flight so it is not reclaimed as stale.
+  const heartbeat = setInterval(() => {
+    prisma.payoutJob
+      .update({ where: { id: jobId }, data: { workerHeartbeatAt: new Date() } })
+      .catch(() => {});
+  }, HEARTBEAT_REFRESH_MS);
 
   try {
     const txHash = await payReward(walletAddress, amount);
@@ -209,6 +220,7 @@ async function processJob(jobId: string, submissionId: string): Promise<void> {
       console.warn(`[payout-worker] job ${jobId} retry ${newRetryCount}/${MAX_RETRIES}: ${message}`);
     }
   } finally {
+    clearInterval(heartbeat);
     currentJobId = null;
   }
 }
