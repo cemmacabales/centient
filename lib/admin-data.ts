@@ -206,6 +206,7 @@ export interface TaskTableItem {
   majorityAnswer: string | null;
   agreementScore: number | null;
   recentSubmissions: TaskTableSubmission[];
+  disabled: boolean;
 }
 
 export async function getTaskTableItems(): Promise<TaskTableItem[]> {
@@ -249,6 +250,7 @@ export async function getTaskTableItems(): Promise<TaskTableItem[]> {
       payoutTxHash: s.payoutTxHash,
       createdAt: s.createdAt.toISOString(),
     })),
+    disabled: t.disabled,
   }));
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 export interface TaskTableSubmission {
   id: string;
@@ -8,6 +8,7 @@ export interface TaskTableSubmission {
   choice: string;
   reason: string;
   payoutStatus: string;
+  payoutError?: string | null;
   payoutTxHash: string | null;
   createdAt: string;
 }
@@ -25,6 +26,7 @@ export interface TaskTableItem {
   majorityAnswer?: string | null;
   agreementScore?: number | null;
   recentSubmissions: TaskTableSubmission[];
+  disabled: boolean;         
 }
 
 type TypeFilter = "all" | "regular" | "gold";
@@ -34,7 +36,8 @@ interface TaskTableProps {
   categories: string[];
 }
 
-export default function TaskTable({ items, categories }: TaskTableProps) {
+export default function TaskTable({ items: initialItems, categories }: TaskTableProps) {
+  const [items, setItems] = useState(initialItems);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -47,6 +50,10 @@ export default function TaskTable({ items, categories }: TaskTableProps) {
       return true;
     });
   }, [items, typeFilter, categoryFilter]);
+
+  const handleTaskUpdate = (updated: TaskTableItem) => {
+    setItems((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+  };
 
   return (
     <div className="space-y-6">
@@ -100,24 +107,24 @@ export default function TaskTable({ items, categories }: TaskTableProps) {
               <th className="px-4 py-3">Type</th>
               <th className="px-4 py-3">Prompt</th>
               <th className="px-4 py-3 text-right">Submissions</th>
+              <th className="px-4 py-3 text-center">Disabled</th>
+              <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-outline-variant/30">
-            {filtered.map((row) => {
-              const expanded = expandedId === row.id;
-              return (
-                <TaskRowView
-                  key={row.id}
-                  row={row}
-                  expanded={expanded}
-                  onToggle={() => setExpandedId(expanded ? null : row.id)}
-                />
-              );
-            })}
+            {filtered.map((row) => (
+              <TaskRowView
+                key={row.id}
+                row={row}
+                expanded={expandedId === row.id}
+                onToggle={() => setExpandedId(expandedId === row.id ? null : row.id)}
+                onUpdate={handleTaskUpdate}
+              />
+            ))}
             {filtered.length === 0 && (
               <tr>
                 <td
-                  colSpan={5}
+                  colSpan={7}
                   className="px-4 py-8 text-center font-body text-sm text-on-surface-variant"
                 >
                   No tasks match the current filter.
@@ -159,11 +166,71 @@ function TaskRowView({
   row,
   expanded,
   onToggle,
+  onUpdate,
 }: {
   row: TaskTableItem;
   expanded: boolean;
   onToggle: () => void;
+  onUpdate: (updated: TaskTableItem) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [editPrompt, setEditPrompt] = useState(row.prompt);
+  const [editResponseA, setEditResponseA] = useState(row.responseA);
+  const [editResponseB, setEditResponseB] = useState(row.responseB);
+  const [editDisabled, setEditDisabled] = useState(row.disabled);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Re-seed the edit fields whenever the underlying row changes (e.g. another
+  // admin's update propagates down as a new prop). Skipped while actively
+  // editing so an in-flight edit is never clobbered by a background refresh.
+  useEffect(() => {
+    if (editing) return;
+    setEditPrompt(row.prompt);
+    setEditResponseA(row.responseA);
+    setEditResponseB(row.responseB);
+    setEditDisabled(row.disabled);
+  }, [row.prompt, row.responseA, row.responseB, row.disabled, editing]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/tasks/${row.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: editPrompt,
+          responseA: editResponseA,
+          responseB: editResponseB,
+          disabled: editDisabled,
+        }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Update failed");
+      }
+      const updated = await res.json();
+      // The PATCH response only carries the editable fields — merge them into the
+      // existing row so submissionCount / recentSubmissions / category are kept,
+      // and recompute promptPreview the same way the server does.
+      onUpdate({
+        ...row,
+        prompt: updated.prompt,
+        responseA: updated.responseA,
+        responseB: updated.responseB,
+        disabled: updated.disabled,
+        promptPreview:
+          updated.prompt.length > 160 ? `${updated.prompt.slice(0, 157)}…` : updated.prompt,
+      });
+      setEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <>
       <tr
@@ -189,11 +256,105 @@ function TaskRowView({
         <td className="px-4 py-3 text-right font-label text-sm font-semibold text-on-surface">
           {row.submissionCount}
         </td>
+        <td className="px-4 py-3 text-center">
+          {row.disabled ? (
+            <span className="rounded-full bg-error-container/60 px-2 py-0.5 font-label text-xs font-bold text-on-error-container">
+              disabled
+            </span>
+          ) : (
+            <span className="rounded-full bg-surface-container-high px-2 py-0.5 font-label text-xs text-on-surface-variant">
+              active
+            </span>
+          )}
+        </td>
+        <td className="px-4 py-3 text-right">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditing(true);
+            }}
+            className="rounded-full bg-primary-container px-3 py-1 font-label text-xs font-bold text-on-primary-container hover:bg-primary"
+          >
+            Edit
+          </button>
+        </td>
       </tr>
-      {expanded ? (
+      {expanded && !editing ? (
         <tr>
-          <td colSpan={5} className="bg-surface-container-low px-4 py-4">
+          <td colSpan={7} className="bg-surface-container-low px-4 py-4">
             <TaskDetailBlock row={row} />
+          </td>
+        </tr>
+      ) : null}
+      {editing ? (
+        <tr>
+          <td colSpan={7} className="bg-surface-container-low px-4 py-4">
+            <div className="space-y-3">
+              <div>
+                <label className="font-label text-xs font-bold uppercase text-outline">
+                  Prompt
+                </label>
+                <textarea
+                  value={editPrompt}
+                  onChange={(e) => setEditPrompt(e.target.value)}
+                  rows={3}
+                  className="mt-1 w-full rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-2 font-body text-sm text-on-surface"
+                />
+              </div>
+              <div>
+                <label className="font-label text-xs font-bold uppercase text-outline">
+                  Response A
+                </label>
+                <textarea
+                  value={editResponseA}
+                  onChange={(e) => setEditResponseA(e.target.value)}
+                  rows={2}
+                  className="mt-1 w-full rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-2 font-body text-sm text-on-surface"
+                />
+              </div>
+              <div>
+                <label className="font-label text-xs font-bold uppercase text-outline">
+                  Response B
+                </label>
+                <textarea
+                  value={editResponseB}
+                  onChange={(e) => setEditResponseB(e.target.value)}
+                  rows={2}
+                  className="mt-1 w-full rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-2 font-body text-sm text-on-surface"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={editDisabled}
+                    onChange={(e) => setEditDisabled(e.target.checked)}
+                  />
+                  <span className="font-body text-sm text-on-surface">
+                    Disabled (won't be served to labelers)
+                  </span>
+                </label>
+              </div>
+              {error && <div className="text-sm text-error">{error}</div>}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="rounded-full bg-primary px-4 py-2 font-label text-sm font-bold text-on-primary disabled:opacity-50"
+                >
+                  {saving ? "Saving..." : "Save"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditing(false)}
+                  className="rounded-full bg-surface-container-high px-4 py-2 font-label text-sm font-bold text-on-surface-variant"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           </td>
         </tr>
       ) : null}
@@ -263,6 +424,7 @@ function TaskDetailBlock({ row }: { row: TaskTableItem }) {
                   <th className="px-3 py-2">Choice</th>
                   <th className="px-3 py-2">Reason</th>
                   <th className="px-3 py-2">Status</th>
+                  <th className="px-3 py-2">Payout Error</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/30">
@@ -277,6 +439,9 @@ function TaskDetailBlock({ row }: { row: TaskTableItem }) {
                     <td className="px-3 py-2 font-body text-on-surface">{s.reason}</td>
                     <td className="px-3 py-2 font-label font-semibold text-on-surface-variant">
                       {s.payoutStatus}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs text-error">
+                      {s.payoutError || "-"}
                     </td>
                   </tr>
                 ))}

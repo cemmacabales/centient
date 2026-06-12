@@ -68,6 +68,7 @@ export async function GET(req: NextRequest) {
         isGold: true,
         campaignId: null,
         goldAnswer: { not: null },
+        disabled: false,
         id: { notIn: doneIds },
       },
       include: {
@@ -97,6 +98,7 @@ export async function GET(req: NextRequest) {
           t."isGold" = false
           OR (t."isGold" = true AND t."campaignId" IS NOT NULL)
         )
+        AND t."disabled" = false
         ${doneIdCondition}
         AND (
           COALESCE(t."responseTarget", c."defaultResponseTarget") IS NULL
