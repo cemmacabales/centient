@@ -210,7 +210,16 @@ export default function Home() {
   useEffect(() => {
     if (!pendingSubmissionId || screen !== "success" || !wallet) return;
 
+    const MAX_POLL_ATTEMPTS = 40; // 40 × 3s ≈ 2 minutes before giving up
+    let attempts = 0;
+
     const pollInterval = setInterval(async () => {
+      attempts += 1;
+      if (attempts > MAX_POLL_ATTEMPTS) {
+        clearInterval(pollInterval);
+        showToast("Payment is taking longer than expected — check back later.", "info");
+        return;
+      }
       try {
         const res = await fetch(`/api/submissions/${pendingSubmissionId}?walletAddress=${encodeURIComponent(wallet ?? "")}`);
         if (!res.ok) return;
@@ -230,7 +239,7 @@ export default function Home() {
     }, 3000);
 
     return () => clearInterval(pollInterval);
-  }, [pendingSubmissionId, screen, wallet, fetchUserData]);
+  }, [pendingSubmissionId, screen, wallet, fetchUserData, showToast]);
 
   const handleStartEarning = useCallback(() => {
     if (!wallet) return;
@@ -288,20 +297,13 @@ export default function Home() {
       }
 
       if (data.status === "pending") {
-        if (data.status === "pending" && data.submissionId) {
+        if (data.submissionId) {
           setPendingSubmissionId(data.submissionId);
-        } else if (data.txHash) {
-          setLastTxHash(data.txHash);
         }
         await fetchUserData(wallet);
         setScreen("success");
         if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
-          posthog.capture("submission_success", { wallet, taskId: task.id, txHash: data.txHash, status: data.status });
-        }
-        if (data.status !== "pending") {
-          setTimeout(async () => {
-            await fetchTask(wallet);
-          }, 1500);
+          posthog.capture("submission_success", { wallet, taskId: task.id, status: data.status });
         }
         return;
       }
