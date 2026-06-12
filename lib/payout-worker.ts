@@ -174,15 +174,42 @@ async function processJob(jobId: string, submissionId: string): Promise<void> {
       message.includes("NONCE_");
 
     if (isNonceError) {
-      await prisma.payoutJob.update({
-        where: { id: jobId },
-        data: {
-          status: "queued",
-          workerHeartbeatAt: null,
-          lastError: `nonce error, will retry: ${message}`,
-        },
-      });
-      console.warn(`[payout-worker] job ${jobId} nonce error, requeued: ${message}`);
+      // Nonce errors are usually transient, but a persistently nonce-erroring job
+      // must still consume the retry budget — otherwise it requeues forever, never
+      // marks the submission failed, and never alerts or triggers a refund.
+      const job = await prisma.payoutJob.findUnique({ where: { id: jobId } });
+      const newRetryCount = (job?.retryCount ?? 0) + 1;
+
+      if (newRetryCount >= MAX_RETRIES) {
+        await prisma.$transaction([
+          prisma.submission.update({
+            where: { id: submissionId },
+            data: { payoutStatus: "failed" },
+          }),
+          prisma.payoutJob.update({
+            where: { id: jobId },
+            data: {
+              status: "failed",
+              completedAt: new Date(),
+              lastError: `nonce error: ${message}`,
+              retryCount: newRetryCount,
+            },
+          }),
+        ]);
+        console.error(`[payout-worker] job ${jobId} failed permanently after ${MAX_RETRIES} nonce-error retries: ${message}`);
+        Sentry.captureMessage(`[payout-worker] job ${jobId} failed permanently (nonce): ${message}`, { level: "error" });
+      } else {
+        await prisma.payoutJob.update({
+          where: { id: jobId },
+          data: {
+            status: "queued",
+            workerHeartbeatAt: null,
+            lastError: `nonce error, will retry: ${message}`,
+            retryCount: newRetryCount,
+          },
+        });
+        console.warn(`[payout-worker] job ${jobId} nonce error, requeued (retry ${newRetryCount}/${MAX_RETRIES}): ${message}`);
+      }
       return;
     }
 
