@@ -55,6 +55,12 @@ export default defineConfig({
           functions: 0,
           statements: 10,
         },
+        "lib/campaign-balance.ts": {
+          lines: 85,
+          functions: 85,
+          branches: 75,
+          statements: 85,
+        },
       },
     },
   },

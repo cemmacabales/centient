@@ -24,10 +24,20 @@ vi.mock("@/lib/quality", async (importOriginal) => {
   };
 });
 
+vi.mock("@/lib/campaign-balance", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/campaign-balance")>();
+  return {
+    ...actual,
+    checkAndDebit: vi.fn(),
+    creditBalance: vi.fn(),
+  };
+});
+
 import { POST } from "@/app/api/submit/route";
 import { payReward, PayoutCapError } from "@/lib/payout";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { checkReasonRepetition } from "@/lib/quality";
+import { checkAndDebit, creditBalance, InsufficientBalanceError } from "@/lib/campaign-balance";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 import {
   createUser,
@@ -46,6 +56,11 @@ beforeEach(async () => {
   vi.mocked(checkWalletRateLimit).mockResolvedValue(false);
   vi.mocked(checkReasonRepetition).mockReset();
   vi.mocked(checkReasonRepetition).mockResolvedValue({ isRepetitive: false });
+  vi.mocked(checkAndDebit).mockReset();
+  vi.mocked(checkAndDebit).mockResolvedValue(undefined);
+  vi.mocked(creditBalance).mockReset();
+  vi.mocked(creditBalance).mockResolvedValue(0n);
+  process.env.PLATFORM_FEE_WEI = "150000000000000000";
 });
 
 function makeReq(body: unknown): NextRequest {
@@ -607,6 +622,152 @@ describe("POST /api/submit - daily payout cap", () => {
       where: { walletAddress: wallet, taskId: task.id },
     });
     expect(submission).not.toBeNull();
+    expect(submission?.payoutStatus).toBe("skipped");
+  });
+});
+
+describe("POST /api/submit - campaign balance", () => {
+  it("debits the campaign balance for non-gold tasks with a campaignId", async () => {
+    vi.mocked(payReward).mockResolvedValueOnce("0xabc" as `0x${string}`);
+    const campaign = await createCampaign();
+    const task = await createTask({ campaignId: campaign.id });
+    const user = await createUser();
+
+    await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
+
+    expect(checkAndDebit).toHaveBeenCalledOnce();
+    expect(checkAndDebit).toHaveBeenCalledWith(campaign.id, expect.any(BigInt), expect.any(String));
+  });
+
+  it("returns 402 and does not pay when the balance is insufficient", async () => {
+    vi.mocked(checkAndDebit).mockRejectedValueOnce(
+      new InsufficientBalanceError(0n, 200000000000000000n),
+    );
+    const campaign = await createCampaign();
+    const task = await createTask({ campaignId: campaign.id });
+    const user = await createUser();
+
+    const res = await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
+
+    expect(res.status).toBe(402);
+    expect((await res.json()).error).toBe("campaign_balance_insufficient");
+    expect(payReward).not.toHaveBeenCalled();
+
+    const submission = await prisma.submission.findFirst({
+      where: { walletAddress: user.walletAddress, taskId: task.id },
+    });
+    expect(submission?.payoutStatus).toBe("skipped");
+  });
+
+  it("does not debit gold tasks", async () => {
+    vi.mocked(payReward).mockResolvedValueOnce("0xabc" as `0x${string}`);
+    const campaign = await createCampaign();
+    const task = await createGoldTask({ campaignId: campaign.id });
+    const user = await createUser();
+
+    await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: task.goldAnswer as string, reason: VALID_REASON });
+
+    expect(checkAndDebit).not.toHaveBeenCalled();
+  });
+
+  it("does not debit tasks without a campaign", async () => {
+    vi.mocked(payReward).mockResolvedValueOnce("0xabc" as `0x${string}`);
+    const task = await createTask({ campaignId: undefined });
+    const user = await createUser();
+
+    await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
+
+    expect(checkAndDebit).not.toHaveBeenCalled();
+  });
+
+  it("refunds the campaign balance when the payout fails", async () => {
+    vi.mocked(payReward).mockRejectedValueOnce(new Error("rpc timeout"));
+    const campaign = await createCampaign();
+    const task = await createTask({ campaignId: campaign.id });
+    const user = await createUser();
+
+    const res = await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
+
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("payout_failed");
+    expect(creditBalance).toHaveBeenCalledOnce();
+    expect(creditBalance).toHaveBeenCalledWith(
+      campaign.id,
+      expect.any(BigInt),
+      expect.stringContaining("payout failed"),
+      "REFUND",
+    );
+
+    const submission = await prisma.submission.findFirst({
+      where: { walletAddress: user.walletAddress, taskId: task.id },
+    });
+    expect(submission?.payoutStatus).toBe("failed");
+  });
+
+  it("refunds the campaign balance when the daily payout cap is reached", async () => {
+    vi.mocked(payReward).mockRejectedValueOnce(new PayoutCapError(1n, 1n));
+    const campaign = await createCampaign();
+    const task = await createTask({ campaignId: campaign.id });
+    const user = await createUser();
+
+    const res = await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
+
+    expect(res.status).toBe(429);
+    expect(creditBalance).toHaveBeenCalledOnce();
+    expect(creditBalance).toHaveBeenCalledWith(
+      campaign.id,
+      expect.any(BigInt),
+      expect.stringContaining("payout cap reached"),
+      "REFUND",
+    );
+
+    const submission = await prisma.submission.findFirst({
+      where: { walletAddress: user.walletAddress, taskId: task.id },
+    });
+    expect(submission?.payoutStatus).toBe("skipped");
+  });
+
+  it("does not refund when the payout fails for a task without a campaign", async () => {
+    vi.mocked(payReward).mockRejectedValueOnce(new Error("rpc timeout"));
+    const task = await createTask({ campaignId: undefined });
+    const user = await createUser();
+
+    const res = await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
+
+    expect(res.status).toBe(500);
+    expect(creditBalance).not.toHaveBeenCalled();
+  });
+
+  it("still returns 500 when the refund itself fails after a payout failure", async () => {
+    vi.mocked(payReward).mockRejectedValueOnce(new Error("rpc timeout"));
+    vi.mocked(creditBalance).mockRejectedValueOnce(new Error("refund failed"));
+    const campaign = await createCampaign();
+    const task = await createTask({ campaignId: campaign.id });
+    const user = await createUser();
+
+    const res = await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
+
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe("payout_failed");
+    const submission = await prisma.submission.findFirst({
+      where: { walletAddress: user.walletAddress, taskId: task.id },
+    });
+    expect(submission?.payoutStatus).toBe("failed");
+  });
+
+  it("still returns 429 when the refund itself fails after the payout cap is reached", async () => {
+    vi.mocked(payReward).mockRejectedValueOnce(new PayoutCapError(1n, 1n));
+    vi.mocked(creditBalance).mockRejectedValueOnce(new Error("refund failed"));
+    const campaign = await createCampaign();
+    const task = await createTask({ campaignId: campaign.id });
+    const user = await createUser();
+
+    const res = await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
+
+    expect(res.status).toBe(429);
+    const submission = await prisma.submission.findFirst({
+      where: { walletAddress: user.walletAddress, taskId: task.id },
+    });
     expect(submission?.payoutStatus).toBe("skipped");
   });
 });

@@ -6,6 +6,7 @@ import { formatUnits, parseUnits } from "viem";
 import { useRouter } from "next/navigation";
 import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 import ExportModal from "@/components/admin/ExportModal";
+import BalanceCard from "@/components/admin/BalanceCard";
 
 interface TaskProgress {
   taskId: string;
@@ -35,6 +36,16 @@ interface CampaignDetailProps {
   ownerEmail: string | null;
   isReadOnly: boolean;
   canManage: boolean;
+  balanceWei: string;
+  estimatedSubmissionsRemaining: number | null;
+  recentLedger: Array<{
+    type: "DEPOSIT" | "DEBIT_REWARD" | "DEBIT_FEE" | "REFUND";
+    amountWei: string;
+    note: string | null;
+    submissionId: string | null;
+    createdAt: string;
+  }>;
+  isSuperAdmin: boolean;
 }
 
 type DeleteConfirm = { taskId: string } | null;
@@ -74,6 +85,10 @@ export default function CampaignDetail({
   ownerEmail,
   isReadOnly,
   canManage,
+  balanceWei,
+  estimatedSubmissionsRemaining,
+  recentLedger,
+  isSuperAdmin,
 }: CampaignDetailProps) {
   const router = useRouter();
   const [tasks, setTasks] = useState<TaskProgress[]>([]);
@@ -757,6 +772,14 @@ export default function CampaignDetail({
       </div>
 
       {liveJob && <UploadStatusCard job={liveJob} onRetry={handleRetry} onDismiss={handleDismissUpload} />}
+
+      <BalanceCard
+        campaignId={campaignId}
+        initialBalanceWei={balanceWei}
+        initialEstimated={estimatedSubmissionsRemaining}
+        initialLedger={recentLedger}
+        isSuperAdmin={isSuperAdmin}
+      />
 
       <section className="rounded-3xl border border-outline-variant/40 bg-surface-container-lowest shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
         <div className="flex items-center justify-between border-b border-outline-variant/30 px-6 py-4">
