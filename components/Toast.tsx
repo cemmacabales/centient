@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 
-export type ToastKind = "error" | "info";
+export type ToastKind = "error" | "info" | "success";
 
 export interface ToastMessage {
   id: number;
@@ -26,6 +26,7 @@ export default function Toast({ toast, onDismiss, durationMs = 4000 }: ToastProp
   if (!toast) return null;
 
   const isError = toast.kind === "error";
+  const isSuccess = toast.kind === "success";
 
   return (
     <div
@@ -38,6 +39,8 @@ export default function Toast({ toast, onDismiss, durationMs = 4000 }: ToastProp
         className={`pointer-events-auto flex max-w-sm items-start gap-3 rounded-2xl px-4 py-3 shadow-[0_8px_24px_rgba(25,28,30,0.08)] motion-safe:animate-[centient-toast-in_200ms_ease-out] ${
           isError
             ? "bg-error-container text-on-error-container"
+            : isSuccess
+            ? "bg-primary-container text-on-primary-container"
             : "bg-surface-container-highest text-on-surface"
         }`}
       >
@@ -46,7 +49,7 @@ export default function Toast({ toast, onDismiss, durationMs = 4000 }: ToastProp
           style={{ fontVariationSettings: "'FILL' 1" }}
           aria-hidden="true"
         >
-          {isError ? "error" : "info"}
+          {isError ? "error" : isSuccess ? "check_circle" : "info"}
         </span>
         <p className="font-body text-sm leading-relaxed">{toast.message}</p>
         <button

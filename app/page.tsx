@@ -99,6 +99,11 @@ export default function Home() {
   const [cooldownRemaining, setCooldownRemaining] = useState<string>("");
   const [bannedReason, setBannedReason] = useState<string | null>(null);
   const [disputeOpen, setDisputeOpen] = useState(false);
+  const [demographics, setDemographics] = useState<{
+    country: string | null;
+    gender: string | null;
+    ageRange: string | null;
+  }>({ country: null, gender: null, ageRange: null });
 
   const showToast = useCallback((message: string, kind: ToastKind = "info") => {
     setToast({ id: Date.now(), message, kind });
@@ -128,6 +133,11 @@ export default function Home() {
     setOnboardingCompleted(data.onboardingCompleted ?? false);
     setUnbannedAt(data.unbannedAt ?? null);
     setBannedReason(data.bannedReason ?? null);
+    setDemographics({
+      country: data.country ?? null,
+      gender: data.gender ?? null,
+      ageRange: data.ageRange ?? null,
+    });
     if (data.isCooldown) {
       setScreen("cooldown");
     }
@@ -369,6 +379,13 @@ export default function Home() {
           rewardSymbol={REWARD_TOKEN_SYMBOL}
           submissionCount={submissionCount}
           explorerUrl={EXPLORER_URL}
+          country={demographics.country}
+          gender={demographics.gender}
+          ageRange={demographics.ageRange}
+          showToast={showToast}
+          onDemographicsDeleted={() =>
+            setDemographics({ country: null, gender: null, ageRange: null })
+          }
         />
       </div>
     );
