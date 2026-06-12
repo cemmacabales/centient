@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { type ToastKind } from "@/components/Toast";
 import { truncateAddress } from "@/lib/wallet";
 
 interface AccountSheetProps {
@@ -11,6 +12,16 @@ interface AccountSheetProps {
   rewardSymbol: string;
   submissionCount: number;
   explorerUrl: string;
+  country: string | null;
+  gender: string | null;
+  ageRange: string | null;
+  showToast: (message: string, kind?: ToastKind) => void;
+  onDemographicsDeleted: () => void;
+}
+
+function formatDemographicField(value: string | null): string {
+  if (!value) return "Not provided";
+  return value;
 }
 
 interface Submission {
@@ -50,7 +61,14 @@ export default function AccountSheet({
   rewardSymbol,
   submissionCount,
   explorerUrl,
+  country,
+  gender,
+  ageRange,
+  showToast,
+  onDemographicsDeleted,
 }: AccountSheetProps) {
+  const [deleting, setDeleting] = useState(false);
+  const [showDataSection, setShowDataSection] = useState(false);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState(false);
@@ -78,6 +96,27 @@ export default function AccountSheet({
   if (!open) return null;
 
   const truncated = truncateAddress(walletAddress);
+
+  const handleDeleteDemographics = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      const res = await fetch("/api/me/demographics", { method: "DELETE" });
+      if (res.ok) {
+        // Clear the parent's cached demographics so reopening the sheet doesn't
+        // show the just-deleted values from stale state.
+        onDemographicsDeleted();
+        showToast("Your demographic data has been removed from your profile", "success");
+        onClose();
+      } else {
+        showToast("Failed to delete data. Please try again.", "error");
+      }
+    } catch {
+      showToast("Failed to delete data. Please try again.", "error");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <div
@@ -134,6 +173,62 @@ export default function AccountSheet({
           <span className="font-body text-xs text-on-surface-variant">
             {submissionCount} submissions
           </span>
+        </div>
+
+        <div className="mb-4">
+          <button
+            type="button"
+            onClick={() => setShowDataSection(!showDataSection)}
+            className="flex w-full items-center justify-between rounded-xl bg-surface-container-low p-4 text-left transition-colors hover:bg-surface-container-high focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          >
+            <span className="font-label text-sm font-semibold text-on-surface">
+              View / delete my data
+            </span>
+            <span className="material-symbols-outlined text-on-surface-variant">
+              {showDataSection ? "expand_less" : "expand_more"}
+            </span>
+          </button>
+
+          {showDataSection && (
+            <div className="mt-3 rounded-2xl bg-surface-container-low p-4">
+              <p className="mb-3 font-body text-xs text-on-surface-variant">
+                We collect country, gender, and age range to improve task quality
+                and ensure fair compensation. This data is stored securely and is
+                never shared with third parties. You can delete this data at any
+                time.
+              </p>
+
+              <div className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="font-label text-xs text-outline">Country</span>
+                  <span className="font-body text-xs text-on-surface">
+                    {formatDemographicField(country)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-label text-xs text-outline">Gender</span>
+                  <span className="font-body text-xs text-on-surface">
+                    {formatDemographicField(gender)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="font-label text-xs text-outline">Age range</span>
+                  <span className="font-body text-xs text-on-surface">
+                    {formatDemographicField(ageRange)}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleDeleteDemographics}
+                disabled={deleting || (!country && !gender && !ageRange)}
+                className="mt-4 w-full rounded-xl bg-error-container py-2.5 text-center font-label text-sm font-semibold text-on-error-container transition-colors hover:bg-error-container/80 focus-visible:ring-2 focus-visible:ring-error focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-50"
+              >
+                {deleting ? "Removing..." : "Remove my data"}
+              </button>
+            </div>
+          )}
         </div>
 
         <a
