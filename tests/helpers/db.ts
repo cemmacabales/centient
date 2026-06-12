@@ -23,6 +23,8 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 export async function truncateAll(): Promise<void> {
+  await prisma.balanceLedger.deleteMany();
+  await prisma.campaignBalance.deleteMany();
   await prisma.submission.deleteMany();
   await prisma.uploadJob.deleteMany();
   await prisma.task.deleteMany();

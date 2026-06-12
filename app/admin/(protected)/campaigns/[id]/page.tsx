@@ -1,6 +1,7 @@
 import { requireRoleForPage } from "@/lib/admin-auth";
 import prisma from "@/lib/prisma";
 import CampaignDetail from "@/components/admin/CampaignDetail";
+import { getBalanceSummary } from "@/lib/campaign-balance";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +42,21 @@ export default async function AdminCampaignDetailPage({
     );
   }
 
+  const balanceSummary = await getBalanceSummary(id, campaign.rewardWei);
+
+  const recentLedger = await prisma.balanceLedger.findMany({
+    where: { campaignId: id },
+    orderBy: { createdAt: "desc" },
+    take: 10,
+    select: {
+      type: true,
+      amountWei: true,
+      note: true,
+      submissionId: true,
+      createdAt: true,
+    },
+  });
+
   // Compare the stable adminUserId from the JWT (`session.sub`) rather than the
   // mutable email — emails can change post-issue, and case/whitespace handling
   // diverges between the JWT and the DB. campaign.adminUserId is the source of truth.
@@ -59,6 +75,16 @@ export default async function AdminCampaignDetailPage({
       ownerEmail={campaign.adminUser.companyName ?? campaign.adminUser.email}
       isReadOnly={isReadOnly}
       canManage={canManage}
+      balanceWei={balanceSummary.balanceWei.toString()}
+      estimatedSubmissionsRemaining={balanceSummary.estimatedSubmissionsRemaining}
+      recentLedger={recentLedger.map((e) => ({
+        type: e.type,
+        amountWei: e.amountWei.toString(),
+        note: e.note,
+        submissionId: e.submissionId,
+        createdAt: e.createdAt.toISOString(),
+      }))}
+      isSuperAdmin={session.role === "SUPER_ADMIN"}
     />
   );
 }

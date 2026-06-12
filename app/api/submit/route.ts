@@ -14,6 +14,12 @@ import {
   RETEST_GOLD_COUNT,
   RETEST_PASS_THRESHOLD,
 } from "@/lib/admin-data";
+import {
+  checkAndDebit,
+  creditBalance,
+  totalDebitWei,
+  InsufficientBalanceError,
+} from "@/lib/campaign-balance";
 
 const EXPLORER_URL = process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://celoscan.io";
 
@@ -294,6 +300,30 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // Prepaid campaign balance: debit reward + platform fee before paying the
+    // labeler. Insufficient balance blocks the payout (402); the submission is
+    // recorded as skipped so the labeler isn't paid from an empty campaign.
+    if (!task.isGold && task.campaignId) {
+      try {
+        await checkAndDebit(task.campaignId, amount, submission.id);
+      } catch (err) {
+        if (err instanceof InsufficientBalanceError) {
+          await prisma.submission.update({
+            where: { id: submission.id },
+            data: { payoutStatus: "skipped" },
+          });
+          return errorResponse("campaign_balance_insufficient", 402, {
+            walletAddress,
+            taskId,
+            campaignId: task.campaignId,
+            balanceWei: String(err.balanceWei),
+            requiredWei: String(err.requiredWei),
+          });
+        }
+        throw err;
+      }
+    }
+
     try {
       const txHash = await payReward(walletAddress as `0x${string}`, amount);
       await prisma.$transaction([
@@ -336,7 +366,17 @@ export async function POST(req: NextRequest) {
         explorerUrl: `${EXPLORER_URL}/tx/${txHash}`,
       });
     } catch (err) {
+      // The campaign balance was debited before payout above; reverse it on any
+      // payout failure so the operator isn't charged for a label that wasn't paid.
       if (err instanceof PayoutCapError) {
+        if (!task.isGold && task.campaignId) {
+          await creditBalance(
+            task.campaignId,
+            totalDebitWei(amount),
+            `refund: payout cap reached for submission ${submission.id}`,
+            "REFUND",
+          ).catch(() => {});
+        }
         await prisma.submission.update({
           where: { id: submission.id },
           data: { payoutStatus: "skipped" },
@@ -353,6 +393,14 @@ export async function POST(req: NextRequest) {
       Sentry.captureException(err, {
         extra: { walletAddress, taskId, submissionId: submission.id },
       });
+      if (!task.isGold && task.campaignId) {
+        await creditBalance(
+          task.campaignId,
+          totalDebitWei(amount),
+          `refund: payout failed for submission ${submission.id}`,
+          "REFUND",
+        ).catch(() => {});
+      }
       await prisma.submission.update({
         where: { id: submission.id },
         data: { payoutStatus: "failed" },
