@@ -43,6 +43,7 @@ export interface UserProfileProps {
     goldPassed: boolean | null;
     payoutAmountWei: string;
     payoutStatus: string;
+    payoutError?: string | null;
     payoutTxHash: string | null;
     createdAt: string;
   }>;
@@ -198,33 +199,38 @@ export default function UserProfileView({ profile }: { profile: UserProfileProps
           <ul className="divide-y divide-outline-variant/20">
             {profile.recentSubmissions.map((s) => (
               <li key={s.id} className="py-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 font-label text-xs font-semibold">
-                      <PayoutStatusChip status={s.payoutStatus} />
-                      {s.isGoldCheck && (
-                        <span className="rounded-full bg-amber-100 px-2 py-0.5 font-label text-[10px] font-bold uppercase tracking-wider text-amber-800">
-                          gold · {s.goldPassed ? "pass" : "fail"}
-                        </span>
-                      )}
-                      <span className="font-body text-xs text-on-surface-variant">
-                        {new Date(s.createdAt).toLocaleString("en-US")}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-label text-xs font-semibold">
+                    <PayoutStatusChip status={s.payoutStatus} />
+                    {s.isGoldCheck && (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 font-label text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                        gold · {s.goldPassed ? "pass" : "fail"}
                       </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="font-label text-xs text-on-surface-variant">
-                        chose <span className="font-bold text-on-surface">{s.choice}</span> ·{" "}
-                        {formatUnits(BigInt(s.payoutAmountWei), REWARD_TOKEN_DECIMALS)} {profile.rewardSymbol}
-                      </div>
-                      <RetryPayoutButton
-                        submissionId={s.id}
-                        currentStatus={s.payoutStatus}
-                        onSuccess={() => startTransition(() => router.refresh())}
-                      />
-                    </div>
+                    )}
+                    <span className="font-body text-xs text-on-surface-variant">
+                      {new Date(s.createdAt).toLocaleString("en-US")}
+                    </span>
                   </div>
+                  <div className="flex items-center gap-2">
+                    <div className="font-label text-xs text-on-surface-variant">
+                      chose <span className="font-bold text-on-surface">{s.choice}</span> ·{" "}
+                      {formatUnits(BigInt(s.payoutAmountWei), REWARD_TOKEN_DECIMALS)} {profile.rewardSymbol}
+                    </div>
+                    <RetryPayoutButton
+                      submissionId={s.id}
+                      currentStatus={s.payoutStatus}
+                      onSuccess={() => startTransition(() => router.refresh())}
+                    />
+                  </div>
+                </div>
                 <p className="mt-1 line-clamp-2 font-body text-sm text-on-surface">
                   {s.taskPrompt}
                 </p>
+                {s.payoutError && (
+                  <div className="mt-1 rounded bg-error-container/20 p-1 font-mono text-[10px] text-error">
+                    Error: {s.payoutError}
+                  </div>
+                )}
                 {s.payoutTxHash && (
                   <a
                     href={`${process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://celoscan.io"}/tx/${s.payoutTxHash}`}
