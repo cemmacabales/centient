@@ -91,6 +91,7 @@ model Task {
   majorityAnswer String?
   agreementScore Float?
   resolvedAt     DateTime?
+  disabled       Boolean   @default(false)
 
   submissions Submission[]
   campaign    Campaign?    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
@@ -114,6 +115,7 @@ model Submission {
   payoutTxHash    String?
   payoutStatus    String    @default("pending")
   retryCount      Int       @default(0)
+  payoutError     String?
   lastRetriedAt   DateTime?
   createdAt       DateTime  @default(now())
 
@@ -129,6 +131,19 @@ model Submission {
   @@index([lastRetriedAt])
   @@index([taskId])
   @@map("submissions")
+}
+
+model Dispute {
+  id            String   @id @default(uuid())
+  walletAddress String   // no FK to User — intentional for forensic/compliance retention if user is deleted
+  reason        String
+  status        String   @default("open") // "open" | "resolved"
+  createdAt     DateTime @default(now())
+  resolvedAt    DateTime?
+
+  @@index([status, createdAt])
+  @@index([walletAddress])
+  @@map("disputes")
 }
 
 model WalletNonce {

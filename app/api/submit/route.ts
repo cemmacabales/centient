@@ -304,7 +304,7 @@ export async function POST(req: NextRequest) {
       });
       await prisma.submission.update({
         where: { id: submission.id },
-        data: { payoutStatus: "failed" },
+        data: { payoutStatus: "failed", payoutError: payoutError.slice(0, 500) },
       });
       return errorResponse("payout_enqueue_failed", 500, { submissionId: submission.id });
     }
