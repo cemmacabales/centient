@@ -289,7 +289,7 @@ interface NewCampaignModalProps {
 
 function NewCampaignModal({ onSubmit, onClose, loading }: NewCampaignModalProps) {
   const [name, setName] = useState("");
-  const [defaultResponseTarget, setDefaultResponseTarget] = useState(50);
+  const [defaultResponseTarget, setDefaultResponseTarget] = useState<number | "">(50);
   const [rewardDisplay, setRewardDisplay] = useState("0.05");
 
   const canSubmit = name.trim() && rewardDisplay.trim() && !isNaN(Number(rewardDisplay)) && Number(rewardDisplay) > 0;
@@ -302,7 +302,31 @@ function NewCampaignModal({ onSubmit, onClose, loading }: NewCampaignModalProps)
     } catch {
       return;
     }
-    onSubmit(name.trim(), defaultResponseTarget, wei);
+    const resolvedTarget =
+      defaultResponseTarget === "" ? 50 : Math.max(1, Math.min(10000, Number(defaultResponseTarget)));
+    onSubmit(name.trim(), resolvedTarget, wei);
+  }
+
+  function handleTargetChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const raw = e.target.value;
+    if (raw === "") {
+      setDefaultResponseTarget("");
+      return;
+    }
+    const parsed = parseInt(raw, 10);
+    if (!Number.isNaN(parsed)) {
+      setDefaultResponseTarget(parsed);
+    }
+  }
+
+  function handleTargetBlur() {
+    if (defaultResponseTarget === "") {
+      setDefaultResponseTarget(50);
+    } else if (defaultResponseTarget < 1) {
+      setDefaultResponseTarget(1);
+    } else if (defaultResponseTarget > 10000) {
+      setDefaultResponseTarget(10000);
+    }
   }
 
   return (
@@ -354,7 +378,8 @@ function NewCampaignModal({ onSubmit, onClose, loading }: NewCampaignModalProps)
             <input
               type="number"
               value={defaultResponseTarget}
-              onChange={(e) => setDefaultResponseTarget(parseInt(e.target.value, 10) || 50)}
+              onChange={handleTargetChange}
+              onBlur={handleTargetBlur}
               min={1}
               max={10000}
               className="mt-1 w-full rounded-lg border-none bg-surface-container-highest px-4 py-3 font-body text-sm text-on-surface focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
