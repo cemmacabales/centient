@@ -129,6 +129,18 @@ export default function CampaignDetail({
     setLoading(false);
   }, [campaignId]);
 
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const handleDismissUpload = useCallback(() => {
+    stopPolling();
+    setLiveJob(null);
+  }, [stopPolling]);
+
   useEffect(() => {
     fetchTasks();
   }, [campaignId, fetchTasks]);
@@ -163,12 +175,14 @@ export default function CampaignDetail({
     return () => stopPolling();
   }, [liveJob?.id, liveJob?.status, fetchTasks]);
 
-  function stopPolling() {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
+  useEffect(() => {
+    if (liveJob?.status === "done") {
+      const timer = setTimeout(() => {
+        handleDismissUpload();
+      }, 2000);
+      return () => clearTimeout(timer);
     }
-  }
+  }, [liveJob?.status, handleDismissUpload]);
 
   async function handleSaveCampaignReward() {
     setCampaignRewardSaving(true);
@@ -287,11 +301,6 @@ export default function CampaignDetail({
       completedAt: null,
       startedAt: null,
     });
-  }
-
-  function handleDismissUpload() {
-    stopPolling();
-    setLiveJob(null);
   }
 
   async function handleDownloadTemplate() {
