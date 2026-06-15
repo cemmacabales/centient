@@ -47,7 +47,10 @@ interface SubmitResponseBody {
   paid?: boolean;
   reason?: string;
   txHash?: string;
+  explorerUrl?: string;
   error?: string;
+  status?: "pending";
+  submissionId?: string;
 }
 
 const EXPLORER_URL = process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://celoscan.io";
@@ -92,6 +95,7 @@ export default function Home() {
   const [submitting, setSubmitting] = useState(false);
   const [lastTxHash, setLastTxHash] = useState<string | null>(null);
   const [submissionCount, setSubmissionCount] = useState(0);
+  const [pendingSubmissionId, setPendingSubmissionId] = useState<string | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [onboardingCompleted, setOnboardingCompleted] = useState(false);
@@ -207,6 +211,40 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [unbannedAt, screen]);
 
+  useEffect(() => {
+    if (!pendingSubmissionId || screen !== "success" || !wallet) return;
+
+    const MAX_POLL_ATTEMPTS = 40; // 40 × 3s ≈ 2 minutes before giving up
+    let attempts = 0;
+
+    const pollInterval = setInterval(async () => {
+      attempts += 1;
+      if (attempts > MAX_POLL_ATTEMPTS) {
+        clearInterval(pollInterval);
+        showToast("Payment is taking longer than expected — check back later.", "info");
+        return;
+      }
+      try {
+        const res = await fetch(`/api/submissions/${pendingSubmissionId}?walletAddress=${encodeURIComponent(wallet ?? "")}`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        if (data.payoutStatus === "sent" && data.payoutTxHash) {
+          setLastTxHash(data.payoutTxHash);
+          setPendingSubmissionId(null);
+          clearInterval(pollInterval);
+          await fetchUserData(wallet ?? "");
+        } else if (data.payoutStatus === "failed" || data.payoutStatus === "skipped") {
+          setPendingSubmissionId(null);
+          clearInterval(pollInterval);
+        }
+      } catch {
+      }
+    }, 3000);
+
+    return () => clearInterval(pollInterval);
+  }, [pendingSubmissionId, screen, wallet, fetchUserData, showToast]);
+
   const handleStartEarning = useCallback(() => {
     if (!wallet) return;
     setScreen("loading");
@@ -282,16 +320,15 @@ export default function Home() {
         return;
       }
 
-      if (data.paid) {
-        setLastTxHash(data.txHash ?? null);
+      if (data.status === "pending") {
+        if (data.submissionId) {
+          setPendingSubmissionId(data.submissionId);
+        }
         await fetchUserData(wallet);
         setScreen("success");
         if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
-          posthog.capture("submission_success", { wallet, taskId: task.id, txHash: data.txHash });
+          posthog.capture("submission_success", { wallet, taskId: task.id, status: data.status });
         }
-        setTimeout(async () => {
-          await fetchTask(wallet);
-        }, 1500);
         return;
       }
 
@@ -390,13 +427,16 @@ export default function Home() {
             </span>
           </div>
           <h2 className="text-2xl font-headline font-bold text-on-surface">
-            Paid {task?.rewardDisplay ?? REWARD_AMOUNT} {task?.rewardSymbol ?? REWARD_TOKEN_SYMBOL}
+            {lastTxHash
+              ? `Paid ${task?.rewardDisplay ?? REWARD_AMOUNT} ${task?.rewardSymbol ?? REWARD_TOKEN_SYMBOL}`
+              : pendingSubmissionId
+              ? "Payment on its way"
+              : `Paid ${task?.rewardDisplay ?? REWARD_AMOUNT} ${task?.rewardSymbol ?? REWARD_TOKEN_SYMBOL}`}
           </h2>
           <p className="text-center font-body text-sm text-on-surface-variant">
-            Your contribution helps improve AI.
-            {lastTxHash && (
+            {lastTxHash ? (
               <>
-                {" "}
+                Your contribution helps improve AI.{" "}
                 <a
                   href={`${EXPLORER_URL}/tx/${lastTxHash}`}
                   target="_blank"
@@ -406,6 +446,10 @@ export default function Home() {
                   View on explorer
                 </a>
               </>
+            ) : pendingSubmissionId ? (
+              "Your payment is being processed. This may take a few seconds."
+            ) : (
+              "Your contribution helps improve AI."
             )}
           </p>
           <div className="w-full rounded-3xl bg-surface-container-lowest p-6 shadow-[0_8px_32px_rgba(25,28,30,0.06)]">
