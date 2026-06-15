@@ -23,16 +23,26 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 export async function truncateAll(): Promise<void> {
-  await prisma.balanceLedger.deleteMany();
-  await prisma.campaignBalance.deleteMany();
-  await prisma.submission.deleteMany();
-  await prisma.uploadJob.deleteMany();
-  await prisma.task.deleteMany();
-  await prisma.campaign.deleteMany();
-  await prisma.adminAuditLog.deleteMany();
-  await prisma.adminUser.deleteMany();
-  await prisma.walletNonce.deleteMany();
-  await prisma.user.deleteMany();
+  const P2021 = "P2021";
+  const tryDelete = async (fn: () => unknown) => {
+    try {
+      await fn();
+    } catch (err: any) {
+      if (err?.code !== P2021) throw err;
+    }
+  };
+
+  await tryDelete(() => prisma.balanceLedger.deleteMany());
+  await tryDelete(() => prisma.campaignBalance.deleteMany());
+  await tryDelete(() => prisma.submission.deleteMany());
+  await tryDelete(() => prisma.payoutJob.deleteMany());
+  await tryDelete(() => prisma.uploadJob.deleteMany());
+  await tryDelete(() => prisma.task.deleteMany());
+  await tryDelete(() => prisma.campaign.deleteMany());
+  await tryDelete(() => prisma.adminAuditLog.deleteMany());
+  await tryDelete(() => prisma.adminUser.deleteMany());
+  await tryDelete(() => prisma.walletNonce.deleteMany());
+  await tryDelete(() => prisma.user.deleteMany());
 }
 
 export async function disconnect(): Promise<void> {

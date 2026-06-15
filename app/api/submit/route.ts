@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { payReward, resolveRewardWei, PayoutCapError } from "@/lib/payout";
-import { isSpamReason, checkReasonRepetition, computeIAA } from "@/lib/quality";
+import { rewardInWei, resolveRewardWei } from "@/lib/payout";
+import { isSpamReason, checkReasonRepetition } from "@/lib/quality";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { validateReason } from "@/lib/validators";
 import {
@@ -20,8 +20,6 @@ import {
   totalDebitWei,
   InsufficientBalanceError,
 } from "@/lib/campaign-balance";
-
-const EXPLORER_URL = process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://celoscan.io";
 
 function errorResponse(code: string, status: number, context: Record<string, unknown> = {}) {
   console.error(`[submit] ${code}`, context);
@@ -58,7 +56,7 @@ export async function POST(req: NextRequest) {
   if (choice !== "A" && choice !== "B") {
     return errorResponse("invalid_choice", 400, { walletAddress, taskId, choice });
   }
-  
+
   if (typeof reason !== "string" || isSpamReason(reason) || !validateReason(reason)) {
     return errorResponse("invalid_reason", 400, { walletAddress, taskId });
   }
@@ -114,7 +112,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Prevent retest users from submitting non-gold tasks
     if (isInRetest(user.isBanned, user.bannedUntil, user.banCount) && !task.isGold) {
       return errorResponse("invalid_task", 400, { walletAddress, taskId, reason: "retest_requires_gold_task" });
     }
@@ -325,93 +322,39 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const txHash = await payReward(walletAddress as `0x${string}`, amount);
-      await prisma.$transaction([
-        prisma.submission.update({
-          where: { id: submission.id },
-          data: { payoutStatus: "sent", payoutTxHash: txHash },
-        }),
-        prisma.user.update({
-          where: { walletAddress },
-          data: {
-            submissionCount: { increment: 1 },
-            totalEarnedWei: { increment: amount },
-            lastSubmissionAt: new Date(),
-          },
-        }),
-      ]);
-
-      if (!task.isGold && task.responseTarget != null && !task.resolvedAt) {
-        const paidCount = await prisma.submission.count({
-          where: { taskId, isGoldCheck: false, payoutStatus: { in: ["sent", "confirmed"] } },
-        });
-        if (paidCount >= task.responseTarget) {
-          const iaa = await computeIAA(taskId);
-          if (iaa) {
-            await prisma.task.update({
-              where: { id: taskId },
-              data: {
-                majorityAnswer: iaa.majorityAnswer,
-                agreementScore: iaa.agreementScore,
-                resolvedAt: new Date(),
-              },
-            });
-          }
-        }
-      }
-
-      return NextResponse.json({
-        paid: true,
-        txHash,
-        explorerUrl: `${EXPLORER_URL}/tx/${txHash}`,
+      await prisma.payoutJob.create({
+        data: {
+          submissionId: submission.id,
+          status: "queued",
+        },
       });
     } catch (err) {
-      // The campaign balance was debited before payout above; reverse it on any
-      // payout failure so the operator isn't charged for a label that wasn't paid.
-      if (err instanceof PayoutCapError) {
-        if (!task.isGold && task.campaignId) {
-          await creditBalance(
-            task.campaignId,
-            totalDebitWei(amount),
-            `refund: payout cap reached for submission ${submission.id}`,
-            "REFUND",
-          ).catch(() => {});
-        }
-        await prisma.submission.update({
-          where: { id: submission.id },
-          data: { payoutStatus: "skipped" },
-        });
-        return errorResponse("daily_cap_reached", 429, {
-          walletAddress,
-          taskId,
-          submissionId: submission.id,
-          currentWei: String(err.currentWei),
-          capWei: String(err.capWei),
-        });
-      }
-
       Sentry.captureException(err, {
-        extra: { walletAddress, taskId, submissionId: submission.id },
+        extra: { context: "enqueue_payout_job", submissionId: submission.id },
       });
+      // The campaign balance was debited before enqueuing the payout above;
+      // reverse it if the job can't be enqueued so the operator isn't charged
+      // for a payout that will never run.
       if (!task.isGold && task.campaignId) {
         await creditBalance(
           task.campaignId,
           totalDebitWei(amount),
-          `refund: payout failed for submission ${submission.id}`,
+          `refund: payout enqueue failed for submission ${submission.id}`,
           "REFUND",
         ).catch(() => {});
       }
+      const payoutError = err instanceof Error ? err.message : String(err);
       await prisma.submission.update({
         where: { id: submission.id },
-        data: { payoutStatus: "failed" },
+        data: { payoutStatus: "failed", payoutError: payoutError.slice(0, 500) },
       });
-      return errorResponse("payout_failed", 500, {
-        walletAddress,
-        taskId,
-        submissionId: submission.id,
-        err: err instanceof Error ? { message: err.message, stack: err.stack } : err,
-      });
+      return errorResponse("payout_enqueue_failed", 500, { submissionId: submission.id });
     }
+
+    return NextResponse.json({
+      status: "pending",
+      submissionId: submission.id,
+    });
   } catch (err) {
     Sentry.captureException(err, {
       extra: { walletAddress, taskId },
@@ -423,3 +366,5 @@ export async function POST(req: NextRequest) {
     });
   }
 }
+
+
