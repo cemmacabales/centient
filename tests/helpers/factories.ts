@@ -55,6 +55,17 @@ export async function createCampaign(
   });
 }
 
+export async function createCampaignBalance(
+  campaignId: string,
+  balanceWei: bigint = 0n,
+) {
+  return db.campaignBalance.upsert({
+    where: { campaignId },
+    create: { campaignId, balanceWei },
+    update: { balanceWei },
+  });
+}
+
 export async function createUser(
   overrides: Partial<{
     walletAddress: string;
@@ -109,8 +120,14 @@ export async function createTask(
   });
 }
 
-export async function createGoldTask(goldAnswer: "A" | "B" = "A") {
-  return createTask({ isGold: true, goldAnswer });
+export async function createGoldTask(
+  goldAnswerOrOverrides: "A" | "B" | Partial<Parameters<typeof createTask>[0]> = "A",
+) {
+  if (typeof goldAnswerOrOverrides === "string") {
+    return createTask({ isGold: true, goldAnswer: goldAnswerOrOverrides });
+  }
+  const { goldAnswer = "A", ...rest } = goldAnswerOrOverrides;
+  return createTask({ isGold: true, goldAnswer, ...rest });
 }
 
 export async function seedSubmissions(

@@ -32,6 +32,8 @@ export async function truncateAll(): Promise<void> {
     }
   };
 
+  await tryDelete(() => prisma.balanceLedger.deleteMany());
+  await tryDelete(() => prisma.campaignBalance.deleteMany());
   await tryDelete(() => prisma.submission.deleteMany());
   await tryDelete(() => prisma.payoutJob.deleteMany());
   await tryDelete(() => prisma.uploadJob.deleteMany());

@@ -2,6 +2,7 @@ import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "./prisma";
 import { payReward, PayoutCapError } from "./payout";
+import { creditBalance, totalDebitWei } from "./campaign-balance";
 import { checkAndAlert } from "./celo-balance";
 import { computeIAA } from "./quality";
 
@@ -43,7 +44,26 @@ async function claimNextJob(): Promise<{ id: string; submissionId: string } | nu
   return { id: first.id, submissionId: first.submissionId };
 }
 
-async function processJob(jobId: string, submissionId: string): Promise<void> {
+// The campaign balance is debited up front when the submission is enqueued. If the
+// payout ends in a terminal non-paid state (daily cap reached, or permanently failed),
+// reverse that debit so the operator isn't charged for a label that was never paid.
+// Best-effort: a failed refund must not block marking the submission/job terminal.
+async function refundCampaignBalance(
+  task: { isGold: boolean; campaignId: string | null },
+  submissionId: string,
+  amountWei: bigint,
+  reason: string,
+): Promise<void> {
+  if (task.isGold || !task.campaignId) return;
+  await creditBalance(
+    task.campaignId,
+    totalDebitWei(amountWei),
+    `${reason} for submission ${submissionId}`,
+    "REFUND",
+  ).catch(() => {});
+}
+
+export async function processJob(jobId: string, submissionId: string): Promise<void> {
   currentJobId = jobId;
 
   const submission = await prisma.submission.findUnique({
@@ -164,6 +184,7 @@ async function processJob(jobId: string, submissionId: string): Promise<void> {
           },
         }),
       ]);
+      await refundCampaignBalance(submission.task, submissionId, amount, "refund: payout cap reached");
       console.warn(`[payout-worker] job ${jobId} failed: daily cap reached`);
       return;
     }
@@ -196,6 +217,7 @@ async function processJob(jobId: string, submissionId: string): Promise<void> {
             },
           }),
         ]);
+        await refundCampaignBalance(submission.task, submissionId, amount, "refund: payout failed");
         console.error(`[payout-worker] job ${jobId} failed permanently after ${MAX_RETRIES} nonce-error retries: ${message}`);
         Sentry.captureMessage(`[payout-worker] job ${jobId} failed permanently (nonce): ${message}`, { level: "error" });
       } else {
@@ -232,6 +254,7 @@ async function processJob(jobId: string, submissionId: string): Promise<void> {
           },
         }),
       ]);
+      await refundCampaignBalance(submission.task, submissionId, amount, "refund: payout failed");
       console.error(`[payout-worker] job ${jobId} failed permanently after ${MAX_RETRIES} retries: ${message}`);
       Sentry.captureMessage(`[payout-worker] job ${jobId} failed permanently: ${message}`, { level: "error" });
     } else {

@@ -24,10 +24,20 @@ vi.mock("@/lib/quality", async (importOriginal) => {
   };
 });
 
+vi.mock("@/lib/campaign-balance", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/campaign-balance")>();
+  return {
+    ...actual,
+    checkAndDebit: vi.fn(),
+    creditBalance: vi.fn(),
+  };
+});
+
 import { POST } from "@/app/api/submit/route";
 import { payReward } from "@/lib/payout";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { checkReasonRepetition } from "@/lib/quality";
+import { checkAndDebit, creditBalance, InsufficientBalanceError } from "@/lib/campaign-balance";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 import {
   createUser,
@@ -46,6 +56,11 @@ beforeEach(async () => {
   vi.mocked(checkWalletRateLimit).mockResolvedValue(false);
   vi.mocked(checkReasonRepetition).mockReset();
   vi.mocked(checkReasonRepetition).mockResolvedValue({ isRepetitive: false });
+  vi.mocked(checkAndDebit).mockReset();
+  vi.mocked(checkAndDebit).mockResolvedValue(undefined);
+  vi.mocked(creditBalance).mockReset();
+  vi.mocked(creditBalance).mockResolvedValue(0n);
+  process.env.PLATFORM_FEE_WEI = "150000000000000000";
 });
 
 function makeReq(body: unknown): NextRequest {
@@ -581,4 +596,59 @@ describe("POST /api/submit - daily payout cap", () => {
     expect(submission).not.toBeNull();
     expect(submission?.payoutStatus).toBe("pending");
   });
+});
+
+describe("POST /api/submit - campaign balance", () => {
+  it("debits the campaign balance for non-gold tasks with a campaignId", async () => {
+    const campaign = await createCampaign();
+    const task = await createTask({ campaignId: campaign.id });
+    const user = await createUser();
+
+    await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
+
+    expect(checkAndDebit).toHaveBeenCalledOnce();
+    expect(checkAndDebit).toHaveBeenCalledWith(campaign.id, expect.any(BigInt), expect.any(String));
+  });
+
+  it("returns 402 and does not pay when the balance is insufficient", async () => {
+    vi.mocked(checkAndDebit).mockRejectedValueOnce(
+      new InsufficientBalanceError(0n, 200000000000000000n),
+    );
+    const campaign = await createCampaign();
+    const task = await createTask({ campaignId: campaign.id });
+    const user = await createUser();
+
+    const res = await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
+
+    expect(res.status).toBe(402);
+    expect((await res.json()).error).toBe("campaign_balance_insufficient");
+    expect(payReward).not.toHaveBeenCalled();
+
+    const submission = await prisma.submission.findFirst({
+      where: { walletAddress: user.walletAddress, taskId: task.id },
+    });
+    expect(submission?.payoutStatus).toBe("skipped");
+  });
+
+  it("does not debit gold tasks", async () => {
+    const campaign = await createCampaign();
+    const task = await createGoldTask({ campaignId: campaign.id });
+    const user = await createUser();
+
+    await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: task.goldAnswer as string, reason: VALID_REASON });
+
+    expect(checkAndDebit).not.toHaveBeenCalled();
+  });
+
+  it("does not debit tasks without a campaign", async () => {
+    const task = await createTask({ campaignId: undefined });
+    const user = await createUser();
+
+    await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
+
+    expect(checkAndDebit).not.toHaveBeenCalled();
+  });
+
+  // Refund-on-payout-failure and refund-on-cap now live in the payout worker
+  // (payouts are async). See lib/__tests__/payout-worker.test.ts.
 });
