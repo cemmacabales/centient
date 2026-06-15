@@ -302,6 +302,7 @@ export async function POST(req: NextRequest) {
       Sentry.captureException(err, {
         extra: { context: "enqueue_payout_job", submissionId: submission.id },
       });
+      const payoutError = err instanceof Error ? err.message : String(err);
       await prisma.submission.update({
         where: { id: submission.id },
         data: { payoutStatus: "failed", payoutError: payoutError.slice(0, 500) },
