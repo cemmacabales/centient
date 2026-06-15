@@ -350,12 +350,13 @@ export async function POST(req: NextRequest) {
         });
       }
 
+      const payoutError = err instanceof Error ? err.message : String(err);
       Sentry.captureException(err, {
         extra: { walletAddress, taskId, submissionId: submission.id },
       });
       await prisma.submission.update({
         where: { id: submission.id },
-        data: { payoutStatus: "failed" },
+        data: { payoutStatus: "failed", payoutError: payoutError.slice(0, 500) },
       });
       return errorResponse("payout_failed", 500, {
         walletAddress,

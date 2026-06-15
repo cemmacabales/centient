@@ -91,6 +91,7 @@ model Task {
   majorityAnswer String?
   agreementScore Float?
   resolvedAt     DateTime?
+  disabled       Boolean   @default(false)
 
   submissions Submission[]
   campaign    Campaign?    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
@@ -114,6 +115,7 @@ model Submission {
   payoutTxHash    String?
   payoutStatus    String    @default("pending")
   retryCount      Int       @default(0)
+  payoutError     String?
   lastRetriedAt   DateTime?
   createdAt       DateTime  @default(now())
 
