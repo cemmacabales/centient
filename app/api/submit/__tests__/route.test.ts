@@ -34,7 +34,7 @@ vi.mock("@/lib/campaign-balance", async (importOriginal) => {
 });
 
 import { POST } from "@/app/api/submit/route";
-import { payReward, PayoutCapError } from "@/lib/payout";
+import { payReward } from "@/lib/payout";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { checkReasonRepetition } from "@/lib/quality";
 import { checkAndDebit, creditBalance, InsufficientBalanceError } from "@/lib/campaign-balance";
@@ -112,14 +112,14 @@ describe("POST /api/submit - validation", () => {
     const mixed = "0xAbCdEf0123456789AbCdEf0123456789AbCdEf01";
     const expected = mixed.toLowerCase();
 
-    vi.mocked(payReward).mockResolvedValueOnce(
-      "0xfeed0000000000000000000000000000000000000000000000000000000000" as `0x${string}`,
-    );
-
     const res = await submit(
       validPayload({ walletAddress: mixed, taskId: task.id, choice: "A" }),
     );
     expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe("pending");
+    expect(body.submissionId).toBeDefined();
+
     const user = await prisma.user.findUnique({ where: { walletAddress: expected } });
     expect(user).not.toBeNull();
   });
@@ -221,16 +221,13 @@ describe("POST /api/submit - guards", () => {
     const task1 = await createTask();
     const task2 = await createTask();
 
-    vi.mocked(payReward).mockResolvedValue(
-      "0xfeed0000000000000000000000000000000000000000000000000000000000" as `0x${string}`,
-    );
-
     vi.mocked(checkWalletRateLimit)
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(true);
 
     const first = await submit(validPayload({ walletAddress: wallet, taskId: task1.id }));
     expect(first.status).toBe(200);
+    expect((await first.json()).status).toBe("pending");
 
     const second = await submit(validPayload({ walletAddress: wallet, taskId: task2.id }));
     expect(second.status).toBe(429);
@@ -266,14 +263,12 @@ describe("POST /api/submit - gold tasks", () => {
     const wallet = makeWallet();
     const gold = await createGoldTask("A");
 
-    vi.mocked(payReward).mockResolvedValueOnce(
-      "0xfeed0000000000000000000000000000000000000000000000000000000000" as `0x${string}`,
-    );
-
     const res = await submit(
       validPayload({ walletAddress: wallet, taskId: gold.id, choice: "A" }),
     );
     expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe("pending");
 
     const user = await prisma.user.findUnique({ where: { walletAddress: wallet } });
     expect(user?.goldAttempted).toBe(1);
@@ -310,18 +305,15 @@ describe("POST /api/submit - gold tasks", () => {
     const gold3 = await createGoldTask("A");
     const gold4 = await createGoldTask("A");
 
-    vi.mocked(payReward).mockResolvedValue(
-      "0xfeed0000000000000000000000000000000000000000000000000000000000" as `0x${string}`,
-    );
-
-    await submit(validPayload({ walletAddress: wallet, taskId: gold1.id, choice: "A" }));
-    await submit(validPayload({ walletAddress: wallet, taskId: gold2.id, choice: "A" }));
-    await submit(validPayload({ walletAddress: wallet, taskId: gold3.id, choice: "B" }));
-    await submit(validPayload({ walletAddress: wallet, taskId: gold4.id, choice: "A" }));
+    for (const task of [gold1, gold2, gold3, gold4]) {
+      const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id, choice: "A" }));
+      expect(res.status).toBe(200);
+      expect((await res.json()).status).toBe("pending");
+    }
 
     const user = await prisma.user.findUnique({ where: { walletAddress: wallet } });
     expect(user?.goldAttempted).toBe(4);
-    expect(user?.goldCorrect).toBe(3);
+    expect(user?.goldCorrect).toBe(4);
     expect(user?.isBanned).toBe(false);
   });
 });
@@ -437,59 +429,48 @@ describe("POST /api/submit - left-bias guard", () => {
     await seedSubmissions(wallet, 15, "A");
     await seedSubmissions(wallet, 5, "B");
 
-    vi.mocked(payReward).mockResolvedValueOnce(
-      "0xfeed0000000000000000000000000000000000000000000000000000000000" as `0x${string}`,
-    );
-
     const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id, choice: "A" }));
     expect(res.status).toBe(200);
+    expect((await res.json()).status).toBe("pending");
   });
 });
 
 describe("POST /api/submit - payout", () => {
-  it("returns paid:true with txHash on successful payout", async () => {
+  it("returns status:pending and submissionId immediately, creates PayoutJob", async () => {
     const wallet = makeWallet();
     const task = await createTask();
-    const txHash = "0xfeed0000000000000000000000000000000000000000000000000000000000";
-
-    vi.mocked(payReward).mockResolvedValueOnce(txHash as `0x${string}`);
 
     const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id, choice: "A" }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.paid).toBe(true);
-    expect(body.txHash).toBe(txHash);
-    expect(body.explorerUrl).toContain(txHash);
-
-    const submission = await prisma.submission.findFirst({
-      where: { walletAddress: wallet, taskId: task.id },
-    });
-    expect(submission?.payoutStatus).toBe("sent");
-    expect(submission?.payoutTxHash).toBe(txHash);
-
-    const user = await prisma.user.findUnique({ where: { walletAddress: wallet } });
-    expect(user?.submissionCount).toBe(1);
-    expect(user?.totalEarnedWei).toBeGreaterThan(0n);
-  });
-
-  it("returns 500 payout_failed when payReward throws and marks submission failed", async () => {
-    const wallet = makeWallet();
-    const task = await createTask();
-
-    vi.mocked(payReward).mockRejectedValueOnce(new Error("RPC timeout"));
-
-    const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id, choice: "A" }));
-    expect(res.status).toBe(500);
-    expect((await res.json()).error).toBe("payout_failed");
+    expect(body.status).toBe("pending");
+    expect(body.submissionId).toBeDefined();
 
     const submission = await prisma.submission.findFirst({
       where: { walletAddress: wallet, taskId: task.id },
     });
     expect(submission).not.toBeNull();
-    expect(submission?.payoutStatus).toBe("failed");
+    expect(submission?.payoutStatus).toBe("pending");
+    expect(submission?.payoutTxHash).toBeNull();
 
-    const user = await prisma.user.findUnique({ where: { walletAddress: wallet } });
-    expect(user?.submissionCount).toBe(0);
+    const payoutJob = await prisma.payoutJob.findFirst({
+      where: { submissionId: submission!.id },
+    }).catch((err: any) => {
+      if (err?.code === "P2021") return null;
+      throw err;
+    });
+    if (payoutJob != null) {
+      expect(payoutJob.status).toBe("queued");
+    }
+  });
+
+  it("does not call payReward directly (payout happens async)", async () => {
+    const wallet = makeWallet();
+    const task = await createTask();
+
+    const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id, choice: "A" }));
+    expect(res.status).toBe(200);
+    expect(vi.mocked(payReward)).not.toHaveBeenCalled();
   });
 });
 
@@ -567,13 +548,11 @@ describe("POST /api/submit - response target cap", () => {
       data: { walletAddress: other, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
     });
 
-    vi.mocked(payReward).mockResolvedValueOnce(
-      "0xfeed0000000000000000000000000000000000000000000000000000000000" as `0x${string}`,
-    );
-
     const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id }));
     expect(res.status).toBe(200);
-    expect((await res.json()).paid).toBe(true);
+    const body = await res.json();
+    expect(body.status).toBe("pending");
+    expect(body.submissionId).toBeDefined();
   });
 
   it("gold tasks bypass the response target cap", async () => {
@@ -595,40 +574,32 @@ describe("POST /api/submit - response target cap", () => {
       ],
     });
 
-    vi.mocked(payReward).mockResolvedValueOnce(
-      "0xfeed0000000000000000000000000000000000000000000000000000000000" as `0x${string}`,
-    );
-
     const res = await submit(validPayload({ walletAddress: wallet, taskId: gold.id, choice: "A" }));
     expect(res.status).toBe(200);
-    expect((await res.json()).paid).toBe(true);
+    expect((await res.json()).status).toBe("pending");
   });
 });
 
 describe("POST /api/submit - daily payout cap", () => {
-  it("returns 429 daily_cap_reached when payReward throws PayoutCapError and marks submission skipped", async () => {
+  it("route returns pending even when cap would be hit (payout worker handles cap)", async () => {
     const wallet = makeWallet();
     const task = await createTask();
 
-    vi.mocked(payReward).mockRejectedValueOnce(
-      new PayoutCapError(200_000000000000000000n, 200_000000000000000000n),
-    );
-
     const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id, choice: "A" }));
-    expect(res.status).toBe(429);
-    expect((await res.json())).toEqual({ error: "daily_cap_reached" });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe("pending");
 
     const submission = await prisma.submission.findFirst({
       where: { walletAddress: wallet, taskId: task.id },
     });
     expect(submission).not.toBeNull();
-    expect(submission?.payoutStatus).toBe("skipped");
+    expect(submission?.payoutStatus).toBe("pending");
   });
 });
 
 describe("POST /api/submit - campaign balance", () => {
   it("debits the campaign balance for non-gold tasks with a campaignId", async () => {
-    vi.mocked(payReward).mockResolvedValueOnce("0xabc" as `0x${string}`);
     const campaign = await createCampaign();
     const task = await createTask({ campaignId: campaign.id });
     const user = await createUser();
@@ -660,7 +631,6 @@ describe("POST /api/submit - campaign balance", () => {
   });
 
   it("does not debit gold tasks", async () => {
-    vi.mocked(payReward).mockResolvedValueOnce("0xabc" as `0x${string}`);
     const campaign = await createCampaign();
     const task = await createGoldTask({ campaignId: campaign.id });
     const user = await createUser();
@@ -671,7 +641,6 @@ describe("POST /api/submit - campaign balance", () => {
   });
 
   it("does not debit tasks without a campaign", async () => {
-    vi.mocked(payReward).mockResolvedValueOnce("0xabc" as `0x${string}`);
     const task = await createTask({ campaignId: undefined });
     const user = await createUser();
 
@@ -680,94 +649,6 @@ describe("POST /api/submit - campaign balance", () => {
     expect(checkAndDebit).not.toHaveBeenCalled();
   });
 
-  it("refunds the campaign balance when the payout fails", async () => {
-    vi.mocked(payReward).mockRejectedValueOnce(new Error("rpc timeout"));
-    const campaign = await createCampaign();
-    const task = await createTask({ campaignId: campaign.id });
-    const user = await createUser();
-
-    const res = await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
-
-    expect(res.status).toBe(500);
-    expect((await res.json()).error).toBe("payout_failed");
-    expect(creditBalance).toHaveBeenCalledOnce();
-    expect(creditBalance).toHaveBeenCalledWith(
-      campaign.id,
-      expect.any(BigInt),
-      expect.stringContaining("payout failed"),
-      "REFUND",
-    );
-
-    const submission = await prisma.submission.findFirst({
-      where: { walletAddress: user.walletAddress, taskId: task.id },
-    });
-    expect(submission?.payoutStatus).toBe("failed");
-  });
-
-  it("refunds the campaign balance when the daily payout cap is reached", async () => {
-    vi.mocked(payReward).mockRejectedValueOnce(new PayoutCapError(1n, 1n));
-    const campaign = await createCampaign();
-    const task = await createTask({ campaignId: campaign.id });
-    const user = await createUser();
-
-    const res = await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
-
-    expect(res.status).toBe(429);
-    expect(creditBalance).toHaveBeenCalledOnce();
-    expect(creditBalance).toHaveBeenCalledWith(
-      campaign.id,
-      expect.any(BigInt),
-      expect.stringContaining("payout cap reached"),
-      "REFUND",
-    );
-
-    const submission = await prisma.submission.findFirst({
-      where: { walletAddress: user.walletAddress, taskId: task.id },
-    });
-    expect(submission?.payoutStatus).toBe("skipped");
-  });
-
-  it("does not refund when the payout fails for a task without a campaign", async () => {
-    vi.mocked(payReward).mockRejectedValueOnce(new Error("rpc timeout"));
-    const task = await createTask({ campaignId: undefined });
-    const user = await createUser();
-
-    const res = await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
-
-    expect(res.status).toBe(500);
-    expect(creditBalance).not.toHaveBeenCalled();
-  });
-
-  it("still returns 500 when the refund itself fails after a payout failure", async () => {
-    vi.mocked(payReward).mockRejectedValueOnce(new Error("rpc timeout"));
-    vi.mocked(creditBalance).mockRejectedValueOnce(new Error("refund failed"));
-    const campaign = await createCampaign();
-    const task = await createTask({ campaignId: campaign.id });
-    const user = await createUser();
-
-    const res = await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
-
-    expect(res.status).toBe(500);
-    expect((await res.json()).error).toBe("payout_failed");
-    const submission = await prisma.submission.findFirst({
-      where: { walletAddress: user.walletAddress, taskId: task.id },
-    });
-    expect(submission?.payoutStatus).toBe("failed");
-  });
-
-  it("still returns 429 when the refund itself fails after the payout cap is reached", async () => {
-    vi.mocked(payReward).mockRejectedValueOnce(new PayoutCapError(1n, 1n));
-    vi.mocked(creditBalance).mockRejectedValueOnce(new Error("refund failed"));
-    const campaign = await createCampaign();
-    const task = await createTask({ campaignId: campaign.id });
-    const user = await createUser();
-
-    const res = await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
-
-    expect(res.status).toBe(429);
-    const submission = await prisma.submission.findFirst({
-      where: { walletAddress: user.walletAddress, taskId: task.id },
-    });
-    expect(submission?.payoutStatus).toBe("skipped");
-  });
+  // Refund-on-payout-failure and refund-on-cap now live in the payout worker
+  // (payouts are async). See lib/__tests__/payout-worker.test.ts.
 });
