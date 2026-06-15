@@ -69,6 +69,8 @@ model Campaign {
   adminUser AdminUser @relation(fields: [adminUserId], references: [id])
   tasks     Task[]
   uploadJobs UploadJob[]
+  balance    CampaignBalance?
+  balanceLedger BalanceLedger[]
 
   @@index([adminUserId])
   @@map("campaigns")
@@ -240,4 +242,36 @@ model UploadJob {
   @@index([campaignId, createdAt])
   @@index([status, workerHeartbeatAt])
   @@map("upload_jobs")
+}
+
+enum LedgerType {
+  DEPOSIT
+  DEBIT_REWARD
+  DEBIT_FEE
+  REFUND
+}
+
+model CampaignBalance {
+  id         String   @id @default(uuid())
+  campaignId String   @unique
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  balanceWei BigInt   @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("campaign_balances")
+}
+
+model BalanceLedger {
+  id           String     @id @default(uuid())
+  campaignId   String
+  campaign     Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  type         LedgerType
+  amountWei    BigInt
+  submissionId String?    // no FK — intentional: ledger entries survive submission lifecycle changes
+  note         String?
+  createdAt    DateTime   @default(now())
+
+  @@index([campaignId, createdAt])
+  @@map("balance_ledger")
 }

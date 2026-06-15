@@ -14,6 +14,12 @@ import {
   RETEST_GOLD_COUNT,
   RETEST_PASS_THRESHOLD,
 } from "@/lib/admin-data";
+import {
+  checkAndDebit,
+  creditBalance,
+  totalDebitWei,
+  InsufficientBalanceError,
+} from "@/lib/campaign-balance";
 
 function errorResponse(code: string, status: number, context: Record<string, unknown> = {}) {
   console.error(`[submit] ${code}`, context);
@@ -291,6 +297,30 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // Prepaid campaign balance: debit reward + platform fee before paying the
+    // labeler. Insufficient balance blocks the payout (402); the submission is
+    // recorded as skipped so the labeler isn't paid from an empty campaign.
+    if (!task.isGold && task.campaignId) {
+      try {
+        await checkAndDebit(task.campaignId, amount, submission.id);
+      } catch (err) {
+        if (err instanceof InsufficientBalanceError) {
+          await prisma.submission.update({
+            where: { id: submission.id },
+            data: { payoutStatus: "skipped" },
+          });
+          return errorResponse("campaign_balance_insufficient", 402, {
+            walletAddress,
+            taskId,
+            campaignId: task.campaignId,
+            balanceWei: String(err.balanceWei),
+            requiredWei: String(err.requiredWei),
+          });
+        }
+        throw err;
+      }
+    }
+
     try {
       await prisma.payoutJob.create({
         data: {
@@ -302,6 +332,17 @@ export async function POST(req: NextRequest) {
       Sentry.captureException(err, {
         extra: { context: "enqueue_payout_job", submissionId: submission.id },
       });
+      // The campaign balance was debited before enqueuing the payout above;
+      // reverse it if the job can't be enqueued so the operator isn't charged
+      // for a payout that will never run.
+      if (!task.isGold && task.campaignId) {
+        await creditBalance(
+          task.campaignId,
+          totalDebitWei(amount),
+          `refund: payout enqueue failed for submission ${submission.id}`,
+          "REFUND",
+        ).catch(() => {});
+      }
       const payoutError = err instanceof Error ? err.message : String(err);
       await prisma.submission.update({
         where: { id: submission.id },
