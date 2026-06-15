@@ -105,7 +105,7 @@ export async function POST(
     targetId: campaign.id,
     req,
     metadata: {
-      jobId: job.id,
+      id: job.id,
       fileName: file.name,
       fileSize: file.size,
       totalRows: rows.length,
@@ -115,7 +115,7 @@ export async function POST(
 
   return NextResponse.json(
     {
-      jobId: job.id,
+      id: job.id,
       status: job.status,
       totalRows: job.totalRows,
       createdAt: job.createdAt,
