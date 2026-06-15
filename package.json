@@ -11,6 +11,7 @@
     "start": "next start",
     "worker": "tsx lib/upload-worker.ts",
     "reconciler": "tsx lib/reconciler.ts",
+    "payout": "tsx lib/payout-worker.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "db:migrate": "prisma migrate dev",
