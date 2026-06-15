@@ -148,6 +148,15 @@ export default function CampaignDetail({
     return () => stopPolling();
   }, [liveJob?.id, liveJob?.status, fetchTasks]);
 
+  useEffect(() => {
+    if (liveJob?.status === "done") {
+      const timer = setTimeout(() => {
+        handleDismissUpload();
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [liveJob?.status]);
+
   function stopPolling() {
     if (pollRef.current) {
       clearInterval(pollRef.current);
