@@ -28,3 +28,41 @@ export function simulatedAddress(): `0x${string}` {
     SIMULATED_WALLET_PRIVATE_KEY,
   ).address.toLowerCase() as `0x${string}`;
 }
+
+export interface SimulatedProvider {
+  isMiniPay: true;
+  __sim: true;
+  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
+}
+
+/**
+ * Build an injected-wallet shim backed by the local simulated key. Mirrors the
+ * subset of the EIP-1193 provider the app actually uses:
+ *  - eth_requestAccounts / eth_accounts -> [simulated address]
+ *  - personal_sign -> a real local signature (so /api/auth/verify passes)
+ *  - chain-switch calls -> no-op
+ */
+export function createSimulatedProvider(): SimulatedProvider {
+  const account = privateKeyToAccount(SIMULATED_WALLET_PRIVATE_KEY);
+  const address = account.address.toLowerCase();
+  return {
+    isMiniPay: true,
+    __sim: true,
+    async request({ method, params }) {
+      switch (method) {
+        case "eth_requestAccounts":
+        case "eth_accounts":
+          return [address];
+        case "personal_sign": {
+          const message = (params?.[0] ?? "") as string;
+          return account.signMessage({ message });
+        }
+        case "wallet_switchEthereumChain":
+        case "wallet_addEthereumChain":
+          return null;
+        default:
+          return null;
+      }
+    },
+  };
+}
