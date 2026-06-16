@@ -56,12 +56,20 @@ export function isSimulationMode(): boolean {
 }
 
 // Well-known local dev key, overridable via env. NOT for any real funds.
+// Public (NEXT_PUBLIC_) because the client shim signs in-browser and must read it.
 export const SIMULATED_WALLET_PRIVATE_KEY =
-  (process.env.SIMULATED_WALLET_PRIVATE_KEY
+  (process.env.NEXT_PUBLIC_SIMULATED_WALLET_PRIVATE_KEY
     ?? "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80") as `0x${string}`;
 
 export function simulatedAddress(): `0x${string}`; // privateKeyToAccount(...).address, lowercased
+export function createSimulatedProvider(): SimulatedProvider; // { isMiniPay, __sim, request }
 ```
+
+**Browser-safety constraint:** `lib/simulation.ts` is imported by both the client
+shim and server code, so it must contain **no Node-only imports** (no `node:crypto`).
+It depends only on `viem/accounts` (isomorphic) and `process.env`. The fake tx-hash
+generator (which uses `node:crypto`) therefore lives in the server-only
+`lib/payout.ts`, not in `simulation.ts`.
 
 **Double-gated:** the flag is inert unless `NODE_ENV !== "production"`, so the
 simulation can never fire on a real deploy even if the env var leaks. A single
@@ -132,7 +140,7 @@ submit task
 | `app/layout.tsx` | render `<MiniPaySimulator />` |
 | `lib/payout.ts` | sim guard in `payReward()` and `waitForTx()` |
 | `app/page.tsx` | hide explorer link when sim mode |
-| `.env.local.example` | document `NEXT_PUBLIC_SIMULATE_MINIPAY` and `SIMULATED_WALLET_PRIVATE_KEY` |
+| `.env.local.example` | document `NEXT_PUBLIC_SIMULATE_MINIPAY` and `NEXT_PUBLIC_SIMULATED_WALLET_PRIVATE_KEY` |
 
 ## Testing (TDD)
 
