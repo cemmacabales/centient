@@ -754,9 +754,9 @@ export async function getOpsDashboardData(): Promise<OpsDashboardData> {
 
 async function getSubmissionVolume24h(): Promise<TimeSeriesPoint[]> {
   const rows = await prisma.$queryRaw<{ hour: Date; count: bigint }[]>`
-    SELECT date_trunc('hour', created_at) as hour, COUNT(*)::int as count
+    SELECT date_trunc('hour', "createdAt") as hour, COUNT(*)::int as count
     FROM submissions
-    WHERE created_at >= NOW() - INTERVAL '24 hours'
+    WHERE "createdAt" >= NOW() - INTERVAL '24 hours'
     GROUP BY hour
     ORDER BY hour ASC
   `;
@@ -768,9 +768,9 @@ async function getSubmissionVolume24h(): Promise<TimeSeriesPoint[]> {
 
 async function getPayoutVolume24h(): Promise<PayoutTimeSeriesPoint[]> {
   const rows = await prisma.$queryRaw<{ hour: Date; amount_wei: bigint }[]>`
-    SELECT date_trunc('hour', created_at) as hour, COALESCE(SUM(payout_amount_wei), 0) as amount_wei
+    SELECT date_trunc('hour', "createdAt") as hour, COALESCE(SUM("payoutAmountWei"), 0) as amount_wei
     FROM submissions
-    WHERE created_at >= NOW() - INTERVAL '24 hours' AND payout_status = 'sent'
+    WHERE "createdAt" >= NOW() - INTERVAL '24 hours' AND "payoutStatus" = 'sent'
     GROUP BY hour
     ORDER BY hour ASC
   `;
@@ -825,7 +825,7 @@ async function getCategoryDistribution(): Promise<CategoryDistribution[]> {
   const rows = await prisma.$queryRaw<{ category: string | null; count: bigint }[]>`
     SELECT t.category, COUNT(*)::int as count
     FROM submissions s
-    JOIN tasks t ON s.task_id = t.id
+    JOIN tasks t ON s."taskId" = t.id
     GROUP BY t.category
     ORDER BY count DESC
   `;
