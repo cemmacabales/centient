@@ -21,47 +21,40 @@ A data labeling platform built on Celo MiniPay, rewarding contributors with cUSD
 
 ### Setup
 
-1. **Clone the repository**
+```bash
+git clone https://github.com/kimerran/t2p.git
+cd t2p
+npm install
+npm run setup     # generates .env.local, starts Postgres, migrates + seeds
+npm run dev
+```
 
-   ```bash
-   git clone https://github.com/kimerran/t2p.git
-   cd t2p
-   ```
+`npm run setup` produces a complete, bootable `.env.local` — every required key
+is generated or filled (JWT secret, a throwaway hot-wallet key, platform fee,
+cron secret) so no route 500s on a missing/placeholder value. It's **idempotent
+and non-destructive**: re-running never overwrites a real secret you've already
+set. Then it starts the `db` container, applies migrations, and seeds test data.
 
-2. **Install dependencies**
+Once seeded, log in to test every area:
 
-   ```bash
-   npm install
-   ```
+| Account | Email | Password | Access |
+|---------|-------|----------|--------|
+| Admin | `admin@centient.work` | `GoCent!123` | `SUPER_ADMIN` — full admin dashboard |
+| Customer | `centient@centient.work` | `GoCent!123` | `CUSTOMER` — campaign owner views |
 
-3. **Start PostgreSQL**
-
-   ```bash
-   docker compose up -d
-   ```
-
-4. **Configure environment**
-
-   ```bash
-   cp .env.local.example .env.local
-   ```
-
-5. **Run database migrations**
-
-   ```bash
-   npm run db:migrate
-   ```
-
-6. **Start development server**
-
-   ```bash
-   npm run dev
-   ```
+> Not using Docker for Postgres? Run `npm run setup:env` (env only), point
+> `DATABASE_URL` at your own database, then `npm run db:deploy && npm run db:seed`.
+>
+> Seeing `P3005 — database schema is not empty`? Your local DB predates the
+> migration history (created via `db push`). Rebuild it cleanly with
+> `npm run db:reset` (destructive — drops local data, re-applies migrations + seed).
 
 ## Available Scripts
 
 | Command | Description |
 |---------|-------------|
+| `npm run setup` | One-command dev setup: env + Postgres + migrate + seed |
+| `npm run setup:env` | Generate/repair `.env.local` only (idempotent) |
 | `npm run dev` | Start development server |
 | `npm run build` | Generate Prisma client and build for production |
 | `npm run start` | Start production server |

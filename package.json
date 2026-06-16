@@ -6,6 +6,8 @@
     "node": ">=22.12.0"
   },
   "scripts": {
+    "setup": "node scripts/setup-env.mjs && docker compose up -d --wait db && npx prisma generate && npm run db:deploy && npm run db:seed",
+    "setup:env": "node scripts/setup-env.mjs",
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
