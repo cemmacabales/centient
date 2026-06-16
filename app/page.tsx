@@ -16,6 +16,7 @@ import OnboardingScreen from "@/components/OnboardingScreen";
 import DisputeForm from "@/components/DisputeForm";
 import { posthog } from "@/components/PostHogProvider";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { isSimulationMode } from "@/lib/simulation";
 
 const MIN_LOADING_MS = 1500;
 
@@ -451,7 +452,7 @@ export default function Home() {
               : `Paid ${task?.rewardDisplay ?? REWARD_AMOUNT} ${task?.rewardSymbol ?? REWARD_TOKEN_SYMBOL}`}
           </h2>
           <p className="text-center font-body text-sm text-on-surface-variant">
-            {lastTxHash ? (
+            {lastTxHash && !isSimulationMode() ? (
               <>
                 Your contribution helps improve AI.{" "}
                 <a
