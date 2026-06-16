@@ -15,6 +15,11 @@ export default function MiniPaySimulator() {
     if (!isSimulationMode()) return null;
     const w = window as unknown as { ethereum?: { __sim?: boolean } };
     if (w.ethereum?.__sim) return null;
+    if (w.ethereum) {
+      console.warn(
+        "[MiniPaySimulator] simulation mode is on — overwriting the existing injected wallet (e.g. MetaMask) for this session.",
+      );
+    }
     w.ethereum = createSimulatedProvider();
     return null;
   });
