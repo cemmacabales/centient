@@ -9,9 +9,13 @@ datasource db {
 }
 
 model User {
-  walletAddress        String   @id
+  id                   String   @id @default(uuid())
+  walletAddress        String?  @unique
+  email                String?  @unique
+  passwordHash         String?
   createdAt            DateTime @default(now())
   totalEarnedWei       BigInt   @default(0)
+  pendingBalanceWei    BigInt   @default(0)
   submissionCount      Int      @default(0)
   goldCorrect          Int      @default(0)
   goldAttempted        Int      @default(0)
@@ -27,7 +31,8 @@ model User {
   onboardingCompleted  Boolean  @default(false)
   lastSubmissionAt     DateTime?
 
-  submissions Submission[]
+  submissions   Submission[]
+  balanceLedger UserBalanceLedger[]
 
   @@map("users")
 }
@@ -274,4 +279,27 @@ model BalanceLedger {
 
   @@index([campaignId, createdAt])
   @@map("balance_ledger")
+}
+
+enum UserLedgerType {
+  CREDIT_REWARD
+  WITHDRAWAL
+  REVERSAL
+}
+
+// Off-chain labeler balance ledger — mirrors BalanceLedger. Approved answers credit
+// pendingBalanceWei (CREDIT_REWARD); withdrawals debit it (WITHDRAWAL); failed/reversed
+// withdrawals re-credit (REVERSAL). Schema only in P0a — no writes yet.
+model UserBalanceLedger {
+  id           String         @id @default(uuid())
+  userId       String
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type         UserLedgerType
+  amountWei    BigInt
+  submissionId String?        // no FK — intentional: ledger entries survive submission lifecycle changes
+  note         String?
+  createdAt    DateTime       @default(now())
+
+  @@index([userId, createdAt])
+  @@map("user_balance_ledger")
 }
