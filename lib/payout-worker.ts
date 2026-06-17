@@ -126,27 +126,9 @@ export async function processJob(jobId: string, submissionId: string): Promise<v
         data: {
           submissionCount: { increment: 1 },
           totalEarnedWei: { increment: amount },
-          pendingBalanceWei: { increment: amount },
           lastSubmissionAt: new Date(),
         },
       });
-
-      const user = await tx.user.findUnique({
-        where: { walletAddress: submission.walletAddress },
-        select: { id: true },
-      });
-
-      if (user) {
-        await tx.userBalanceLedger.create({
-          data: {
-            userId: user.id,
-            type: "CREDIT_REWARD",
-            amountWei: amount,
-            submissionId: submissionId,
-            note: `Reward for submission ${submissionId}`,
-          },
-        });
-      }
     });
 
     const task = submission.task;

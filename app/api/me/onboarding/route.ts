@@ -4,10 +4,9 @@ import { COUNTRIES } from "@/lib/countries";
 import { getLabelerSession, requireLabelerSession } from "@/lib/labeler-auth";
 
 export async function POST(req: NextRequest) {
-  const walletSession = await getLabelerSession(req);
-  const unauthorized = requireLabelerSession(walletSession);
+  const userId = await getLabelerSession(req);
+  const unauthorized = requireLabelerSession(userId);
   if (unauthorized) return unauthorized;
-  const wallet = walletSession!;
 
   let body: { country?: string; ageRange?: string; gender?: string };
   try {
@@ -41,24 +40,20 @@ export async function POST(req: NextRequest) {
   }
 
   const existing = await prisma.user.findUnique({
-    where: { walletAddress: wallet },
+    where: { id: userId! },
     select: { onboardingCompleted: true },
   });
 
-  if (existing?.onboardingCompleted) {
+  if (!existing) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  if (existing.onboardingCompleted) {
     return NextResponse.json({ error: "onboarding_already_completed" }, { status: 409 });
   }
 
-  await prisma.user.upsert({
-    where: { walletAddress: wallet },
-    create: {
-      walletAddress: wallet,
-      country: country.toUpperCase(),
-      ageRange,
-      gender: gender ? gender.toLowerCase() : null,
-      onboardingCompleted: true,
-    },
-    update: {
+  await prisma.user.update({
+    where: { id: userId! },
+    data: {
       country: country.toUpperCase(),
       ageRange,
       gender: gender ? gender.toLowerCase() : null,

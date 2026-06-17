@@ -54,7 +54,16 @@ export async function POST(req: NextRequest) {
 
   await prisma.walletNonce.delete({ where: { id: record.id } });
 
-  const token = await signLabelerJWT(wallet);
+  // Resolve the wallet to a user (auto-create on first sign-in) and issue a
+  // userId-keyed session. Wallet-signature login keeps working exactly as before.
+  const user = await prisma.user.upsert({
+    where: { walletAddress: wallet },
+    update: {},
+    create: { walletAddress: wallet },
+    select: { id: true },
+  });
+
+  const token = await signLabelerJWT(user.id);
   const res = NextResponse.json({ success: true });
   return setLabelerSessionCookie(res, token);
 }

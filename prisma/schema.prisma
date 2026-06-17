@@ -13,6 +13,10 @@ model User {
   walletAddress        String?  @unique
   email                String?  @unique
   passwordHash         String?
+  isVerified           Boolean  @default(false)
+  verificationToken    String?  @unique
+  verificationTokenExpires DateTime?
+  verifiedAt           DateTime?
   createdAt            DateTime @default(now())
   totalEarnedWei       BigInt   @default(0)
   pendingBalanceWei    BigInt   @default(0)
@@ -33,7 +37,6 @@ model User {
 
   submissions   Submission[]
   balanceLedger UserBalanceLedger[]
-  withdrawals   UserWithdrawal[]
 
   @@map("users")
 }
@@ -288,14 +291,6 @@ enum UserLedgerType {
   REVERSAL
 }
 
-enum WithdrawalStatus {
-  queued
-  processing
-  sent
-  confirmed
-  failed
-}
-
 // Off-chain labeler balance ledger — mirrors BalanceLedger. Approved answers credit
 // pendingBalanceWei (CREDIT_REWARD); withdrawals debit it (WITHDRAWAL); failed/reversed
 // withdrawals re-credit (REVERSAL). Schema only in P0a — no writes yet.
@@ -311,25 +306,4 @@ model UserBalanceLedger {
 
   @@index([userId, createdAt])
   @@map("user_balance_ledger")
-}
-
-model UserWithdrawal {
-  id               String          @id @default(uuid())
-  userId           String
-  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  amountWei        BigInt
-  status           WithdrawalStatus @default(queued)
-  txHash           String?
-  workerHeartbeatAt DateTime?
-  startedAt        DateTime?
-  completedAt      DateTime?
-  lastError        String?
-  retryCount       Int             @default(0)
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-
-  @@index([userId, createdAt])
-  @@index([status, createdAt])
-  @@index([status, workerHeartbeatAt])
-  @@map("user_withdrawals")
 }
