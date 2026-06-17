@@ -75,6 +75,7 @@ export async function createUser(
     lastBanAt: Date | null;
     goldCorrect: number;
     goldAttempted: number;
+    pendingBalanceWei: bigint;
   }> = {},
 ) {
   const walletAddress = overrides.walletAddress ?? makeWallet();
@@ -87,11 +88,22 @@ export async function createUser(
       lastBanAt: overrides.lastBanAt ?? null,
       goldCorrect: overrides.goldCorrect ?? 0,
       goldAttempted: overrides.goldAttempted ?? 0,
+      pendingBalanceWei: overrides.pendingBalanceWei ?? 0n,
     },
   });
   // walletAddress is nullable on User as of P0a; factory always creates wallet-keyed
   // users, so narrow it back to a non-null string for ergonomic call sites.
   return { ...user, walletAddress };
+}
+
+export async function createUserBalance(
+  userId: string,
+  pendingBalanceWei: bigint = 0n,
+) {
+  return db.user.update({
+    where: { id: userId },
+    data: { pendingBalanceWei },
+  });
 }
 
 export async function createTask(
