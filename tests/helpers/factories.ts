@@ -77,9 +77,10 @@ export async function createUser(
     goldAttempted: number;
   }> = {},
 ) {
-  return db.user.create({
+  const walletAddress = overrides.walletAddress ?? makeWallet();
+  const user = await db.user.create({
     data: {
-      walletAddress: overrides.walletAddress ?? makeWallet(),
+      walletAddress,
       isBanned: overrides.isBanned ?? false,
       banCount: overrides.banCount ?? (overrides.isBanned ? 1 : 0),
       bannedUntil: overrides.bannedUntil ?? null,
@@ -88,6 +89,9 @@ export async function createUser(
       goldAttempted: overrides.goldAttempted ?? 0,
     },
   });
+  // walletAddress is nullable on User as of P0a; factory always creates wallet-keyed
+  // users, so narrow it back to a non-null string for ergonomic call sites.
+  return { ...user, walletAddress };
 }
 
 export async function createTask(
