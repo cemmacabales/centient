@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, http, parseUnits, erc20Abi } from "viem";
+import { createPublicClient, createWalletClient, http, parseUnits, erc20Abi, type TransactionReceipt } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { Mutex } from "async-mutex";
 import {
@@ -9,6 +9,8 @@ import {
   activeRpcUrl,
 } from "./constants";
 import { checkPayoutCap, maybeSendCapAlert, PayoutCapError } from "./payout-cap";
+import { randomBytes } from "node:crypto";
+import { isSimulationMode } from "./simulation";
 
 export { PayoutCapError };
 
@@ -39,8 +41,17 @@ function getWalletClient() {
 
 const nonceMutex = new Mutex();
 
+// Local-sim only: a syntactically valid 0x + 64-hex hash, never broadcast.
+function simulatedTxHash(): `0x${string}` {
+  return `0x${randomBytes(32).toString("hex")}`;
+}
+
 export async function payReward(to: `0x${string}`, amountWei?: bigint): Promise<`0x${string}`> {
   const amount = amountWei ?? rewardInWei();
+
+  if (isSimulationMode()) {
+    return simulatedTxHash();
+  }
 
   await checkPayoutCap(amount);
 
@@ -82,6 +93,9 @@ export async function payReward(to: `0x${string}`, amountWei?: bigint): Promise<
 }
 
 export async function waitForTx(hash: `0x${string}`) {
+  if (isSimulationMode()) {
+    return { status: "success", transactionHash: hash } as unknown as TransactionReceipt;
+  }
   return publicClient().waitForTransactionReceipt({ hash, timeout: 30_000 });
 }
 
