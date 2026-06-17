@@ -80,20 +80,20 @@ describe("debitForWithdrawal", () => {
     expect(ledger[0].note).toBe("withdrawal");
   });
 
-  it("throws InsufficientUserBalanceError when balance is too low", async () => {
+  it("returns remaining balance without throwing when balance is too low", async () => {
     const user = await createUser({ pendingBalanceWei: 100000000000000000n });
 
     await expect(
       debitForWithdrawal(user.id, 500000000000000000n, "payout-002")
-    ).rejects.toThrow(InsufficientUserBalanceError);
+    ).resolves.toBe(100000000000000000n);
   });
 
-  it("throws InsufficientUserBalanceError when user has no pending balance record", async () => {
+  it("returns 0n without throwing when user has no pending balance", async () => {
     const user = await createUser({ pendingBalanceWei: 0n });
 
     await expect(
       debitForWithdrawal(user.id, 100000000000000000n, "payout-003")
-    ).rejects.toThrow(InsufficientUserBalanceError);
+    ).resolves.toBe(0n);
   });
 
   it("succeeds when balance exactly equals withdrawal amount", async () => {
