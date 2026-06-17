@@ -10,23 +10,9 @@ import {
 
 const MAX_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
 
-function deriveWalletAddress(): `0x${string}` | null {
-  const key = process.env.PAYOUT_PRIVATE_KEY;
-  if (!key) return null;
-  try {
-    return privateKeyToAccount(key as `0x${string}`).address;
-  } catch {
-    // A malformed/placeholder key must not crash every route that imports this
-    // module at load time (status-health page, /api/health/wallet, workers).
-    // Treat it like an unconfigured wallet so health checks degrade gracefully.
-    console.warn(
-      "[celo-balance] PAYOUT_PRIVATE_KEY is set but not a valid private key — treating wallet as unconfigured",
-    );
-    return null;
-  }
-}
-
-const WALLET_ADDRESS: `0x${string}` | null = deriveWalletAddress();
+const WALLET_ADDRESS: `0x${string}` | null = process.env.PAYOUT_PRIVATE_KEY
+  ? (privateKeyToAccount(process.env.PAYOUT_PRIVATE_KEY as `0x${string}`).address ?? null)
+  : null;
 
 export interface BalanceThresholds {
   warnCelo: number;

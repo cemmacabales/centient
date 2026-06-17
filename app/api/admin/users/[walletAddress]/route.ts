@@ -110,7 +110,7 @@ export async function PATCH(
     adminUserId: session.sub,
     action: body.action === "ban" ? "user.ban" : "user.unban",
     targetType: "user",
-    targetId: after.walletAddress ?? undefined,
+    targetId: after.walletAddress,
     req,
     metadata: {
       before: {

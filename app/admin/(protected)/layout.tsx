@@ -24,7 +24,7 @@ export default async function ProtectedAdminLayout({
               className="drop-shadow-[0_2px_6px_rgba(0,109,61,0.2)]"
             />
             <span className="font-headline text-lg font-extrabold tracking-tighter text-primary">
-              {session.role === "CUSTOMER" ? "Centient" : "Centient Admin"}
+              Centient Admin
             </span>
           </div>
           <div className="flex items-center gap-2">

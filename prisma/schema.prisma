@@ -9,17 +9,9 @@ datasource db {
 }
 
 model User {
-  id                   String   @id @default(uuid())
-  walletAddress        String?  @unique
-  email                String?  @unique
-  passwordHash         String?
-  isVerified           Boolean  @default(false)
-  verificationToken    String?  @unique
-  verificationTokenExpires DateTime?
-  verifiedAt           DateTime?
+  walletAddress        String   @id
   createdAt            DateTime @default(now())
   totalEarnedWei       BigInt   @default(0)
-  pendingBalanceWei    BigInt   @default(0)
   submissionCount      Int      @default(0)
   goldCorrect          Int      @default(0)
   goldAttempted        Int      @default(0)
@@ -35,9 +27,7 @@ model User {
   onboardingCompleted  Boolean  @default(false)
   lastSubmissionAt     DateTime?
 
-  submissions   Submission[]
-  disputes      Dispute[]
-  balanceLedger UserBalanceLedger[]
+  submissions Submission[]
 
   @@map("users")
 }
@@ -118,7 +108,6 @@ model Task {
 model Submission {
   id              String    @id @default(uuid())
   walletAddress   String
-  userId          String
   taskId          String
   choice          String
   reason          String
@@ -132,14 +121,12 @@ model Submission {
   lastRetriedAt   DateTime?
   createdAt       DateTime  @default(now())
 
-  user User @relation(fields: [userId], references: [id])
+  user User @relation(fields: [walletAddress], references: [walletAddress])
   task Task @relation(fields: [taskId], references: [id])
   payoutJob PayoutJob?
 
   @@unique([walletAddress, taskId])
-  @@unique([userId, taskId])
   @@index([walletAddress])
-  @@index([userId])
   @@index([payoutStatus])
   @@index([payoutStatus, createdAt])
   @@index([payoutStatus, retryCount])
@@ -151,17 +138,13 @@ model Submission {
 model Dispute {
   id            String   @id @default(uuid())
   walletAddress String   // no FK to User — intentional for forensic/compliance retention if user is deleted
-  userId        String?
   reason        String
   status        String   @default("open") // "open" | "resolved"
   createdAt     DateTime @default(now())
   resolvedAt    DateTime?
 
-  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-
-  @@index([userId])
-  @@index([walletAddress])
   @@index([status, createdAt])
+  @@index([walletAddress])
   @@map("disputes")
 }
 
@@ -291,27 +274,4 @@ model BalanceLedger {
 
   @@index([campaignId, createdAt])
   @@map("balance_ledger")
-}
-
-enum UserLedgerType {
-  CREDIT_REWARD
-  WITHDRAWAL
-  REVERSAL
-}
-
-// Off-chain labeler balance ledger — mirrors BalanceLedger. Approved answers credit
-// pendingBalanceWei (CREDIT_REWARD); withdrawals debit it (WITHDRAWAL); failed/reversed
-// withdrawals re-credit (REVERSAL). Schema only in P0a — no writes yet.
-model UserBalanceLedger {
-  id           String         @id @default(uuid())
-  userId       String
-  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type         UserLedgerType
-  amountWei    BigInt
-  submissionId String?        // no FK — intentional: ledger entries survive submission lifecycle changes
-  note         String?
-  createdAt    DateTime       @default(now())
-
-  @@index([userId, createdAt])
-  @@map("user_balance_ledger")
 }

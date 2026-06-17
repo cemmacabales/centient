@@ -199,15 +199,14 @@ describe("POST /api/submit - guards", () => {
   it("returns 409 already_submitted for duplicate (wallet, taskId)", async () => {
     const wallet = makeWallet();
     const task = await createTask();
-    const user = await createUser({ walletAddress: wallet });
+    await prisma.user.create({ data: { walletAddress: wallet } });
     await prisma.submission.create({
       data: {
         walletAddress: wallet,
-        userId: user.id,
         taskId: task.id,
         choice: "A",
         reason: VALID_REASON,
-        payoutAmountWei: 0,
+        payoutAmountWei: 0n,
         payoutStatus: "skipped",
       },
     });
@@ -483,14 +482,13 @@ describe("POST /api/submit - response target cap", () => {
 
     const other1 = makeWallet();
     const other2 = makeWallet();
-    const user1 = await createUser({ walletAddress: other1 });
-    const user2 = await createUser({ walletAddress: other2 });
-    await createUser({ walletAddress: wallet });
-
+    await prisma.user.create({ data: { walletAddress: wallet } });
+    await prisma.user.create({ data: { walletAddress: other1 } });
+    await prisma.user.create({ data: { walletAddress: other2 } });
     await prisma.submission.createMany({
       data: [
-        { walletAddress: other1, userId: user1.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "sent" },
-        { walletAddress: other2, userId: user2.id, taskId: task.id, choice: "B", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "sent" },
+        { walletAddress: other1, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
+        { walletAddress: other2, taskId: task.id, choice: "B", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
       ],
     });
 
@@ -505,18 +503,10 @@ describe("POST /api/submit - response target cap", () => {
     const task = await createTask({ campaignId: campaign.id, responseTarget: null });
 
     const other = makeWallet();
-    const otherUser = await createUser({ walletAddress: other });
-    await createUser({ walletAddress: wallet });
+    await prisma.user.create({ data: { walletAddress: wallet } });
+    await prisma.user.create({ data: { walletAddress: other } });
     await prisma.submission.create({
-      data: {
-        walletAddress: other,
-        userId: otherUser.id,
-        taskId: task.id,
-        choice: "A",
-        reason: VALID_REASON,
-        payoutAmountWei: 1,
-        payoutStatus: "sent",
-      },
+      data: { walletAddress: other, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
     });
 
     const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id }));
@@ -531,14 +521,13 @@ describe("POST /api/submit - response target cap", () => {
 
     const other1 = makeWallet();
     const other2 = makeWallet();
-    const user1 = await createUser({ walletAddress: other1 });
-    const user2 = await createUser({ walletAddress: other2 });
-    await createUser({ walletAddress: wallet });
-
+    await prisma.user.create({ data: { walletAddress: wallet } });
+    await prisma.user.create({ data: { walletAddress: other1 } });
+    await prisma.user.create({ data: { walletAddress: other2 } });
     await prisma.submission.createMany({
       data: [
-        { walletAddress: other1, userId: user1.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "confirmed", isGoldCheck: false },
-        { walletAddress: other2, userId: user2.id, taskId: task.id, choice: "B", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "confirmed", isGoldCheck: false },
+        { walletAddress: other1, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "confirmed", isGoldCheck: false },
+        { walletAddress: other2, taskId: task.id, choice: "B", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "confirmed", isGoldCheck: false },
       ],
     });
 
@@ -553,18 +542,10 @@ describe("POST /api/submit - response target cap", () => {
     const task = await createTask({ campaignId: campaign.id, responseTarget: null });
 
     const other = makeWallet();
-    const otherUser = await createUser({ walletAddress: other });
-    await createUser({ walletAddress: wallet });
+    await prisma.user.create({ data: { walletAddress: wallet } });
+    await prisma.user.create({ data: { walletAddress: other } });
     await prisma.submission.create({
-      data: {
-        walletAddress: other,
-        userId: otherUser.id,
-        taskId: task.id,
-        choice: "A",
-        reason: VALID_REASON,
-        payoutAmountWei: 1,
-        payoutStatus: "sent",
-      },
+      data: { walletAddress: other, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
     });
 
     const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id }));
@@ -581,16 +562,15 @@ describe("POST /api/submit - response target cap", () => {
     const u1 = makeWallet();
     const u2 = makeWallet();
     const u3 = makeWallet();
-    const user1 = await createUser({ walletAddress: u1 });
-    const user2 = await createUser({ walletAddress: u2 });
-    const user3 = await createUser({ walletAddress: u3 });
-    await createUser({ walletAddress: wallet });
-
+    await prisma.user.create({ data: { walletAddress: wallet } });
+    await prisma.user.create({ data: { walletAddress: u1 } });
+    await prisma.user.create({ data: { walletAddress: u2 } });
+    await prisma.user.create({ data: { walletAddress: u3 } });
     await prisma.submission.createMany({
       data: [
-        { walletAddress: u1, userId: user1.id, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "sent" },
-        { walletAddress: u2, userId: user2.id, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "sent" },
-        { walletAddress: u3, userId: user3.id, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "sent" },
+        { walletAddress: u1, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
+        { walletAddress: u2, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
+        { walletAddress: u3, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent" },
       ],
     });
 

@@ -198,20 +198,18 @@ describe("getDashboardTotals", () => {
       data: [
         {
           walletAddress: user.walletAddress,
-          userId: user.id,
           taskId: task1.id,
           choice: "A",
           reason: "Good",
-          payoutAmountWei: 50000000000000000,
+          payoutAmountWei: 50000000000000000n,
           payoutStatus: "sent",
         },
         {
           walletAddress: user.walletAddress,
-          userId: user.id,
           taskId: task2.id,
           choice: "A",
           reason: "Good",
-          payoutAmountWei: 0,
+          payoutAmountWei: 0n,
           payoutStatus: "failed",
         },
       ],

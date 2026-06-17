@@ -76,7 +76,6 @@ export async function POST(req: NextRequest) {
       create: { walletAddress },
       update: {},
     });
-    const userId = user.id;
 
     if (isPermanentlyBanned(user.isBanned, user.bannedUntil, user.banCount)) {
       return errorResponse("banned", 403, { walletAddress, permanent: true });
@@ -128,7 +127,6 @@ export async function POST(req: NextRequest) {
           await tx.submission.create({
             data: {
               walletAddress,
-              userId,
               taskId,
               choice,
               reason: reason.trim(),
@@ -193,7 +191,6 @@ export async function POST(req: NextRequest) {
           await tx.submission.create({
             data: {
               walletAddress,
-              userId,
               taskId,
               choice,
               reason: reason.trim(),
@@ -265,7 +262,6 @@ export async function POST(req: NextRequest) {
         await prisma.submission.create({
           data: {
             walletAddress,
-            userId,
             taskId,
             choice,
             reason: reason.trim(),
@@ -291,7 +287,6 @@ export async function POST(req: NextRequest) {
     const submission = await prisma.submission.create({
       data: {
         walletAddress,
-        userId,
         taskId,
         choice,
         reason: reason.trim(),
@@ -302,8 +297,9 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Prepaid campaign balance: debit reward + platform fee before paying the labeler.
-    // Insufficient balance blocks the payout (402); the submission is recorded as skipped.
+    // Prepaid campaign balance: debit reward + platform fee before paying the
+    // labeler. Insufficient balance blocks the payout (402); the submission is
+    // recorded as skipped so the labeler isn't paid from an empty campaign.
     if (!task.isGold && task.campaignId) {
       try {
         await checkAndDebit(task.campaignId, amount, submission.id);
@@ -336,7 +332,9 @@ export async function POST(req: NextRequest) {
       Sentry.captureException(err, {
         extra: { context: "enqueue_payout_job", submissionId: submission.id },
       });
-      // Refund the campaign balance if the payout job can't be enqueued.
+      // The campaign balance was debited before enqueuing the payout above;
+      // reverse it if the job can't be enqueued so the operator isn't charged
+      // for a payout that will never run.
       if (!task.isGold && task.campaignId) {
         await creditBalance(
           task.campaignId,
@@ -358,7 +356,6 @@ export async function POST(req: NextRequest) {
       submissionId: submission.id,
     });
   } catch (err) {
-    console.error("[submit] UNHANDLED ERROR:", err);
     Sentry.captureException(err, {
       extra: { walletAddress, taskId },
     });
@@ -369,3 +366,5 @@ export async function POST(req: NextRequest) {
     });
   }
 }
+
+

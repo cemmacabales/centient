@@ -50,7 +50,7 @@ export async function checkWalletRateLimit(wallet: string): Promise<boolean> {
 
     await tx.$executeRaw`
       INSERT INTO rate_limit_buckets (key, expires_at)
-      VALUES (${wallet}, NOW() + make_interval(secs => ${WALLET_WINDOW_MS}::int / 1000.0))
+      VALUES (${wallet}, NOW() + make_interval(ms := ${WALLET_WINDOW_MS}))
     `;
 
     return false;
@@ -83,7 +83,7 @@ export async function recordLoginFailure(ip: string): Promise<void> {
   await ensureRateLimitBuckets(prisma);
   await prisma.$executeRaw`
     INSERT INTO rate_limit_buckets (key, expires_at)
-    VALUES (${key}, NOW() + make_interval(secs => ${LOGIN_WINDOW_MS}::int / 1000.0))
+    VALUES (${key}, NOW() + make_interval(ms := ${LOGIN_WINDOW_MS}))
   `;
 }
 
@@ -116,7 +116,7 @@ export async function checkExportRateLimit(adminUserId: string): Promise<boolean
 
     await tx.$executeRaw`
       INSERT INTO rate_limit_buckets (key, expires_at)
-      VALUES (${key}, NOW() + make_interval(secs => ${EXPORT_WINDOW_MS}::int / 1000.0))
+      VALUES (${key}, NOW() + make_interval(ms := ${EXPORT_WINDOW_MS}))
     `;
 
     return false;

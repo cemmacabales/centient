@@ -1,22 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getLabelerUser } from "@/lib/labeler-auth";
+import { getLabelerSession, requireLabelerSession } from "@/lib/labeler-auth";
 
 export async function POST(req: NextRequest) {
-  const user = await getLabelerUser(req);
-  if (!user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-
-  // Disputes are forensically keyed on walletAddress; an account must have a
-  // linked wallet to file one.
-  const wallet = user.walletAddress;
-  if (!wallet) {
-    return NextResponse.json(
-      { error: "wallet_required", message: "Link a wallet before filing a dispute." },
-      { status: 400 },
-    );
-  }
+  const walletSession = await getLabelerSession(req);
+  const unauthorized = requireLabelerSession(walletSession);
+  if (unauthorized) return unauthorized;
+  const wallet = walletSession!;
 
   let body: { reason?: string };
   try {
