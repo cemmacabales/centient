@@ -1,32 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { formatUnits } from "viem";
 import prisma from "@/lib/prisma";
-import { getLabelerUser } from "@/lib/labeler-auth";
+import { getLabelerSession, requireLabelerSession } from "@/lib/labeler-auth";
 import { REWARD_TOKEN_DECIMALS } from "@/lib/constants";
 
 const PAGE_SIZE = 20;
 
 export async function GET(req: NextRequest) {
-  const user = await getLabelerUser(req);
-  if (!user) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const walletSession = await getLabelerSession(req);
+  const unauthorized = requireLabelerSession(walletSession);
+  if (unauthorized) return unauthorized;
+  const wallet = walletSession!;
 
   const rawPage = req.nextUrl.searchParams.get("page");
   const page = Math.max(1, parseInt(rawPage ?? "1", 10) || 1);
-
-  // Submissions are still keyed on walletAddress (FK repointing is P0b/#254).
-  // An email-only account with no linked wallet simply has no submissions yet.
-  const wallet = user.walletAddress;
-  if (!wallet) {
-    return NextResponse.json({
-      submissions: [],
-      total: 0,
-      page,
-      pageSize: PAGE_SIZE,
-      totalPages: 0,
-    });
-  }
 
   const [total, rows] = await Promise.all([
     prisma.submission.count({ where: { walletAddress: wallet } }),
