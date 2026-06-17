@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { isMiniPay, connectMiniPay, signMessage } from "@/lib/minipay";
+import { connectMiniPay, signMessage } from "@/lib/minipay";
+import { connectMetaMask, switchToCelo } from "@/lib/metamask";
 import TaskCard from "@/components/TaskCard";
 import EarningsBadge from "@/components/EarningsBadge";
 import WalletChip from "@/components/WalletChip";
@@ -10,18 +11,19 @@ import SubmitButton from "@/components/SubmitButton";
 import LoadingScreen from "@/components/LoadingScreen";
 import AccountSheet from "@/components/AccountSheet";
 import InAppLanding from "@/components/InAppLanding";
-import OutsideMiniPayPage from "@/components/OutsideMiniPayPage";
+import LoginScreen from "@/components/LoginScreen";
 import Toast, { type ToastKind, type ToastMessage } from "@/components/Toast";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import DisputeForm from "@/components/DisputeForm";
 import { posthog } from "@/components/PostHogProvider";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { isSimulationMode } from "@/lib/simulation";
 
 const MIN_LOADING_MS = 1500;
 
 type Screen =
   | "checking"
-  | "not_minipay"
+  | "login"
   | "loading"
   | "onboarding"
   | "landing"
@@ -103,6 +105,7 @@ export default function Home() {
   const [cooldownRemaining, setCooldownRemaining] = useState<string>("");
   const [bannedReason, setBannedReason] = useState<string | null>(null);
   const [disputeOpen, setDisputeOpen] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
   const [demographics, setDemographics] = useState<{
     country: string | null;
     gender: string | null;
@@ -148,6 +151,46 @@ export default function Home() {
     return data;
   }, []);
 
+  const handleWalletConnect = useCallback(
+    async (type: "minipay" | "metamask" | "sim") => {
+      setConnectError(null);
+      setScreen("loading");
+      try {
+        let address: string;
+        if (type === "metamask") {
+          address = await connectMetaMask();
+          try {
+            await switchToCelo();
+          } catch (err) {
+            console.warn("switchToCelo failed", err);
+          }
+        } else {
+          // minipay and sim both use the MiniPay provider (sim installs isMiniPay)
+          address = await connectMiniPay();
+        }
+        setWallet(address);
+        try {
+          await signInLabeler(address);
+        } catch {
+          // session cookie may already exist; proceed
+        }
+        const userData = await fetchUserData(address);
+        if (userData?.onboardingCompleted) {
+          setScreen("landing");
+        } else {
+          setScreen("onboarding");
+        }
+      } catch (err) {
+        console.error("wallet connect failed", err);
+        setConnectError(
+          err instanceof Error ? err.message : "Connection failed",
+        );
+        setScreen("login");
+      }
+    },
+    [fetchUserData, signInLabeler],
+  );
+
   const fetchTask = useCallback(async (addr: string) => {
     const res = await fetch(`/api/task?wallet=${addr}`);
     const data = await res.json();
@@ -171,34 +214,40 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!isMiniPay()) {
-      setScreen("not_minipay");
-      return;
-    }
-    setScreen("loading");
-    const connect = connectMiniPay().then(async (addr) => {
-      setWallet(addr);
-      const userData = await fetchUserData(addr);
-      if (!userData?.onboardingCompleted) {
-        try {
-          await signInLabeler(addr);
-        } catch {
-          // session cookie may already exist; proceed
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/auth/me");
+        if (!res.ok) {
+          if (!cancelled) setScreen("login");
+          return;
         }
-      }
-      return userData;
-    });
-    const minDelay = new Promise<void>((resolve) => setTimeout(resolve, MIN_LOADING_MS));
-    Promise.all([connect, minDelay])
-      .then(([userData]) => {
-        if (userData?.onboardingCompleted) {
-          setScreen("landing");
+        const data = (await res.json()) as {
+          authenticated?: boolean;
+          wallet?: string;
+        };
+        if (data.authenticated && data.wallet) {
+          if (cancelled) return;
+          setWallet(data.wallet);
+          setScreen("loading");
+          const userData = await fetchUserData(data.wallet);
+          if (cancelled) return;
+          if (userData?.onboardingCompleted) {
+            setScreen("landing");
+          } else {
+            setScreen("onboarding");
+          }
         } else {
-          setScreen("onboarding");
+          if (!cancelled) setScreen("login");
         }
-      })
-      .catch(() => setScreen("wallet_error"));
-  }, [fetchUserData, signInLabeler]);
+      } catch {
+        if (!cancelled) setScreen("login");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchUserData]);
 
   useEffect(() => {
     if (!unbannedAt || screen !== "cooldown") return;
@@ -269,26 +318,6 @@ export default function Home() {
     }
   }, [wallet]);
 
-  const handleMetaMaskConnect = useCallback(async (addr: string) => {
-    setScreen("loading");
-    setWallet(addr);
-    
-    try {
-      await signInLabeler(addr);
-  
-      const userData = await fetchUserData(addr);
-  
-      if (userData?.onboardingCompleted) {
-        setScreen("landing");
-      } else {
-        setScreen("onboarding");
-      }
-    } catch (err) {
-      console.error("MetaMask auth flow failed:", err);
-      setScreen("wallet_error");
-    }
-  }, [fetchUserData, signInLabeler]);
-
   async function handleSubmit(choice: "A" | "B", reason: string) {
     if (!wallet || !task) return;
     setSubmitting(true);
@@ -353,8 +382,13 @@ export default function Home() {
 
   if (screen === "checking" || screen === "loading") {
     body = <LoadingScreen />;
-  } else if (screen === "not_minipay") {
-    body = <OutsideMiniPayPage onMetaMaskConnect={handleMetaMaskConnect} />;
+  } else if (screen === "login") {
+    body = (
+      <LoginScreen
+        onConnect={handleWalletConnect}
+        error={connectError}
+      />
+    );
   } else if (screen === "onboarding") {
     body = wallet ? (
       <OnboardingScreen onComplete={handleOnboardingComplete} />
@@ -451,7 +485,7 @@ export default function Home() {
               : `Paid ${task?.rewardDisplay ?? REWARD_AMOUNT} ${task?.rewardSymbol ?? REWARD_TOKEN_SYMBOL}`}
           </h2>
           <p className="text-center font-body text-sm text-on-surface-variant">
-            {lastTxHash ? (
+            {lastTxHash && !isSimulationMode() ? (
               <>
                 Your contribution helps improve AI.{" "}
                 <a
