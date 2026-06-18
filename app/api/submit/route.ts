@@ -77,9 +77,6 @@ export async function POST(req: NextRequest) {
       update: {},
     });
     const userId = user.id;
-    if (!userId) {
-      throw new Error(`User id missing for wallet ${walletAddress}`);
-    }
 
     if (isPermanentlyBanned(user.isBanned, user.bannedUntil, user.banCount)) {
       return errorResponse("banned", 403, { walletAddress, permanent: true });
@@ -131,7 +128,7 @@ export async function POST(req: NextRequest) {
           await tx.submission.create({
             data: {
               walletAddress,
-              userId,                     // ✅
+              userId,
               taskId,
               choice,
               reason: reason.trim(),
@@ -196,7 +193,7 @@ export async function POST(req: NextRequest) {
           await tx.submission.create({
             data: {
               walletAddress,
-              userId,                     // ✅
+              userId,
               taskId,
               choice,
               reason: reason.trim(),
@@ -268,7 +265,7 @@ export async function POST(req: NextRequest) {
         await prisma.submission.create({
           data: {
             walletAddress,
-            userId,                     // ✅
+            userId,
             taskId,
             choice,
             reason: reason.trim(),
@@ -294,7 +291,7 @@ export async function POST(req: NextRequest) {
     const submission = await prisma.submission.create({
       data: {
         walletAddress,
-        userId,                     // ✅
+        userId,
         taskId,
         choice,
         reason: reason.trim(),
