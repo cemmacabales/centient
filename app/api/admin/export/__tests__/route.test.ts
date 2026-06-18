@@ -25,7 +25,7 @@ import { GET } from "@/app/api/admin/export/route";
 import { getAdminSession } from "@/lib/admin-auth";
 import { checkExportRateLimit } from "@/lib/rate-limit";
 import { prisma, truncateAll } from "@/tests/helpers/db";
-import { createAdminUser, createCampaign, createTask, makeWallet } from "@/tests/helpers/factories";
+import { createAdminUser, createCampaign, createTask, createUser, makeWallet } from "@/tests/helpers/factories";
 import type { AdminJWTPayload } from "@/lib/admin-auth";
 
 function makeReq(params: Record<string, string> = {}): NextRequest {
@@ -51,7 +51,7 @@ async function createSentSubmission(
   overrides: { choice?: "A" | "B"; category?: string } = {},
 ) {
   const wallet = makeWallet();
-  await prisma.user.create({ data: { walletAddress: wallet } });
+  const user = await createUser({ walletAddress: wallet });
   const task = await createTask({
     campaignId,
     category: overrides.category ?? null,
@@ -59,6 +59,7 @@ async function createSentSubmission(
   const sub = await prisma.submission.create({
     data: {
       walletAddress: wallet,
+      userId: user.id,
       taskId: task.id,
       choice: overrides.choice ?? "A",
       reason: "Test reason that is long enough for validation",
