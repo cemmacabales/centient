@@ -109,16 +109,16 @@ beforeEach(async () => {
 });
 
 async function seedReasons(wallet: string, reasons: string[]) {
-  await createUser({ walletAddress: wallet });
+  const user = await createUser({ walletAddress: wallet });
   const tasks = await Promise.all(reasons.map(() => createTask()));
   await prisma.submission.createMany({
     data: tasks.map((t, i) => ({
       walletAddress: wallet,
-      userId: t.id,
+      userId: user.id,          // fixed: use user.id, not task.id
       taskId: t.id,
       choice: "A",
       reason: reasons[i],
-      payoutAmountWei: "0",
+      payoutAmountWei: 0,       // number (not string)
       payoutStatus: "skipped",
     })),
   });
@@ -253,4 +253,3 @@ describe("checkReasonRepetition - near duplicates (Jaccard)", () => {
     expect(result.isRepetitive).toBe(false);
   });
 });
-

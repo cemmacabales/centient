@@ -44,6 +44,7 @@ async function enqueuePendingPayout(opts: {
   const submission = await prisma.submission.create({
     data: {
       walletAddress: user.walletAddress,
+      userId: user.id,
       taskId: task.id,
       choice: "A",
       reason: VALID_REASON,
