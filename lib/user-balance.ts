@@ -59,10 +59,7 @@ export async function debitForWithdrawal(
     const currentBalance = locked[0]?.pendingBalanceWei ?? 0n;
 
     if (currentBalance < amountWei) {
-      if (locked.length === 0) {
-        throw new InsufficientUserBalanceError(currentBalance, amountWei);
-      }
-      return currentBalance;
+      throw new InsufficientUserBalanceError(currentBalance, amountWei);
     }
 
     await tx.user.update({

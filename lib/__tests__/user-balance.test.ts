@@ -80,20 +80,20 @@ describe("debitForWithdrawal", () => {
     expect(ledger[0].note).toBe("withdrawal");
   });
 
-  it("returns remaining balance without throwing when balance is too low", async () => {
+  it("throws InsufficientUserBalanceError when balance is too low", async () => {
     const user = await createUser({ pendingBalanceWei: 100000000000000000n });
 
     await expect(
       debitForWithdrawal(user.id, 500000000000000000n, "payout-002")
-    ).resolves.toBe(100000000000000000n);
+    ).rejects.toThrow(InsufficientUserBalanceError);
   });
 
-  it("returns 0n without throwing when user has no pending balance", async () => {
+  it("throws InsufficientUserBalanceError when user has no pending balance", async () => {
     const user = await createUser({ pendingBalanceWei: 0n });
 
     await expect(
       debitForWithdrawal(user.id, 100000000000000000n, "payout-003")
-    ).resolves.toBe(0n);
+    ).rejects.toThrow(InsufficientUserBalanceError);
   });
 
   it("succeeds when balance exactly equals withdrawal amount", async () => {
@@ -231,15 +231,22 @@ describe("concurrency safety", () => {
     expect(ledger).toHaveLength(concurrentCredits);
   });
 
-  it("concurrent withdrawals are serialized and balance never goes negative", async () => {
+  it("concurrent withdrawals are serialized and second one throws InsufficientUserBalanceError", async () => {
     const user = await createUser({ pendingBalanceWei: 1000000000000000000n });
 
     const withdrawalAmount = 600000000000000000n;
 
-    await Promise.all([
+    const results = await Promise.allSettled([
       debitForWithdrawal(user.id, withdrawalAmount, "payout-001"),
       debitForWithdrawal(user.id, withdrawalAmount, "payout-002"),
     ]);
+
+    const fulfilled = results.filter(r => r.status === "fulfilled");
+    const rejected = results.filter(r => r.status === "rejected");
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]).rejects.toThrow(InsufficientUserBalanceError);
 
     const ledger = await prisma.userBalanceLedger.findMany({ where: { userId: user.id } });
     const withdrawals = ledger.filter(l => l.type === "WITHDRAWAL");
