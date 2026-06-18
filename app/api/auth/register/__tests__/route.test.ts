@@ -59,11 +59,11 @@ describe("POST /api/auth/register", () => {
 
   it("registers a new user, hashes the password, and sends verification", async () => {
     const res = await POST(makeReq({ email: EMAIL, password: PASSWORD }));
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.user.email).toBe(EMAIL);
-    expect(json.user.isVerified).toBe(false);
-    expect(json.emailDelivered).toBe(true);
+    // Non-enumerating: response reveals nothing about the account itself.
+    expect(json.message).toMatch(/check your inbox/i);
+    expect(json.user).toBeUndefined();
 
     const user = await prisma.user.findUnique({ where: { email: EMAIL } });
     expect(user).not.toBeNull();
@@ -78,25 +78,30 @@ describe("POST /api/auth/register", () => {
 
   it("normalizes the email to lowercase", async () => {
     const res = await POST(makeReq({ email: "Labeler@Example.COM", password: PASSWORD }));
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(200);
     const user = await prisma.user.findUnique({ where: { email: EMAIL } });
     expect(user).not.toBeNull();
   });
 
-  it("returns 409 for a duplicate email", async () => {
-    await POST(makeReq({ email: EMAIL, password: PASSWORD }));
-    const res = await POST(makeReq({ email: EMAIL, password: PASSWORD }));
-    expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: "email_exists" });
+  it("returns a generic non-enumerating response for a duplicate email", async () => {
+    const first = await POST(makeReq({ email: EMAIL, password: PASSWORD }));
+    const second = await POST(makeReq({ email: EMAIL, password: PASSWORD }));
+
+    // The duplicate response is identical to the new-registration response so it
+    // cannot be used to probe which emails are registered.
+    expect(second.status).toBe(first.status);
+    expect(await second.json()).toEqual(await first.json());
+
+    // No second account was created and no verification email was re-sent.
+    expect(await prisma.user.count({ where: { email: EMAIL } })).toBe(1);
+    expect(sendVerificationEmail).toHaveBeenCalledTimes(1);
   });
 
-  it("still creates the user but reports emailDelivered false when sending fails", async () => {
+  it("returns the generic response even when the verification email fails to send", async () => {
     vi.mocked(sendVerificationEmail).mockRejectedValueOnce(new Error("smtp down"));
     const res = await POST(makeReq({ email: EMAIL, password: PASSWORD }));
-    expect(res.status).toBe(201);
-    const json = await res.json();
-    expect(json.emailDelivered).toBe(false);
-    expect(json.warning).toBeTruthy();
+    expect(res.status).toBe(200);
+    expect((await res.json()).message).toMatch(/check your inbox/i);
     const user = await prisma.user.findUnique({ where: { email: EMAIL } });
     expect(user).not.toBeNull();
   });

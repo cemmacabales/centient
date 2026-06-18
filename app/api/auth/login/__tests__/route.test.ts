@@ -113,6 +113,23 @@ describe("POST /api/auth/login", () => {
     expect(await res.json()).toEqual({ error: "email_not_verified" });
   });
 
+  it("keys the rate limiter on x-real-ip and ignores forgeable x-forwarded-for", async () => {
+    const req = new NextRequest("http://localhost/api/auth/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        // Attacker-supplied; must not be used for rate-limit keying.
+        "x-forwarded-for": "1.2.3.4",
+        // Set by the trusted proxy; this is what we must key on.
+        "x-real-ip": "10.0.0.9",
+      },
+      body: JSON.stringify({ email: "ghost@example.com", password: PASSWORD }),
+    });
+    await POST(req);
+    expect(isLoginRateLimited).toHaveBeenCalledWith("10.0.0.9");
+    expect(recordLoginFailure).toHaveBeenCalledWith("10.0.0.9");
+  });
+
   it("returns invalid_credentials for a wallet-only user with no password", async () => {
     await prisma.user.create({
       data: { email: EMAIL, walletAddress: "0xabc0000000000000000000000000000000000abc" },

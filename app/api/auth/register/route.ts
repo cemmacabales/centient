@@ -7,6 +7,14 @@ import { sendVerificationEmail } from "@/lib/email";
 
 const VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+// Identical response for both new and already-registered emails so the endpoint
+// cannot be used to enumerate which addresses have accounts. A returning user
+// who already has an account simply sees this and recognizes it; a genuinely new
+// user receives the verification email.
+const GENERIC_RESPONSE = {
+  message: "If that email is new, check your inbox for a verification link.",
+} as const;
+
 /**
  * POST /api/auth/register — labeler email/password registration.
  *
@@ -35,11 +43,13 @@ export async function POST(req: NextRequest) {
 
   const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } });
   if (existing) {
-    return NextResponse.json({ error: "email_exists" }, { status: 409 });
+    // Do not reveal that the account already exists — return the same response
+    // as a successful new registration.
+    return NextResponse.json(GENERIC_RESPONSE, { status: 200 });
   }
 
   const verificationToken = randomBytes(32).toString("hex");
-  const user = await prisma.user.create({
+  await prisma.user.create({
     data: {
       email: normalizedEmail,
       passwordHash: await bcrypt.hash(password, 12),
@@ -47,23 +57,17 @@ export async function POST(req: NextRequest) {
       verificationToken,
       verificationTokenExpires: new Date(Date.now() + VERIFICATION_TTL_MS),
     },
-    select: { id: true, email: true, isVerified: true },
+    select: { id: true },
   });
 
-  let emailDelivered = true;
-  let warning: string | undefined;
+  // Delivery failures are logged inside sendVerificationEmail; we intentionally
+  // return the same generic response regardless so the outcome cannot be used to
+  // distinguish a new email from an existing one.
   try {
-    const result = await sendVerificationEmail(normalizedEmail, verificationToken);
-    if (!result) {
-      emailDelivered = false;
-      warning =
-        "Account created but verification email could not be sent. Verify that RESEND_EMAIL_FROM is set to a verified domain in Resend.";
-    }
+    await sendVerificationEmail(normalizedEmail, verificationToken);
   } catch {
-    emailDelivered = false;
-    warning =
-      "Account created but verification email could not be sent. Verify that RESEND_EMAIL_FROM is set to a verified domain in Resend.";
+    // already logged in lib/email
   }
 
-  return NextResponse.json({ user, emailDelivered, warning }, { status: 201 });
+  return NextResponse.json(GENERIC_RESPONSE, { status: 200 });
 }

@@ -9,8 +9,10 @@ import {
 } from "@/lib/rate-limit";
 
 function clientIp(req: NextRequest): string {
-  const forwarded = req.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0].trim();
+  // Use x-real-ip, which Railway's proxy sets from its own terminator and the
+  // client cannot override. The first x-forwarded-for entry is client-supplied
+  // and therefore forgeable, so keying the rate limiter on it would let an
+  // attacker rotate the header to bypass credential-stuffing protection.
   return req.headers.get("x-real-ip") ?? "unknown";
 }
 

@@ -22,6 +22,10 @@ export async function GET(req: NextRequest) {
     // `wallet` is kept for backward compatibility with the wallet-first client.
     wallet: user.walletAddress,
     email: user.email,
+    // `isVerified` reflects email-confirmation status only. It is irrelevant for
+    // wallet-only accounts (email === null), which are authenticated by
+    // signature and will always report `isVerified: false`. Do not treat this as
+    // a general "is this account trusted?" signal.
     isVerified: user.isVerified,
   });
 }
