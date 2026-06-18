@@ -114,10 +114,11 @@ async function seedReasons(wallet: string, reasons: string[]) {
   await prisma.submission.createMany({
     data: tasks.map((t, i) => ({
       walletAddress: wallet,
+      userId: t.id,
       taskId: t.id,
       choice: "A",
       reason: reasons[i],
-      payoutAmountWei: 0n,
+      payoutAmountWei: "0",
       payoutStatus: "skipped",
     })),
   });
