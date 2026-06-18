@@ -246,7 +246,7 @@ describe("concurrency safety", () => {
 
     expect(fulfilled).toHaveLength(1);
     expect(rejected).toHaveLength(1);
-    expect(rejected[0]).rejects.toThrow(InsufficientUserBalanceError);
+    expect(rejected[0].reason).toBeInstanceOf(InsufficientUserBalanceError);
 
     const ledger = await prisma.userBalanceLedger.findMany({ where: { userId: user.id } });
     const withdrawals = ledger.filter(l => l.type === "WITHDRAWAL");
