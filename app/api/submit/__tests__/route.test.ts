@@ -562,7 +562,7 @@ describe("POST /api/submit - response target cap", () => {
         taskId: task.id,
         choice: "A",
         reason: VALID_REASON,
-        payoutAmountWei: 1n,
+        payoutAmountWei: 1,
         payoutStatus: "sent",
       },
     });
