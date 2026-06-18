@@ -3,13 +3,13 @@ import { getLabelerSession } from "@/lib/labeler-auth";
 import prisma from "@/lib/prisma";
 
 export async function DELETE(req: NextRequest) {
-  const userId = await getLabelerSession(req);
-  if (!userId) {
+  const wallet = await getLabelerSession(req);
+  if (!wallet) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   await prisma.user.updateMany({
-    where: { id: userId },
+    where: { walletAddress: wallet },
     data: {
       country: null,
       gender: null,

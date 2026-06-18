@@ -13,10 +13,6 @@ model User {
   walletAddress        String?  @unique
   email                String?  @unique
   passwordHash         String?
-  isVerified           Boolean  @default(false)
-  verificationToken    String?  @unique
-  verificationTokenExpires DateTime?
-  verifiedAt           DateTime?
   createdAt            DateTime @default(now())
   totalEarnedWei       BigInt   @default(0)
   pendingBalanceWei    BigInt   @default(0)
@@ -36,6 +32,7 @@ model User {
   lastSubmissionAt     DateTime?
 
   submissions   Submission[]
+  disputes      Dispute[]
   balanceLedger UserBalanceLedger[]
 
   @@map("users")
@@ -117,6 +114,7 @@ model Task {
 model Submission {
   id              String    @id @default(uuid())
   walletAddress   String
+  userId          String
   taskId          String
   choice          String
   reason          String
@@ -130,12 +128,14 @@ model Submission {
   lastRetriedAt   DateTime?
   createdAt       DateTime  @default(now())
 
-  user User @relation(fields: [walletAddress], references: [walletAddress])
+  user User @relation(fields: [userId], references: [id])
   task Task @relation(fields: [taskId], references: [id])
   payoutJob PayoutJob?
 
   @@unique([walletAddress, taskId])
+  @@unique([userId, taskId])
   @@index([walletAddress])
+  @@index([userId])
   @@index([payoutStatus])
   @@index([payoutStatus, createdAt])
   @@index([payoutStatus, retryCount])
@@ -147,13 +147,17 @@ model Submission {
 model Dispute {
   id            String   @id @default(uuid())
   walletAddress String   // no FK to User — intentional for forensic/compliance retention if user is deleted
+  userId        String
   reason        String
   status        String   @default("open") // "open" | "resolved"
   createdAt     DateTime @default(now())
   resolvedAt    DateTime?
 
+  user User @relation(fields: [userId], references: [id])
+
   @@index([status, createdAt])
   @@index([walletAddress])
+  @@index([userId])
   @@map("disputes")
 }
 
