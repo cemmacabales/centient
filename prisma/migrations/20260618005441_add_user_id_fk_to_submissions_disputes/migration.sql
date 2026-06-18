@@ -21,14 +21,18 @@ SET "userId" = u.id
 FROM "users" u
 WHERE u."walletAddress" = d."walletAddress";
 
-ALTER TABLE "submissions" ALTER COLUMN "userId" SET NOT NULL;
-ALTER TABLE "disputes"    ALTER COLUMN "userId" SET NOT NULL;
-
 ALTER TABLE "submissions" DROP CONSTRAINT IF EXISTS "submissions_walletAddress_fkey";
 
-ALTER TABLE "submissions" ADD CONSTRAINT "submissions_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-ALTER TABLE "disputes"    ADD CONSTRAINT "disputes_userId_fkey"    FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "submissions" ALTER COLUMN "userId" SET NOT NULL;
 
-CREATE INDEX "disputes_userId_idx" ON "disputes"("userId");
+ALTER TABLE "disputes" ALTER COLUMN "userId" DROP NOT NULL;
+
+ALTER TABLE "submissions" ADD CONSTRAINT "submissions_userId_fkey"
+  FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "disputes" ADD CONSTRAINT "disputes_userId_fkey"
+  FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
 CREATE INDEX "submissions_userId_idx" ON "submissions"("userId");
+CREATE INDEX "disputes_userId_idx" ON "disputes"("userId");
 CREATE UNIQUE INDEX "submissions_userId_taskId_key" ON "submissions"("userId", "taskId");
