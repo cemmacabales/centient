@@ -154,7 +154,7 @@ export async function seedSubmissions(
       taskId: t.id,
       choice,
       reason,
-      payoutAmountWei: 0n,
+      payoutAmountWei: "0",
       payoutStatus: "skipped",
     })),
   });
