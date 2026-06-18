@@ -9,6 +9,7 @@ vi.mock("viem", async (importOriginal) => {
 import { POST } from "@/app/api/auth/verify/route";
 import { recoverMessageAddress } from "viem";
 import { prisma, truncateAll } from "@/tests/helpers/db";
+import { verifyLabelerJWT } from "@/lib/labeler-auth";
 
 const TEST_WALLET = "0xdead00000000000000000000000000000000beef";
 const TEST_NONCE = "testnonce123";
@@ -205,5 +206,52 @@ describe("POST /api/auth/verify", () => {
       })
     );
     expect(res.status).toBe(200);
+  });
+
+  it("auto-creates a user for the wallet and keys the session on userId", async () => {
+    await prisma.walletNonce.create({
+      data: {
+        walletAddress: TEST_WALLET,
+        nonce: TEST_NONCE,
+        expiresAt: new Date(Date.now() + 300_000),
+      },
+    });
+    vi.mocked(recoverMessageAddress).mockResolvedValue(TEST_WALLET);
+    const res = await POST(
+      makeReq({
+        address: TEST_WALLET,
+        signature: "0x" + "ab".repeat(65),
+        nonce: TEST_NONCE,
+      })
+    );
+    expect(res.status).toBe(200);
+
+    const user = await prisma.user.findUnique({
+      where: { walletAddress: TEST_WALLET },
+    });
+    expect(user).not.toBeNull();
+
+    const token = res.headers
+      .getSetCookie()
+      .find((c) => c.startsWith("labeler_session="))!
+      .split(";")[0]
+      .split("=")[1];
+    const payload = await verifyLabelerJWT(token);
+    expect(payload?.sub).toBe(user!.id);
+  });
+
+  it("reuses the existing user on repeat wallet sign-in", async () => {
+    vi.mocked(recoverMessageAddress).mockResolvedValue(TEST_WALLET);
+    for (const nonce of ["n1", "n2"]) {
+      await prisma.walletNonce.create({
+        data: { walletAddress: TEST_WALLET, nonce, expiresAt: new Date(Date.now() + 300_000) },
+      });
+      const res = await POST(
+        makeReq({ address: TEST_WALLET, signature: "0x" + "ab".repeat(65), nonce })
+      );
+      expect(res.status).toBe(200);
+    }
+    const users = await prisma.user.findMany({ where: { walletAddress: TEST_WALLET } });
+    expect(users).toHaveLength(1);
   });
 });
