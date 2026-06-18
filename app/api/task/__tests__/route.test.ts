@@ -99,7 +99,7 @@ describe("GET /api/task - task assignment", () => {
         taskId: task.id,
         choice: "A",
         reason: VALID_REASON,
-        payoutAmountWei: 1n,
+        payoutAmountWei: 1,
         payoutStatus: "sent",
       },
     });
@@ -134,7 +134,7 @@ describe("GET /api/task - response target filtering", () => {
     });
 
     await prisma.submission.create({
-      data: { walletAddress: u3, userId: user3.id, taskId: targetNotMet.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent", isGoldCheck: false },
+      data: { walletAddress: u3, userId: user3.id, taskId: targetNotMet.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "sent", isGoldCheck: false },
     });
 
     const wallet = makeWallet();
@@ -155,7 +155,7 @@ describe("GET /api/task - response target filtering", () => {
     const u1 = makeWallet();
     const user1 = await createUser({ walletAddress: u1 });
     await prisma.submission.create({
-      data: { walletAddress: u1, userId: user1.id, taskId: targetMet.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1n, payoutStatus: "sent", isGoldCheck: false },
+      data: { walletAddress: u1, userId: user1.id, taskId: targetMet.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "sent", isGoldCheck: false },
     });
 
     const wallet = makeWallet();
