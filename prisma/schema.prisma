@@ -13,6 +13,10 @@ model User {
   walletAddress        String?  @unique
   email                String?  @unique
   passwordHash         String?
+  isVerified           Boolean  @default(false)
+  verificationToken    String?  @unique
+  verificationTokenExpires DateTime?
+  verifiedAt           DateTime?
   createdAt            DateTime @default(now())
   totalEarnedWei       BigInt   @default(0)
   pendingBalanceWei    BigInt   @default(0)
