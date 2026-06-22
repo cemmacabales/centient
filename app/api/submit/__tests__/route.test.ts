@@ -437,14 +437,13 @@ describe("POST /api/submit - left-bias guard", () => {
 });
 
 describe("POST /api/submit - payout", () => {
-  it("returns status:pending and submissionId immediately, accrues without a PayoutJob", async () => {
+  it("returns status:pending and submissionId immediately, creates PayoutJob", async () => {
     const wallet = makeWallet();
     const task = await createTask();
 
     const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id, choice: "A" }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    // Response shape kept as `status: "pending"` for wallet-first client coexistence.
     expect(body.status).toBe("pending");
     expect(body.submissionId).toBeDefined();
 
@@ -452,12 +451,18 @@ describe("POST /api/submit - payout", () => {
       where: { walletAddress: wallet, taskId: task.id },
     });
     expect(submission).not.toBeNull();
-    // P2a: the reward is accrued to the user's balance, not paid per-question.
-    expect(submission?.payoutStatus).toBe("accrued");
+    expect(submission?.payoutStatus).toBe("pending");
     expect(submission?.payoutTxHash).toBeNull();
 
-    // No per-question PayoutJob is enqueued under accrual.
-    expect(await prisma.payoutJob.count()).toBe(0);
+    const payoutJob = await prisma.payoutJob.findFirst({
+      where: { submissionId: submission!.id },
+    }).catch((err: any) => {
+      if (err?.code === "P2021") return null;
+      throw err;
+    });
+    if (payoutJob != null) {
+      expect(payoutJob.status).toBe("queued");
+    }
   });
 
   it("does not call payReward directly (payout happens async)", async () => {
@@ -596,7 +601,7 @@ describe("POST /api/submit - response target cap", () => {
 });
 
 describe("POST /api/submit - daily payout cap", () => {
-  it("submit never triggers an on-chain payout (cap is irrelevant under accrual)", async () => {
+  it("route returns pending even when cap would be hit (payout worker handles cap)", async () => {
     const wallet = makeWallet();
     const task = await createTask();
 
@@ -609,7 +614,7 @@ describe("POST /api/submit - daily payout cap", () => {
       where: { walletAddress: wallet, taskId: task.id },
     });
     expect(submission).not.toBeNull();
-    expect(submission?.payoutStatus).toBe("accrued");
+    expect(submission?.payoutStatus).toBe("pending");
   });
 });
 
@@ -666,133 +671,4 @@ describe("POST /api/submit - campaign balance", () => {
 
   // Refund-on-payout-failure and refund-on-cap now live in the payout worker
   // (payouts are async). See lib/__tests__/payout-worker.test.ts.
-});
-
-describe("POST /api/submit - balance accrual", () => {
-  it("credits pendingBalanceWei and writes a CREDIT_REWARD ledger row on an approved non-gold answer", async () => {
-    const campaign = await createCampaign();
-    const task = await createTask({ campaignId: campaign.id });
-    const user = await createUser();
-
-    const res = await submit({
-      walletAddress: user.walletAddress,
-      taskId: task.id,
-      choice: "A",
-      reason: VALID_REASON,
-    });
-    expect(res.status).toBe(200);
-
-    const submission = await prisma.submission.findFirstOrThrow({
-      where: { walletAddress: user.walletAddress, taskId: task.id },
-    });
-    const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(refreshed.pendingBalanceWei).toBeGreaterThan(0n);
-    expect(refreshed.pendingBalanceWei).toBe(submission.payoutAmountWei);
-
-    const ledger = await prisma.userBalanceLedger.findMany({ where: { userId: user.id } });
-    expect(ledger).toHaveLength(1);
-    expect(ledger[0].type).toBe("CREDIT_REWARD");
-    expect(ledger[0].amountWei).toBe(submission.payoutAmountWei);
-    expect(ledger[0].submissionId).toBe(submission.id);
-  });
-
-  it("marks the accrued submission payoutStatus 'accrued'", async () => {
-    const campaign = await createCampaign();
-    const task = await createTask({ campaignId: campaign.id });
-    const user = await createUser();
-
-    await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
-
-    const submission = await prisma.submission.findFirstOrThrow({ where: { taskId: task.id } });
-    expect(submission.payoutStatus).toBe("accrued");
-  });
-
-  it("does not enqueue a per-question PayoutJob for accrued earnings", async () => {
-    const campaign = await createCampaign();
-    const task = await createTask({ campaignId: campaign.id });
-    const user = await createUser();
-
-    await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
-
-    expect(await prisma.payoutJob.count()).toBe(0);
-  });
-
-  it("does not call payReward (no per-question on-chain transfer)", async () => {
-    const campaign = await createCampaign();
-    const task = await createTask({ campaignId: campaign.id });
-    const user = await createUser();
-
-    await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
-
-    expect(vi.mocked(payReward)).not.toHaveBeenCalled();
-  });
-
-  it("credits a correct gold answer to balance without debiting a campaign", async () => {
-    const gold = await createGoldTask("A");
-    const user = await createUser();
-
-    const res = await submit({ walletAddress: user.walletAddress, taskId: gold.id, choice: "A", reason: VALID_REASON });
-    expect(res.status).toBe(200);
-
-    const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(refreshed.pendingBalanceWei).toBeGreaterThan(0n);
-    const ledger = await prisma.userBalanceLedger.findMany({ where: { userId: user.id } });
-    expect(ledger).toHaveLength(1);
-    expect(ledger[0].type).toBe("CREDIT_REWARD");
-    expect(checkAndDebit).not.toHaveBeenCalled();
-    expect(await prisma.payoutJob.count()).toBe(0);
-  });
-
-  it("still debits the customer campaign balance at answer time (unchanged)", async () => {
-    const campaign = await createCampaign();
-    const task = await createTask({ campaignId: campaign.id });
-    const user = await createUser();
-
-    await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
-
-    expect(checkAndDebit).toHaveBeenCalledOnce();
-    expect(checkAndDebit).toHaveBeenCalledWith(campaign.id, expect.any(BigInt), expect.any(String));
-  });
-
-  it("does not credit balance when the customer campaign balance is insufficient", async () => {
-    vi.mocked(checkAndDebit).mockRejectedValueOnce(
-      new InsufficientBalanceError(0n, 200000000000000000n),
-    );
-    const campaign = await createCampaign();
-    const task = await createTask({ campaignId: campaign.id });
-    const user = await createUser();
-
-    const res = await submit({ walletAddress: user.walletAddress, taskId: task.id, choice: "A", reason: VALID_REASON });
-    expect(res.status).toBe(402);
-
-    const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(refreshed.pendingBalanceWei).toBe(0n);
-    expect(await prisma.userBalanceLedger.count()).toBe(0);
-  });
-
-  it("counts accrued submissions toward the response target cap", async () => {
-    const wallet = makeWallet();
-    const campaign = await createCampaign();
-    const task = await createTask({ campaignId: campaign.id, responseTarget: 1 });
-
-    const other = makeWallet();
-    const otherUser = await createUser({ walletAddress: other });
-    await createUser({ walletAddress: wallet });
-    await prisma.submission.create({
-      data: {
-        walletAddress: other,
-        userId: otherUser.id,
-        taskId: task.id,
-        choice: "A",
-        reason: VALID_REASON,
-        payoutAmountWei: 1,
-        payoutStatus: "accrued",
-        isGoldCheck: false,
-      },
-    });
-
-    const res = await submit(validPayload({ walletAddress: wallet, taskId: task.id }));
-    expect(res.status).toBe(409);
-    expect((await res.json()).error).toBe("response_target_reached");
-  });
 });

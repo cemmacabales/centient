@@ -6,7 +6,10 @@ import {
   debitForWithdrawal,
   refundReversal,
   getUserPendingBalance,
+  enqueueWithdrawal,
   InsufficientUserBalanceError,
+  BelowMinimumWithdrawalError,
+  WithdrawalInFlightError,
 } from "@/lib/user-balance";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -208,6 +211,109 @@ describe("ledger completeness", () => {
     expect(ledger).toHaveLength(3);
     expect(ledger.every(l => l.amountWei > 0n)).toBe(true);
     expect(ledger.map(l => l.type).sort()).toEqual(["CREDIT_REWARD", "REVERSAL", "WITHDRAWAL"]);
+  });
+});
+
+describe("enqueueWithdrawal", () => {
+  const DEST = "0x000000000000000000000000000000000000dEaD";
+  const MIN = 1000000000000000000n; // 1 token
+
+  it("creates a single WITHDRAWAL PayoutJob for the full balance and zeroes it", async () => {
+    const user = await createUser({ pendingBalanceWei: 5000000000000000000n });
+
+    const result = await enqueueWithdrawal(user.id, DEST, MIN);
+
+    expect(result.amountWei).toBe(5000000000000000000n);
+    expect(result.newBalanceWei).toBe(0n);
+    expect(result.payoutJobId).toBeTruthy();
+
+    const jobs = await prisma.payoutJob.findMany({ where: { userId: user.id } });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].type).toBe("WITHDRAWAL");
+    expect(jobs[0].status).toBe("queued");
+    expect(jobs[0].submissionId).toBeNull();
+    expect(jobs[0].amountWei).toBe(5000000000000000000n);
+    expect(jobs[0].destinationAddress).toBe(DEST);
+
+    const updated = await prisma.user.findUnique({ where: { id: user.id } });
+    expect(updated?.pendingBalanceWei).toBe(0n);
+
+    const ledger = await prisma.userBalanceLedger.findMany({ where: { userId: user.id } });
+    const withdrawals = ledger.filter((l) => l.type === "WITHDRAWAL");
+    expect(withdrawals).toHaveLength(1);
+    expect(withdrawals[0].amountWei).toBe(5000000000000000000n);
+  });
+
+  it("throws BelowMinimumWithdrawalError and changes nothing when balance < minimum", async () => {
+    const user = await createUser({ pendingBalanceWei: 500000000000000000n });
+
+    await expect(enqueueWithdrawal(user.id, DEST, MIN)).rejects.toThrow(
+      BelowMinimumWithdrawalError,
+    );
+
+    const updated = await prisma.user.findUnique({ where: { id: user.id } });
+    expect(updated?.pendingBalanceWei).toBe(500000000000000000n);
+    expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(0);
+    expect(await prisma.userBalanceLedger.count({ where: { userId: user.id } })).toBe(0);
+  });
+
+  it("throws BelowMinimumWithdrawalError when the balance is zero", async () => {
+    const user = await createUser({ pendingBalanceWei: 0n });
+
+    await expect(enqueueWithdrawal(user.id, DEST, MIN)).rejects.toThrow(
+      BelowMinimumWithdrawalError,
+    );
+  });
+
+  it("succeeds when balance exactly equals the minimum", async () => {
+    const user = await createUser({ pendingBalanceWei: MIN });
+
+    const result = await enqueueWithdrawal(user.id, DEST, MIN);
+
+    expect(result.amountWei).toBe(MIN);
+    expect(result.newBalanceWei).toBe(0n);
+  });
+
+  it("throws WithdrawalInFlightError when a withdrawal is already queued", async () => {
+    const user = await createUser({ pendingBalanceWei: 5000000000000000000n });
+    await enqueueWithdrawal(user.id, DEST, MIN);
+
+    // Top the balance back up so the second request passes the minimum check and
+    // is only stopped by the one-in-flight guard.
+    await createUserBalance(user.id, 5000000000000000000n);
+
+    await expect(enqueueWithdrawal(user.id, DEST, MIN)).rejects.toThrow(
+      WithdrawalInFlightError,
+    );
+
+    // The rolled-back second attempt must not touch the balance.
+    const updated = await prisma.user.findUnique({ where: { id: user.id } });
+    expect(updated?.pendingBalanceWei).toBe(5000000000000000000n);
+    expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(1);
+  });
+
+  it("serializes concurrent withdrawals into exactly one job (no double-spend)", async () => {
+    const user = await createUser({ pendingBalanceWei: 5000000000000000000n });
+
+    const results = await Promise.allSettled([
+      enqueueWithdrawal(user.id, DEST, MIN),
+      enqueueWithdrawal(user.id, DEST, MIN),
+    ]);
+
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
+
+    const jobs = await prisma.payoutJob.findMany({ where: { userId: user.id } });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].amountWei).toBe(5000000000000000000n);
+
+    const updated = await prisma.user.findUnique({ where: { id: user.id } });
+    expect(updated?.pendingBalanceWei).toBe(0n);
+
+    const withdrawals = await prisma.userBalanceLedger.findMany({
+      where: { userId: user.id, type: "WITHDRAWAL" },
+    });
+    expect(withdrawals).toHaveLength(1);
   });
 });
 

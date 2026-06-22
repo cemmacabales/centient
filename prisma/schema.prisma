@@ -38,6 +38,7 @@ model User {
   submissions   Submission[]
   disputes      Dispute[]
   balanceLedger UserBalanceLedger[]
+  payoutJobs    PayoutJob[]
 
   @@map("users")
 }
@@ -210,22 +211,36 @@ enum PayoutJobStatus {
   failed
 }
 
-model PayoutJob {
-  id                String         @id @default(uuid())
-  submissionId      String         @unique
-  status            PayoutJobStatus @default(queued)
-  workerHeartbeatAt DateTime?
-  startedAt         DateTime?
-  completedAt       DateTime?
-  lastError         String?
-  retryCount        Int            @default(0)
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+enum PayoutJobType {
+  SUBMISSION_PAYOUT
+  WITHDRAWAL
+}
 
-  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+model PayoutJob {
+  id                 String          @id @default(uuid())
+  type               PayoutJobType   @default(SUBMISSION_PAYOUT)
+  // Per-submission payouts reference a submission; lump-sum withdrawals do not.
+  submissionId       String?         @unique
+  // Lump-sum withdrawals reference the user + snapshot the amount and destination
+  // at request time. Null for per-submission payouts (derived from the submission).
+  userId             String?
+  amountWei          BigInt?
+  destinationAddress String?
+  status             PayoutJobStatus @default(queued)
+  workerHeartbeatAt  DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  lastError          String?
+  retryCount         Int             @default(0)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  submission Submission? @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  user       User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([status, createdAt])
   @@index([status, workerHeartbeatAt])
+  @@index([userId])
   @@map("payout_jobs")
 }
 
