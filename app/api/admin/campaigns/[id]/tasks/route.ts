@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/admin-auth";
-import { REWARDED_STATUSES } from "@/lib/constants";
 
 export async function GET(
   _req: Request,
@@ -35,7 +34,7 @@ export async function GET(
       majorityAnswer: true,
       agreementScore: true,
       resolvedAt: true,
-      _count: { select: { submissions: { where: { payoutStatus: { in: [...REWARDED_STATUSES] }, isGoldCheck: false } } } },
+      _count: { select: { submissions: { where: { payoutStatus: { in: ["sent", "confirmed"] }, isGoldCheck: false } } } },
     },
   });
 

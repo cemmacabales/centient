@@ -12,21 +12,17 @@ import LoadingScreen from "@/components/LoadingScreen";
 import AccountSheet from "@/components/AccountSheet";
 import InAppLanding from "@/components/InAppLanding";
 import LoginScreen from "@/components/LoginScreen";
-import AccountAuthScreen from "@/components/AccountAuthScreen";
 import Toast, { type ToastKind, type ToastMessage } from "@/components/Toast";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import DisputeForm from "@/components/DisputeForm";
 import { posthog } from "@/components/PostHogProvider";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
-import { isSimulationMode } from "@/lib/simulation";
 
 const MIN_LOADING_MS = 1500;
 
 type Screen =
   | "checking"
   | "login"
-  | "account_auth"
-  | "account_home"
   | "loading"
   | "onboarding"
   | "landing"
@@ -56,6 +52,16 @@ interface SubmitResponseBody {
   error?: string;
   status?: "pending";
   submissionId?: string;
+}
+
+interface BalanceLedgerEntry {
+  id: string;
+  type: string;
+  amount: string;
+  amountWei: string;
+  submissionId: string | null;
+  note: string | null;
+  createdAt: string;
 }
 
 const EXPLORER_URL = process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://celoscan.io";
@@ -96,11 +102,10 @@ export default function Home() {
   const [screen, setScreen] = useState<Screen>("checking");
   const [wallet, setWallet] = useState<string | null>(null);
   const [task, setTask] = useState<TaskData | null>(null);
-  const [earnings, setEarnings] = useState("0");
+  const [balance, setBalance] = useState("0");
+  const [recentCredits, setRecentCredits] = useState<BalanceLedgerEntry[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const [lastTxHash, setLastTxHash] = useState<string | null>(null);
   const [submissionCount, setSubmissionCount] = useState(0);
-  const [pendingSubmissionId, setPendingSubmissionId] = useState<string | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [onboardingCompleted, setOnboardingCompleted] = useState(false);
@@ -138,7 +143,6 @@ export default function Home() {
   const fetchUserData = useCallback(async (addr: string) => {
     const res = await fetch(`/api/me?wallet=${addr}`);
     const data = await res.json();
-    setEarnings(data.totalEarned ?? "0");
     setSubmissionCount(data.submissionCount ?? 0);
     setOnboardingCompleted(data.onboardingCompleted ?? false);
     setUnbannedAt(data.unbannedAt ?? null);
@@ -152,6 +156,21 @@ export default function Home() {
       setScreen("cooldown");
     }
     return data;
+  }, []);
+
+  // Accumulate-then-withdraw (P2b): the labeler's earnings now accrue into a
+  // session-scoped off-chain balance instead of a per-question on-chain payout.
+  // Best-effort: a transient balance fetch failure must not block the flow.
+  const fetchBalance = useCallback(async () => {
+    try {
+      const res = await fetch("/api/me/balance");
+      if (!res.ok) return;
+      const data = await res.json();
+      setBalance(data.pendingBalance ?? "0");
+      setRecentCredits(Array.isArray(data.ledger) ? data.ledger : []);
+    } catch {
+      // ignore — balance display is non-critical
+    }
   }, []);
 
   const handleWalletConnect = useCallback(
@@ -178,6 +197,7 @@ export default function Home() {
           // session cookie may already exist; proceed
         }
         const userData = await fetchUserData(address);
+        await fetchBalance();
         if (userData?.onboardingCompleted) {
           setScreen("landing");
         } else {
@@ -191,7 +211,7 @@ export default function Home() {
         setScreen("login");
       }
     },
-    [fetchUserData, signInLabeler],
+    [fetchUserData, fetchBalance, signInLabeler],
   );
 
   const fetchTask = useCallback(async (addr: string) => {
@@ -234,15 +254,13 @@ export default function Home() {
           setWallet(data.wallet);
           setScreen("loading");
           const userData = await fetchUserData(data.wallet);
+          await fetchBalance();
           if (cancelled) return;
           if (userData?.onboardingCompleted) {
             setScreen("landing");
           } else {
             setScreen("onboarding");
           }
-        } else if (data.authenticated) {
-          // Signed-in email account with no linked wallet yet.
-          if (!cancelled) setScreen("account_home");
         } else {
           if (!cancelled) setScreen("login");
         }
@@ -253,27 +271,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [fetchUserData]);
-
-  const handleAccountLoggedIn = useCallback(async () => {
-    setScreen("loading");
-    try {
-      const res = await fetch("/api/auth/me");
-      const data = res.ok ? await res.json() : null;
-      if (data?.authenticated && data.wallet) {
-        // Legacy account auto-linked to a wallet: resume the full wallet flow.
-        setWallet(data.wallet);
-        const userData = await fetchUserData(data.wallet);
-        setScreen(userData?.onboardingCompleted ? "landing" : "onboarding");
-        return;
-      }
-      // Wallet-less account: identity is established, but answering still
-      // requires a wallet in this phase. Land on the account home.
-      setScreen("account_home");
-    } catch {
-      setScreen("account_home");
-    }
-  }, [fetchUserData]);
+  }, [fetchUserData, fetchBalance]);
 
   useEffect(() => {
     if (!unbannedAt || screen !== "cooldown") return;
@@ -295,40 +293,6 @@ export default function Home() {
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
   }, [unbannedAt, screen]);
-
-  useEffect(() => {
-    if (!pendingSubmissionId || screen !== "success" || !wallet) return;
-
-    const MAX_POLL_ATTEMPTS = 40; // 40 × 3s ≈ 2 minutes before giving up
-    let attempts = 0;
-
-    const pollInterval = setInterval(async () => {
-      attempts += 1;
-      if (attempts > MAX_POLL_ATTEMPTS) {
-        clearInterval(pollInterval);
-        showToast("Payment is taking longer than expected — check back later.", "info");
-        return;
-      }
-      try {
-        const res = await fetch(`/api/submissions/${pendingSubmissionId}?walletAddress=${encodeURIComponent(wallet ?? "")}`);
-        if (!res.ok) return;
-        const data = await res.json();
-
-        if (data.payoutStatus === "sent" && data.payoutTxHash) {
-          setLastTxHash(data.payoutTxHash);
-          setPendingSubmissionId(null);
-          clearInterval(pollInterval);
-          await fetchUserData(wallet ?? "");
-        } else if (data.payoutStatus === "failed" || data.payoutStatus === "skipped") {
-          setPendingSubmissionId(null);
-          clearInterval(pollInterval);
-        }
-      } catch {
-      }
-    }, 3000);
-
-    return () => clearInterval(pollInterval);
-  }, [pendingSubmissionId, screen, wallet, fetchUserData, showToast]);
 
   const handleStartEarning = useCallback(() => {
     if (!wallet) return;
@@ -386,10 +350,10 @@ export default function Home() {
       }
 
       if (data.status === "pending") {
-        if (data.submissionId) {
-          setPendingSubmissionId(data.submissionId);
-        }
+        // The approved answer is credited to the off-chain balance (P2a). Refresh
+        // the balance + recent credits instead of polling a per-question payout.
         await fetchUserData(wallet);
+        await fetchBalance();
         setScreen("success");
         if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
           posthog.capture("submission_success", { wallet, taskId: task.id, status: data.status });
@@ -412,40 +376,8 @@ export default function Home() {
     body = (
       <LoginScreen
         onConnect={handleWalletConnect}
-        onEmailLogin={() => setScreen("account_auth")}
         error={connectError}
       />
-    );
-  } else if (screen === "account_auth") {
-    body = (
-      <AccountAuthScreen
-        onBack={() => setScreen("login")}
-        onLoggedIn={handleAccountLoggedIn}
-      />
-    );
-  } else if (screen === "account_home") {
-    body = (
-      <div className="relative flex min-h-screen flex-col items-center justify-center bg-surface px-6 text-center">
-        <div className="flex w-full max-w-sm flex-col items-center gap-6">
-          <div className="flex h-24 w-24 items-center justify-center rounded-full bg-secondary-container">
-            <span
-              className="material-symbols-outlined text-[48px] text-on-secondary-container"
-              aria-hidden="true"
-            >
-              account_circle
-            </span>
-          </div>
-          <div className="flex flex-col items-center gap-2">
-            <h2 className="text-2xl font-headline font-bold text-on-surface">
-              You&apos;re signed in
-            </h2>
-            <p className="font-body text-sm text-on-surface-variant">
-              Connect a wallet to start earning and to withdraw your balance.
-            </p>
-          </div>
-          <SubmitButton label="Connect a wallet" onClick={() => setScreen("login")} />
-        </div>
-      </div>
     );
   } else if (screen === "onboarding") {
     body = wallet ? (
@@ -456,7 +388,7 @@ export default function Home() {
   } else if (screen === "landing") {
     body = (
       <InAppLanding
-        totalEarned={earnings}
+        totalEarned={balance}
         submissionCount={submissionCount}
         onStart={handleStartEarning}
       />
@@ -493,7 +425,7 @@ export default function Home() {
               aria-label="View account"
               className="rounded-full transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
             >
-              <EarningsBadge totalEarned={earnings} />
+              <EarningsBadge totalEarned={balance} />
             </button>
           </div>
         </header>
@@ -504,7 +436,7 @@ export default function Home() {
           open={accountOpen}
           onClose={() => setAccountOpen(false)}
           walletAddress={wallet ?? ""}
-          totalEarned={earnings}
+          totalEarned={balance}
           rewardSymbol={REWARD_TOKEN_SYMBOL}
           submissionCount={submissionCount}
           explorerUrl={EXPLORER_URL}
@@ -536,43 +468,44 @@ export default function Home() {
             </span>
           </div>
           <h2 className="text-2xl font-headline font-bold text-on-surface">
-            {lastTxHash
-              ? `Paid ${task?.rewardDisplay ?? REWARD_AMOUNT} ${task?.rewardSymbol ?? REWARD_TOKEN_SYMBOL}`
-              : pendingSubmissionId
-              ? "Payment on its way"
-              : `Paid ${task?.rewardDisplay ?? REWARD_AMOUNT} ${task?.rewardSymbol ?? REWARD_TOKEN_SYMBOL}`}
+            {`+${task?.rewardDisplay ?? REWARD_AMOUNT} ${task?.rewardSymbol ?? REWARD_TOKEN_SYMBOL} added`}
           </h2>
           <p className="text-center font-body text-sm text-on-surface-variant">
-            {lastTxHash && !isSimulationMode() ? (
-              <>
-                Your contribution helps improve AI.{" "}
-                <a
-                  href={`${EXPLORER_URL}/tx/${lastTxHash}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary underline"
-                >
-                  View on explorer
-                </a>
-              </>
-            ) : pendingSubmissionId ? (
-              "Your payment is being processed. This may take a few seconds."
-            ) : (
-              "Your contribution helps improve AI."
-            )}
+            Your contribution helps improve AI. Earnings build up in your balance —
+            connect a wallet to withdraw anytime.
           </p>
           <div className="w-full rounded-3xl bg-surface-container-lowest p-6 shadow-[0_8px_32px_rgba(25,28,30,0.06)]">
             <div className="flex flex-col items-center">
               <span className="mb-2 font-label text-xs font-bold uppercase tracking-widest text-outline">
-                Updated Balance
+                Your balance
               </span>
               <div className="flex items-baseline gap-1">
                 <span className="font-headline text-4xl font-extrabold tracking-tighter text-on-surface">
-                  {earnings}
+                  {balance}
                 </span>
                 <span className="font-headline text-xl font-bold text-secondary">{REWARD_TOKEN_SYMBOL}</span>
               </div>
             </div>
+            {recentCredits.length > 0 && (
+              <div className="mt-5 border-t border-outline-variant/40 pt-4">
+                <span className="font-label text-[10px] font-bold uppercase tracking-[0.18em] text-outline">
+                  Recent credits
+                </span>
+                <ul className="mt-2 flex flex-col gap-1.5">
+                  {recentCredits.slice(0, 3).map((entry) => (
+                    <li
+                      key={entry.id}
+                      className="flex items-center justify-between font-body text-sm text-on-surface-variant"
+                    >
+                      <span>{new Date(entry.createdAt).toLocaleDateString()}</span>
+                      <span className="font-semibold text-primary">
+                        +{entry.amount} {REWARD_TOKEN_SYMBOL}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
           <SubmitButton label="Next Task" onClick={() => wallet && fetchTask(wallet)} />
         </div>
@@ -696,7 +629,7 @@ export default function Home() {
             <span className="font-label text-xs uppercase tracking-[0.18em] text-outline">
               Total earned
             </span>
-            <EarningsBadge totalEarned={earnings} />
+            <EarningsBadge totalEarned={balance} />
           </div>
         </div>
       </div>
