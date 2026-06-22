@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Manrope, Inter } from "next/font/google";
 import { ErrorBoundary } from "@sentry/nextjs";
 import PostHogProvider from "@/components/PostHogProvider";
+import MiniPaySimulator from "@/components/MiniPaySimulator";
 import { Toaster } from "sonner";
 import "./globals.css";
 
@@ -82,6 +83,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body className="bg-surface text-on-surface antialiased">
+        <MiniPaySimulator />
         <ErrorBoundary fallback={<ErrorFallback />}>
           <PostHogProvider>
             {children}

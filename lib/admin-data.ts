@@ -293,7 +293,7 @@ export async function getWalletRows(): Promise<WalletRow[]> {
     orderBy: { createdAt: "desc" },
   });
   return users.map((u) => ({
-    walletAddress: u.walletAddress,
+    walletAddress: u.walletAddress ?? "", // legacy rows are always wallet-keyed; null only once wallet-less accounts land (later phase)
     createdAt: u.createdAt,
     submissionCount: u.submissionCount,
     totalEarned: formatUnits(u.totalEarnedWei, REWARD_TOKEN_DECIMALS),
@@ -333,7 +333,7 @@ export async function getUserRows(): Promise<UserRow[]> {
     orderBy: { createdAt: "desc" },
   });
   return users.map((u) => ({
-    walletAddress: u.walletAddress,
+    walletAddress: u.walletAddress ?? "", // legacy rows are always wallet-keyed; null only once wallet-less accounts land (later phase)
     createdAt: u.createdAt,
     submissionCount: u.submissionCount,
     totalEarned: formatUnits(u.totalEarnedWei, REWARD_TOKEN_DECIMALS),
@@ -402,19 +402,20 @@ export interface UserProfile {
 }
 
 export async function getUserProfile(walletAddress: string): Promise<UserProfile | null> {
+  const wallet = walletAddress.toLowerCase();
   const u = await prisma.user.findUnique({
-    where: { walletAddress: walletAddress.toLowerCase() },
+    where: { walletAddress: wallet },
   });
   if (!u) return null;
 
   const [payoutGrouped, recent] = await Promise.all([
     prisma.submission.groupBy({
       by: ["payoutStatus"],
-      where: { walletAddress: u.walletAddress },
+      where: { walletAddress: wallet },
       _count: { _all: true },
     }),
     prisma.submission.findMany({
-      where: { walletAddress: u.walletAddress },
+      where: { walletAddress: wallet },
       orderBy: { createdAt: "desc" },
       take: 50,
       include: { task: { select: { prompt: true } } },
@@ -431,7 +432,7 @@ export async function getUserProfile(walletAddress: string): Promise<UserProfile
   );
 
   return {
-    walletAddress: u.walletAddress,
+    walletAddress: wallet,
     createdAt: u.createdAt,
     totalEarned: formatUnits(u.totalEarnedWei, REWARD_TOKEN_DECIMALS),
     totalEarnedWei: u.totalEarnedWei,
@@ -754,9 +755,9 @@ export async function getOpsDashboardData(): Promise<OpsDashboardData> {
 
 async function getSubmissionVolume24h(): Promise<TimeSeriesPoint[]> {
   const rows = await prisma.$queryRaw<{ hour: Date; count: bigint }[]>`
-    SELECT date_trunc('hour', created_at) as hour, COUNT(*)::int as count
+    SELECT date_trunc('hour', "createdAt") as hour, COUNT(*)::int as count
     FROM submissions
-    WHERE created_at >= NOW() - INTERVAL '24 hours'
+    WHERE "createdAt" >= NOW() - INTERVAL '24 hours'
     GROUP BY hour
     ORDER BY hour ASC
   `;
@@ -768,9 +769,9 @@ async function getSubmissionVolume24h(): Promise<TimeSeriesPoint[]> {
 
 async function getPayoutVolume24h(): Promise<PayoutTimeSeriesPoint[]> {
   const rows = await prisma.$queryRaw<{ hour: Date; amount_wei: bigint }[]>`
-    SELECT date_trunc('hour', created_at) as hour, COALESCE(SUM(payout_amount_wei), 0) as amount_wei
+    SELECT date_trunc('hour', "createdAt") as hour, COALESCE(SUM("payoutAmountWei"), 0) as amount_wei
     FROM submissions
-    WHERE created_at >= NOW() - INTERVAL '24 hours' AND payout_status = 'sent'
+    WHERE "createdAt" >= NOW() - INTERVAL '24 hours' AND "payoutStatus" = 'sent'
     GROUP BY hour
     ORDER BY hour ASC
   `;
@@ -825,7 +826,7 @@ async function getCategoryDistribution(): Promise<CategoryDistribution[]> {
   const rows = await prisma.$queryRaw<{ category: string | null; count: bigint }[]>`
     SELECT t.category, COUNT(*)::int as count
     FROM submissions s
-    JOIN tasks t ON s.task_id = t.id
+    JOIN tasks t ON s."taskId" = t.id
     GROUP BY t.category
     ORDER BY count DESC
   `;

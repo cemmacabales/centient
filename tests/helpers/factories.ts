@@ -75,18 +75,34 @@ export async function createUser(
     lastBanAt: Date | null;
     goldCorrect: number;
     goldAttempted: number;
+    pendingBalanceWei: bigint;
   }> = {},
 ) {
-  return db.user.create({
+  const walletAddress = overrides.walletAddress ?? makeWallet();
+  const user = await db.user.create({
     data: {
-      walletAddress: overrides.walletAddress ?? makeWallet(),
+      walletAddress,
       isBanned: overrides.isBanned ?? false,
       banCount: overrides.banCount ?? (overrides.isBanned ? 1 : 0),
       bannedUntil: overrides.bannedUntil ?? null,
       lastBanAt: overrides.lastBanAt ?? null,
       goldCorrect: overrides.goldCorrect ?? 0,
       goldAttempted: overrides.goldAttempted ?? 0,
+      pendingBalanceWei: overrides.pendingBalanceWei ?? 0n,
     },
+  });
+  // walletAddress is nullable on User as of P0a; factory always creates wallet-keyed
+  // users, so narrow it back to a non-null string for ergonomic call sites.
+  return { ...user, walletAddress: user.walletAddress as string };
+}
+
+export async function createUserBalance(
+  userId: string,
+  pendingBalanceWei: bigint = 0n,
+) {
+  return db.user.update({
+    where: { id: userId },
+    data: { pendingBalanceWei },
   });
 }
 
@@ -136,21 +152,31 @@ export async function seedSubmissions(
   choice: "A" | "B",
   reason = VALID_REASON,
 ) {
+  // Ensure user exists
   await db.user.upsert({
     where: { walletAddress: wallet },
     create: { walletAddress: wallet },
     update: {},
   });
+  // Fetch the user to get the surrogate id
+  const user = await db.user.findUnique({
+    where: { walletAddress: wallet },
+    select: { id: true },
+  });
+  if (!user) {
+    throw new Error(`User not found for wallet ${wallet}`);
+  }
   const tasks = await Promise.all(
     Array.from({ length: count }).map(() => createTask()),
   );
   await db.submission.createMany({
     data: tasks.map((t) => ({
       walletAddress: wallet,
+      userId: user.id,
       taskId: t.id,
       choice,
       reason,
-      payoutAmountWei: 0n,
+      payoutAmountWei: 0,
       payoutStatus: "skipped",
     })),
   });

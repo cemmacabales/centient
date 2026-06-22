@@ -594,7 +594,7 @@ export default function CampaignDetail({
 
       <div className="flex items-baseline gap-4">
         {renaming ? (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <input
               type="text"
               value={renameValue}
@@ -605,7 +605,7 @@ export default function CampaignDetail({
                 if (e.key === "Enter") handleSaveRename();
                 if (e.key === "Escape") handleCancelRename();
               }}
-              className="rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1.5 font-headline text-2xl font-extrabold text-on-surface focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              className="mr-2 rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1.5 font-headline text-2xl font-extrabold text-on-surface focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
             />
             <button
               type="button"

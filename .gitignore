@@ -10,3 +10,4 @@ AGENTS.md
 ngrok.exe
 *.exe
 ROADMAP.md
+.venv-pdf/
