@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { formatUnits } from "viem";
 import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
-import { getLabelerSession } from "@/lib/labeler-auth";
+import { getLabelerUser } from "@/lib/labeler-auth";
 
 export async function GET(
   req: NextRequest,
@@ -14,10 +14,15 @@ export async function GET(
     return NextResponse.json({ error: "invalid_id" }, { status: 400 });
   }
 
-  // Primary authorization: the labeler session (JWT sub = wallet) is the authority
+  // Primary authorization: the labeler session (JWT sub = userId) is the authority
   // for who may read this submission. Without it, anyone who knows a submission id
   // plus a (public, on-chain) wallet address could read its payout status (IDOR).
-  const sessionWallet = await getLabelerSession(req);
+  // Submissions remain wallet-keyed, so resolve the session to its linked wallet.
+  const sessionUser = await getLabelerUser(req);
+  if (!sessionUser) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  const sessionWallet = sessionUser.walletAddress;
   if (!sessionWallet) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }

@@ -93,7 +93,7 @@ export async function createUser(
   });
   // walletAddress is nullable on User as of P0a; factory always creates wallet-keyed
   // users, so narrow it back to a non-null string for ergonomic call sites.
-  return { ...user, walletAddress };
+  return { ...user, walletAddress: user.walletAddress as string };
 }
 
 export async function createUserBalance(
@@ -152,21 +152,31 @@ export async function seedSubmissions(
   choice: "A" | "B",
   reason = VALID_REASON,
 ) {
+  // Ensure user exists
   await db.user.upsert({
     where: { walletAddress: wallet },
     create: { walletAddress: wallet },
     update: {},
   });
+  // Fetch the user to get the surrogate id
+  const user = await db.user.findUnique({
+    where: { walletAddress: wallet },
+    select: { id: true },
+  });
+  if (!user) {
+    throw new Error(`User not found for wallet ${wallet}`);
+  }
   const tasks = await Promise.all(
     Array.from({ length: count }).map(() => createTask()),
   );
   await db.submission.createMany({
     data: tasks.map((t) => ({
       walletAddress: wallet,
+      userId: user.id,
       taskId: t.id,
       choice,
       reason,
-      payoutAmountWei: 0n,
+      payoutAmountWei: 0,
       payoutStatus: "skipped",
     })),
   });
