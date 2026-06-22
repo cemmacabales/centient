@@ -10,11 +10,10 @@ import WalletLoginButton, { type WalletLoginType } from "./WalletLoginButton";
 
 interface LoginScreenProps {
   onConnect: (type: WalletLoginType) => void;
-  onEmailLogin: () => void;
   error: string | null;
 }
 
-export default function LoginScreen({ onConnect, onEmailLogin, error }: LoginScreenProps) {
+export default function LoginScreen({ onConnect, error }: LoginScreenProps) {
   const [ready, setReady] = useState(false);
   const [miniPay, setMiniPay] = useState(false);
   const [metaMask, setMetaMask] = useState(false);
@@ -114,25 +113,6 @@ export default function LoginScreen({ onConnect, onEmailLogin, error }: LoginScr
             {!ready && (
               <div className="h-14 w-full max-w-xs animate-pulse rounded-full bg-surface-container-high" />
             )}
-
-            <div className="my-1 flex w-full items-center gap-3">
-              <span className="h-px flex-1 bg-outline-variant/60" />
-              <span className="font-label text-xs font-semibold uppercase tracking-widest text-outline">
-                or
-              </span>
-              <span className="h-px flex-1 bg-outline-variant/60" />
-            </div>
-
-            <button
-              type="button"
-              onClick={onEmailLogin}
-              className="flex h-14 w-full items-center justify-center gap-2 rounded-full border border-outline-variant bg-surface-container-lowest font-label text-base font-bold text-on-surface transition duration-200 hover:bg-surface-container-low active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-            >
-              <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
-                mail
-              </span>
-              Continue with email
-            </button>
           </div>
         </section>
 

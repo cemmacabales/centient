@@ -6,6 +6,7 @@ import {
   GOLD_TASK_RATIO,
   REWARD_TOKEN_DECIMALS,
   REWARD_TOKEN_SYMBOL,
+  REWARDED_STATUSES,
 } from "@/lib/constants";
 import { resolveRewardWei } from "@/lib/payout";
 import {
@@ -73,7 +74,7 @@ export async function GET(req: NextRequest) {
       },
       include: {
         campaign: { select: { defaultResponseTarget: true, rewardWei: true } },
-        _count: { select: { submissions: { where: { payoutStatus: { in: ["sent", "confirmed"] }, isGoldCheck: false } } } },
+        _count: { select: { submissions: { where: { payoutStatus: { in: [...REWARDED_STATUSES] }, isGoldCheck: false } } } },
       },
       orderBy: { createdAt: "asc" },
     });
@@ -106,7 +107,7 @@ export async function GET(req: NextRequest) {
             SELECT COUNT(*)
             FROM "submissions" s
             WHERE s."taskId" = t.id
-               AND s."payoutStatus" IN ('sent', 'confirmed')
+               AND s."payoutStatus" IN ('sent', 'confirmed', 'accrued')
               AND s."isGoldCheck" = false
           ) < COALESCE(t."responseTarget", c."defaultResponseTarget")
         )
@@ -119,7 +120,7 @@ export async function GET(req: NextRequest) {
         where: { id: available[0].id },
         include: {
           campaign: { select: { defaultResponseTarget: true, rewardWei: true } },
-          _count: { select: { submissions: { where: { payoutStatus: { in: ["sent", "confirmed"] }, isGoldCheck: false } } } },
+          _count: { select: { submissions: { where: { payoutStatus: { in: [...REWARDED_STATUSES] }, isGoldCheck: false } } } },
         },
       });
     }

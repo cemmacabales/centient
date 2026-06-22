@@ -12,7 +12,6 @@ import LoadingScreen from "@/components/LoadingScreen";
 import AccountSheet from "@/components/AccountSheet";
 import InAppLanding from "@/components/InAppLanding";
 import LoginScreen from "@/components/LoginScreen";
-import AccountAuthScreen from "@/components/AccountAuthScreen";
 import Toast, { type ToastKind, type ToastMessage } from "@/components/Toast";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import DisputeForm from "@/components/DisputeForm";
@@ -25,8 +24,6 @@ const MIN_LOADING_MS = 1500;
 type Screen =
   | "checking"
   | "login"
-  | "account_auth"
-  | "account_home"
   | "loading"
   | "onboarding"
   | "landing"
@@ -240,9 +237,6 @@ export default function Home() {
           } else {
             setScreen("onboarding");
           }
-        } else if (data.authenticated) {
-          // Signed-in email account with no linked wallet yet.
-          if (!cancelled) setScreen("account_home");
         } else {
           if (!cancelled) setScreen("login");
         }
@@ -253,26 +247,6 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [fetchUserData]);
-
-  const handleAccountLoggedIn = useCallback(async () => {
-    setScreen("loading");
-    try {
-      const res = await fetch("/api/auth/me");
-      const data = res.ok ? await res.json() : null;
-      if (data?.authenticated && data.wallet) {
-        // Legacy account auto-linked to a wallet: resume the full wallet flow.
-        setWallet(data.wallet);
-        const userData = await fetchUserData(data.wallet);
-        setScreen(userData?.onboardingCompleted ? "landing" : "onboarding");
-        return;
-      }
-      // Wallet-less account: identity is established, but answering still
-      // requires a wallet in this phase. Land on the account home.
-      setScreen("account_home");
-    } catch {
-      setScreen("account_home");
-    }
   }, [fetchUserData]);
 
   useEffect(() => {
@@ -412,40 +386,8 @@ export default function Home() {
     body = (
       <LoginScreen
         onConnect={handleWalletConnect}
-        onEmailLogin={() => setScreen("account_auth")}
         error={connectError}
       />
-    );
-  } else if (screen === "account_auth") {
-    body = (
-      <AccountAuthScreen
-        onBack={() => setScreen("login")}
-        onLoggedIn={handleAccountLoggedIn}
-      />
-    );
-  } else if (screen === "account_home") {
-    body = (
-      <div className="relative flex min-h-screen flex-col items-center justify-center bg-surface px-6 text-center">
-        <div className="flex w-full max-w-sm flex-col items-center gap-6">
-          <div className="flex h-24 w-24 items-center justify-center rounded-full bg-secondary-container">
-            <span
-              className="material-symbols-outlined text-[48px] text-on-secondary-container"
-              aria-hidden="true"
-            >
-              account_circle
-            </span>
-          </div>
-          <div className="flex flex-col items-center gap-2">
-            <h2 className="text-2xl font-headline font-bold text-on-surface">
-              You&apos;re signed in
-            </h2>
-            <p className="font-body text-sm text-on-surface-variant">
-              Connect a wallet to start earning and to withdraw your balance.
-            </p>
-          </div>
-          <SubmitButton label="Connect a wallet" onClick={() => setScreen("login")} />
-        </div>
-      </div>
     );
   } else if (screen === "onboarding") {
     body = wallet ? (
