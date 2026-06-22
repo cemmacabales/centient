@@ -960,7 +960,7 @@ export default function CampaignDetail({
                     </td>
                     <td className="px-6 py-3">
                       {isEditing ? (
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-2">
                           <button
                             onClick={handleSaveEdit}
                             className="flex h-8 w-8 items-center justify-center rounded-lg text-primary transition-colors hover:bg-primary-container"
@@ -977,7 +977,7 @@ export default function CampaignDetail({
                           </button>
                         </div>
                       ) : (
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-2">
                           <button
                             onClick={() => handleEdit(t)}
                             className="flex h-8 w-8 items-center justify-center rounded-lg text-on-surface-variant transition-colors hover:bg-surface-container-high"
@@ -1044,7 +1044,7 @@ export default function CampaignDetail({
                     <span className="text-on-surface-variant/40 font-body text-sm">—</span>
                   </td>
                   <td className="px-6 py-3">
-                    <div className="flex items-center justify-end gap-1">
+                    <div className="flex items-center justify-end gap-2">
                       <button
                         onClick={handleSaveNew}
                         className="flex h-8 w-8 items-center justify-center rounded-lg text-primary transition-colors hover:bg-primary-container"
