@@ -269,4 +269,31 @@ describe("GET /api/task - response target filtering", () => {
     expect(body.task.id).toBe(targetNotMet.id);
     expect(body.task.submissionsRemaining).toBe(2);
   });
+
+  it("counts accrued submissions against target", async () => {
+    mockRandom(0.5);
+    const campaign = await createCampaign();
+    const targetMet = await createTask({ campaignId: campaign.id, responseTarget: 2, prompt: "Prompt A?" });
+    const targetNotMet = await createTask({ campaignId: campaign.id, responseTarget: 2, prompt: "Prompt B?" });
+
+    const u1 = makeWallet();
+    const u2 = makeWallet();
+    const user1 = await createUser({ walletAddress: u1 });
+    const user2 = await createUser({ walletAddress: u2 });
+
+    await prisma.submission.createMany({
+      data: [
+        { walletAddress: u1, userId: user1.id, taskId: targetMet.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "accrued", isGoldCheck: false },
+        { walletAddress: u2, userId: user2.id, taskId: targetMet.id, choice: "B", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "accrued", isGoldCheck: false },
+      ],
+    });
+
+    const wallet = makeWallet();
+    const res = await getTask(wallet);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.task).not.toBeNull();
+    expect(body.task.id).toBe(targetNotMet.id);
+    expect(body.task.submissionsRemaining).toBe(2);
+  });
 });
