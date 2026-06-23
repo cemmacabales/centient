@@ -31,9 +31,12 @@ function VerifyEmailContent() {
                     </svg>
                 </div>
                 <h1 className="mt-4 text-2xl font-bold text-on-surface">Email Verified!</h1>
-                <p className="mt-2 text-on-surface-variant">Your account is now active. You can log in to your dashboard.</p>
-                <a href="/admin/login" className="mt-6 rounded-full bg-primary px-6 py-2.5 font-label text-sm font-semibold text-on-primary">
-                    Go to Login
+                <p className="mt-2 text-on-surface-variant">Your account is now active. Sign in to start earning.</p>
+                <a href="/" className="mt-6 rounded-full bg-primary px-6 py-2.5 font-label text-sm font-semibold text-on-primary">
+                    Go to sign in
+                </a>
+                <a href="/admin/login" className="mt-3 font-label text-sm font-semibold text-on-surface-variant underline-offset-2 hover:underline">
+                    Admin? Sign in here
                 </a>
             </div>
         );
