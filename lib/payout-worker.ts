@@ -5,6 +5,7 @@ import { payReward, PayoutCapError } from "./payout";
 import { creditBalance, totalDebitWei } from "./campaign-balance";
 import { checkAndAlert } from "./celo-balance";
 import { computeIAA } from "./quality";
+import { REWARDED_STATUSES } from "./constants";
 
 const STALE_PROCESSING_MS = 60_000;
 // Refresh the in-flight job's heartbeat well within STALE_PROCESSING_MS so a slow
@@ -18,7 +19,10 @@ const BATCH_SIZE = 20;
 let shouldStop = false;
 let currentJobId: string | null = null;
 
-async function claimNextJob(): Promise<{ id: string; submissionId: string } | null> {
+// Only per-submission payouts are drained here. Lump-sum WITHDRAWAL jobs have a
+// null submissionId and are handled by their own worker path (P3c); claiming one
+// here would fall into the "submission not found" branch and wrongly mark it failed.
+export async function claimNextJob(): Promise<{ id: string; submissionId: string } | null> {
   const staleBefore = new Date(Date.now() - STALE_PROCESSING_MS);
 
   const claimed = await prisma.$queryRaw<{ id: string; submissionId: string }[]>`
@@ -29,8 +33,9 @@ async function claimNextJob(): Promise<{ id: string; submissionId: string } | nu
         "updatedAt" = NOW()
     WHERE "id" = (
       SELECT "id" FROM "payout_jobs"
-      WHERE "status" = 'queued'
-         OR ("status" = 'processing' AND "workerHeartbeatAt" < ${staleBefore})
+      WHERE "type" = 'SUBMISSION_PAYOUT'
+        AND ("status" = 'queued'
+             OR ("status" = 'processing' AND "workerHeartbeatAt" < ${staleBefore}))
       ORDER BY "createdAt" ASC
       LIMIT 1
       FOR UPDATE SKIP LOCKED
@@ -155,7 +160,7 @@ export async function processJob(jobId: string, submissionId: string): Promise<v
         where: {
           taskId: submission.taskId,
           isGoldCheck: false,
-          payoutStatus: { in: ["sent", "confirmed"] },
+          payoutStatus: { in: [...REWARDED_STATUSES] },
         },
       });
       if (paidCount >= task.responseTarget) {

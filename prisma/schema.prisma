@@ -13,6 +13,10 @@ model User {
   walletAddress        String?  @unique
   email                String?  @unique
   passwordHash         String?
+  isVerified           Boolean  @default(false)
+  verificationToken    String?  @unique
+  verificationTokenExpires DateTime?
+  verifiedAt           DateTime?
   createdAt            DateTime @default(now())
   totalEarnedWei       BigInt   @default(0)
   pendingBalanceWei    BigInt   @default(0)
@@ -32,8 +36,9 @@ model User {
   lastSubmissionAt     DateTime?
 
   submissions   Submission[]
+  disputes      Dispute[]
   balanceLedger UserBalanceLedger[]
-  withdrawals   UserWithdrawal[]
+  payoutJobs    PayoutJob[]
 
   @@map("users")
 }
@@ -114,6 +119,7 @@ model Task {
 model Submission {
   id              String    @id @default(uuid())
   walletAddress   String
+  userId          String
   taskId          String
   choice          String
   reason          String
@@ -127,12 +133,14 @@ model Submission {
   lastRetriedAt   DateTime?
   createdAt       DateTime  @default(now())
 
-  user User @relation(fields: [walletAddress], references: [walletAddress])
+  user User @relation(fields: [userId], references: [id])
   task Task @relation(fields: [taskId], references: [id])
   payoutJob PayoutJob?
 
   @@unique([walletAddress, taskId])
+  @@unique([userId, taskId])
   @@index([walletAddress])
+  @@index([userId])
   @@index([payoutStatus])
   @@index([payoutStatus, createdAt])
   @@index([payoutStatus, retryCount])
@@ -144,13 +152,17 @@ model Submission {
 model Dispute {
   id            String   @id @default(uuid())
   walletAddress String   // no FK to User — intentional for forensic/compliance retention if user is deleted
+  userId        String?
   reason        String
   status        String   @default("open") // "open" | "resolved"
   createdAt     DateTime @default(now())
   resolvedAt    DateTime?
 
-  @@index([status, createdAt])
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
   @@index([walletAddress])
+  @@index([status, createdAt])
   @@map("disputes")
 }
 
@@ -199,22 +211,36 @@ enum PayoutJobStatus {
   failed
 }
 
-model PayoutJob {
-  id                String         @id @default(uuid())
-  submissionId      String         @unique
-  status            PayoutJobStatus @default(queued)
-  workerHeartbeatAt DateTime?
-  startedAt         DateTime?
-  completedAt       DateTime?
-  lastError         String?
-  retryCount        Int            @default(0)
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
+enum PayoutJobType {
+  SUBMISSION_PAYOUT
+  WITHDRAWAL
+}
 
-  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+model PayoutJob {
+  id                 String          @id @default(uuid())
+  type               PayoutJobType   @default(SUBMISSION_PAYOUT)
+  // Per-submission payouts reference a submission; lump-sum withdrawals do not.
+  submissionId       String?         @unique
+  // Lump-sum withdrawals reference the user + snapshot the amount and destination
+  // at request time. Null for per-submission payouts (derived from the submission).
+  userId             String?
+  amountWei          BigInt?
+  destinationAddress String?
+  status             PayoutJobStatus @default(queued)
+  workerHeartbeatAt  DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  lastError          String?
+  retryCount         Int             @default(0)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  submission Submission? @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  user       User?       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([status, createdAt])
   @@index([status, workerHeartbeatAt])
+  @@index([userId])
   @@map("payout_jobs")
 }
 
@@ -288,14 +314,6 @@ enum UserLedgerType {
   REVERSAL
 }
 
-enum WithdrawalStatus {
-  queued
-  processing
-  sent
-  confirmed
-  failed
-}
-
 // Off-chain labeler balance ledger — mirrors BalanceLedger. Approved answers credit
 // pendingBalanceWei (CREDIT_REWARD); withdrawals debit it (WITHDRAWAL); failed/reversed
 // withdrawals re-credit (REVERSAL). Schema only in P0a — no writes yet.
@@ -311,25 +329,4 @@ model UserBalanceLedger {
 
   @@index([userId, createdAt])
   @@map("user_balance_ledger")
-}
-
-model UserWithdrawal {
-  id               String          @id @default(uuid())
-  userId           String
-  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  amountWei        BigInt
-  status           WithdrawalStatus @default(queued)
-  txHash           String?
-  workerHeartbeatAt DateTime?
-  startedAt        DateTime?
-  completedAt      DateTime?
-  lastError        String?
-  retryCount       Int             @default(0)
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-
-  @@index([userId, createdAt])
-  @@index([status, createdAt])
-  @@index([status, workerHeartbeatAt])
-  @@map("user_withdrawals")
 }

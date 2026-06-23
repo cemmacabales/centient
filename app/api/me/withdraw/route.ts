@@ -1,117 +1,76 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getLabelerSession, requireLabelerSession } from "@/lib/labeler-auth";
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { MIN_WITHDRAWAL_THRESHOLD_WEI } from "@/lib/constants";
+import { getLabelerSession, requireLabelerSession } from "@/lib/labeler-auth";
+import { getMinWithdrawalWei, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import {
+  enqueueWithdrawal,
+  BelowMinimumWithdrawalError,
+  WithdrawalInFlightError,
+} from "@/lib/user-balance";
 
-async function getAdvisoryLock(userId: string): Promise<void> {
-  await prisma.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
-}
-
-export async function GET(req: NextRequest) {
-  const walletSession = await getLabelerSession(req);
-  const unauthorized = requireLabelerSession(walletSession);
-  if (unauthorized) return unauthorized;
-  const wallet = walletSession!.toLowerCase();
-
-  const user = await prisma.user.findUnique({
-    where: { walletAddress: wallet },
-    select: { id: true, pendingBalanceWei: true },
-  });
-
-  if (!user) {
-    return NextResponse.json({ error: "user_not_found" }, { status: 404 });
-  }
-
-  const withdrawals = await prisma.userWithdrawal.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-    take: 20,
-  });
-
-  return NextResponse.json({
-    pendingBalanceWei: user.pendingBalanceWei.toString(),
-    thresholdWei: MIN_WITHDRAWAL_THRESHOLD_WEI.toString(),
-    canWithdraw: user.pendingBalanceWei >= MIN_WITHDRAWAL_THRESHOLD_WEI,
-    withdrawals: withdrawals.map((w) => ({
-      id: w.id,
-      amountWei: w.amountWei.toString(),
-      status: w.status,
-      txHash: w.txHash,
-      createdAt: w.createdAt.toISOString(),
-      completedAt: w.completedAt?.toISOString() ?? null,
-      error: w.lastError,
-    })),
-  });
-}
-
+/**
+ * P3a — withdrawal endpoint. Turns the labeler's whole accumulated off-chain
+ * balance into a single queued lump-sum payout to their linked wallet.
+ *
+ * Auth is cookie-session only (the strongest available): the destination is the
+ * authenticated user's own linked wallet, never an address supplied in the body,
+ * so knowing someone's wallet can't trigger a withdrawal. The atomic
+ * lock-decrement-enqueue (and the one-in-flight unique index) live in
+ * `enqueueWithdrawal`, so this handler only does auth, policy gates, and response
+ * shaping.
+ */
 export async function POST(req: NextRequest) {
-  const walletSession = await getLabelerSession(req);
-  const unauthorized = requireLabelerSession(walletSession);
+  const userId = await getLabelerSession(req);
+  const unauthorized = requireLabelerSession(userId);
   if (unauthorized) return unauthorized;
-  const wallet = walletSession!.toLowerCase();
 
   const user = await prisma.user.findUnique({
-    where: { walletAddress: wallet },
-    select: { id: true, pendingBalanceWei: true },
+    where: { id: userId! },
+    select: { walletAddress: true, isBanned: true },
   });
 
   if (!user) {
-    return NextResponse.json({ error: "user_not_found" }, { status: 404 });
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  // Banned users have their balance frozen (locked policy) — no withdrawals.
+  if (user.isBanned) {
+    return NextResponse.json({ error: "account_frozen" }, { status: 403 });
+  }
+  // Withdrawals always go to the linked wallet; wallet-less accounts can't withdraw.
+  if (!user.walletAddress) {
+    return NextResponse.json({ error: "no_wallet_linked" }, { status: 400 });
   }
 
-  if (user.pendingBalanceWei < MIN_WITHDRAWAL_THRESHOLD_WEI) {
-    return NextResponse.json(
-      {
-        error: "below_threshold",
-        pendingBalanceWei: user.pendingBalanceWei.toString(),
-        thresholdWei: MIN_WITHDRAWAL_THRESHOLD_WEI.toString(),
-      },
-      { status: 400 },
+  try {
+    const result = await enqueueWithdrawal(
+      userId!,
+      user.walletAddress,
+      getMinWithdrawalWei(),
     );
+
+    return NextResponse.json({
+      status: "queued",
+      withdrawalId: result.payoutJobId,
+      amountWei: result.amountWei.toString(),
+      destinationAddress: user.walletAddress,
+      token: REWARD_TOKEN_SYMBOL,
+    });
+  } catch (err) {
+    if (err instanceof BelowMinimumWithdrawalError) {
+      return NextResponse.json(
+        {
+          error: "below_minimum",
+          minimumWei: err.minimumWei.toString(),
+          balanceWei: err.balanceWei.toString(),
+        },
+        { status: 400 },
+      );
+    }
+    if (err instanceof WithdrawalInFlightError) {
+      return NextResponse.json({ error: "withdrawal_in_flight" }, { status: 409 });
+    }
+    Sentry.captureException(err, { extra: { context: "withdraw", userId } });
+    return NextResponse.json({ error: "server_error" }, { status: 500 });
   }
-
-  await getAdvisoryLock(user.id);
-
-  const pendingWithdrawal = await prisma.userWithdrawal.findFirst({
-    where: { userId: user.id, status: { in: ["queued", "processing"] } },
-  });
-
-  if (pendingWithdrawal) {
-    return NextResponse.json(
-      { error: "withdrawal_in_progress", withdrawalId: pendingWithdrawal.id },
-      { status: 409 },
-    );
-  }
-
-  const amountWei = user.pendingBalanceWei;
-
-  const withdrawal = await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { id: user.id },
-      data: { pendingBalanceWei: 0n },
-    });
-
-    await tx.userBalanceLedger.create({
-      data: {
-        userId: user.id,
-        type: "WITHDRAWAL",
-        amountWei,
-        note: `Withdrawal initiated`,
-      },
-    });
-
-    return tx.userWithdrawal.create({
-      data: {
-        userId: user.id,
-        amountWei,
-        status: "queued",
-      },
-    });
-  });
-
-  return NextResponse.json({
-    withdrawalId: withdrawal.id,
-    amountWei: amountWei.toString(),
-    status: withdrawal.status,
-  });
 }

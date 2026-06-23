@@ -20,6 +20,8 @@ import {
   totalDebitWei,
   InsufficientBalanceError,
 } from "@/lib/campaign-balance";
+import { creditReward } from "@/lib/user-balance";
+import { REWARDED_STATUSES } from "@/lib/constants";
 
 function errorResponse(code: string, status: number, context: Record<string, unknown> = {}) {
   console.error(`[submit] ${code}`, context);
@@ -76,6 +78,7 @@ export async function POST(req: NextRequest) {
       create: { walletAddress },
       update: {},
     });
+    const userId = user.id;
 
     if (isPermanentlyBanned(user.isBanned, user.bannedUntil, user.banCount)) {
       return errorResponse("banned", 403, { walletAddress, permanent: true });
@@ -98,7 +101,7 @@ export async function POST(req: NextRequest) {
       where: { id: taskId },
       include: {
         campaign: { select: { defaultResponseTarget: true, rewardWei: true } },
-        _count: { select: { submissions: { where: { payoutStatus: { in: ["sent", "confirmed"] }, isGoldCheck: false } } } },
+        _count: { select: { submissions: { where: { payoutStatus: { in: [...REWARDED_STATUSES] }, isGoldCheck: false } } } },
       },
     });
     if (!task) {
@@ -127,6 +130,7 @@ export async function POST(req: NextRequest) {
           await tx.submission.create({
             data: {
               walletAddress,
+              userId,
               taskId,
               choice,
               reason: reason.trim(),
@@ -191,6 +195,7 @@ export async function POST(req: NextRequest) {
           await tx.submission.create({
             data: {
               walletAddress,
+              userId,
               taskId,
               choice,
               reason: reason.trim(),
@@ -262,6 +267,7 @@ export async function POST(req: NextRequest) {
         await prisma.submission.create({
           data: {
             walletAddress,
+            userId,
             taskId,
             choice,
             reason: reason.trim(),
@@ -287,19 +293,19 @@ export async function POST(req: NextRequest) {
     const submission = await prisma.submission.create({
       data: {
         walletAddress,
+        userId,
         taskId,
         choice,
         reason: reason.trim(),
         isGoldCheck: task.isGold,
         goldPassed: task.isGold ? true : null,
         payoutAmountWei: amount,
-        payoutStatus: "pending",
+        payoutStatus: "accrued",
       },
     });
 
-    // Prepaid campaign balance: debit reward + platform fee before paying the
-    // labeler. Insufficient balance blocks the payout (402); the submission is
-    // recorded as skipped so the labeler isn't paid from an empty campaign.
+    // Prepaid campaign balance: debit reward + platform fee before paying the labeler.
+    // Insufficient balance blocks the payout (402); the submission is recorded as skipped.
     if (!task.isGold && task.campaignId) {
       try {
         await checkAndDebit(task.campaignId, amount, submission.id);
@@ -321,41 +327,43 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Accumulate-then-withdraw (P2a): instead of a per-question on-chain payout,
+    // credit the approved reward to the user's off-chain balance + ledger. The
+    // customer was already debited above (unchanged); the labeler connects a
+    // wallet only at withdrawal (Phase 3). No PayoutJob is enqueued.
     try {
-      await prisma.payoutJob.create({
-        data: {
-          submissionId: submission.id,
-          status: "queued",
-        },
-      });
+      await creditReward(userId, amount, submission.id);
     } catch (err) {
       Sentry.captureException(err, {
-        extra: { context: "enqueue_payout_job", submissionId: submission.id },
+        extra: { context: "accrue_user_balance", submissionId: submission.id },
       });
-      // The campaign balance was debited before enqueuing the payout above;
-      // reverse it if the job can't be enqueued so the operator isn't charged
-      // for a payout that will never run.
+      // Refund the campaign balance if we debited but couldn't credit the user.
       if (!task.isGold && task.campaignId) {
         await creditBalance(
           task.campaignId,
           totalDebitWei(amount),
-          `refund: payout enqueue failed for submission ${submission.id}`,
+          `refund: balance accrual failed for submission ${submission.id}`,
           "REFUND",
         ).catch(() => {});
       }
-      const payoutError = err instanceof Error ? err.message : String(err);
+      const accrualError = err instanceof Error ? err.message : String(err);
       await prisma.submission.update({
         where: { id: submission.id },
-        data: { payoutStatus: "failed", payoutError: payoutError.slice(0, 500) },
+        data: { payoutStatus: "failed", payoutError: accrualError.slice(0, 500) },
       });
-      return errorResponse("payout_enqueue_failed", 500, { submissionId: submission.id });
+      return errorResponse("accrual_failed", 500, { submissionId: submission.id });
     }
 
+    // The response shape is unchanged for client coexistence: the wallet-first
+    // client still renders the success screen on `status: "pending"`. The
+    // per-submission payout poll is removed in P2b (#260) in favour of a balance
+    // view; until then the poll simply times out harmlessly.
     return NextResponse.json({
       status: "pending",
       submissionId: submission.id,
     });
   } catch (err) {
+    console.error("[submit] UNHANDLED ERROR:", err);
     Sentry.captureException(err, {
       extra: { walletAddress, taskId },
     });
@@ -366,5 +374,3 @@ export async function POST(req: NextRequest) {
     });
   }
 }
-
-
