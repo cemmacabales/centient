@@ -66,3 +66,12 @@ export function parseGoldRatio(raw: string | undefined): number {
 }
 
 export const GOLD_TASK_RATIO = parseGoldRatio(process.env.GOLD_TASK_RATIO);
+
+// Submission payout statuses that represent an *accepted & rewarded* answer:
+// legacy per-question on-chain payouts ("sent"/"confirmed") plus the
+// accumulate-then-withdraw path ("accrued" — credited to the user's off-chain
+// balance). Use this wherever answers are counted toward a task's response
+// target or inter-annotator agreement. NOTE: this is deliberately NOT the same
+// set used for on-chain *spend* accounting (lib/payout-cap.ts), which must only
+// count funds actually moved on-chain and therefore excludes "accrued".
+export const REWARDED_STATUSES = ["sent", "confirmed", "accrued"] as const;

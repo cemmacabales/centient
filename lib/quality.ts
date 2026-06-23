@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { REWARDED_STATUSES } from "@/lib/constants";
 
 export function isSpamReason(reason: string): boolean {
   const trimmed = reason.trim();
@@ -31,7 +32,7 @@ export async function computeIAA(taskId: string): Promise<IaaResult | null> {
     where: {
       taskId,
       isGoldCheck: false,
-      payoutStatus: { in: ["sent", "confirmed"] },
+      payoutStatus: { in: [...REWARDED_STATUSES] },
     },
     select: { choice: true },
   });
