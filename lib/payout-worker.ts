@@ -141,17 +141,19 @@ export async function processJob(jobId: string, submissionId: string): Promise<v
         select: { id: true },
       });
 
-      if (user) {
-        await tx.userBalanceLedger.create({
-          data: {
-            userId: user.id,
-            type: "CREDIT_REWARD",
-            amountWei: amount,
-            submissionId: submissionId,
-            note: `Reward for submission ${submissionId}`,
-          },
-        });
+      if (!user) {
+        throw new Error(`No user found for walletAddress ${submission.walletAddress} — rolling back payout`);
       }
+
+      await tx.userBalanceLedger.create({
+        data: {
+          userId: user.id,
+          type: "CREDIT_REWARD",
+          amountWei: amount,
+          submissionId: submissionId,
+          note: `Reward for submission ${submissionId}`,
+        },
+      });
     });
 
     const task = submission.task;
