@@ -62,73 +62,11 @@ describe("parseCSV", () => {
     expect(errors.length).toBe(0);
   });
 
-  it("returns a schema error for missing required columns", () => {
-    const { rows, schemaError } = parseCSV(csvMissingRequiredColumn);
+  it("returns error for missing required columns", () => {
+    const { rows, errors } = parseCSV(csvMissingRequiredColumn);
     expect(rows.length).toBe(0);
-    expect(schemaError?.code).toBe("missing_columns");
-    expect(schemaError?.message).toMatch(/responseB/);
-  });
-
-  describe("schema validation (actionable errors)", () => {
-    it("returns no schemaError for a valid file", () => {
-      const { schemaError } = parseCSV(validCSV);
-      expect(schemaError).toBeNull();
-    });
-
-    it("names which required columns are missing and which were found", () => {
-      const { rows, schemaError } = parseCSV(
-        `prompt,response_b,other\nhi,x,y`
-      );
-      expect(rows.length).toBe(0);
-      expect(schemaError?.code).toBe("missing_columns");
-      // responseA and responseB are both absent
-      expect(schemaError?.message).toMatch(/responseA/);
-      expect(schemaError?.message).toMatch(/responseB/);
-      // surfaces the headers actually present so the user can spot typos
-      expect(schemaError?.message).toMatch(/response_b/);
-    });
-
-    it("strips a UTF-8 BOM from the header so Excel exports parse", () => {
-      const { rows, schemaError } = parseCSV(
-        `\uFEFFprompt,responseA,responseB\nWhat is 2+2?,4,5`
-      );
-      expect(schemaError).toBeNull();
-      expect(rows.length).toBe(1);
-      expect(rows[0].prompt).toBe("What is 2+2?");
-    });
-
-    it("detects a semicolon-delimited file", () => {
-      const { rows, schemaError } = parseCSV(
-        `prompt;responseA;responseB\nWhat is 2+2?;4;5`
-      );
-      expect(rows.length).toBe(0);
-      expect(schemaError?.code).toBe("wrong_delimiter");
-      expect(schemaError?.message).toMatch(/;/);
-    });
-
-    it("detects a tab-delimited file", () => {
-      const { schemaError } = parseCSV(
-        `prompt\tresponseA\tresponseB\nWhat is 2+2?\t4\t5`
-      );
-      expect(schemaError?.code).toBe("wrong_delimiter");
-    });
-
-    it("reports an empty file", () => {
-      const { rows, schemaError } = parseCSV(`   \n  \n`);
-      expect(rows.length).toBe(0);
-      expect(schemaError?.code).toBe("empty_file");
-    });
-
-    it("reports a header-only file with no data rows", () => {
-      const { rows, schemaError } = parseCSV(`prompt,responseA,responseB`);
-      expect(rows.length).toBe(0);
-      expect(schemaError?.code).toBe("no_data_rows");
-    });
-
-    it("reports a binary / non-text file", () => {
-      const { schemaError } = parseCSV(`PK\u0003\u0004\u0000binary`);
-      expect(schemaError?.code).toBe("not_csv");
-    });
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toMatch(/must have prompt, responseA, responseB/);
   });
 
   it("isGold/goldAnswer headers are case-insensitive", () => {

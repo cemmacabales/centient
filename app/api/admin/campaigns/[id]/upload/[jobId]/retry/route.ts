@@ -1,8 +1,7 @@
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession } from "@/lib/admin-auth";
 import { auditLog } from "@/lib/audit";
-import { claimJob, processJob } from "@/lib/upload-worker";
 
 export async function POST(
   req: NextRequest,
@@ -50,17 +49,6 @@ export async function POST(
       workerHeartbeatAt: null,
     },
     select: { id: true, status: true, totalRows: true },
-  });
-
-  // Re-run the job in this web server, same as the initial upload path.
-  after(async () => {
-    try {
-      if (await claimJob(updated.id)) {
-        await processJob(updated.id);
-      }
-    } catch (err) {
-      console.error(`[upload] in-process retry trigger failed for job ${updated.id}:`, err);
-    }
   });
 
   auditLog({

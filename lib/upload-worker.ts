@@ -36,32 +36,6 @@ export async function claimNextJob(): Promise<{ id: string } | null> {
   return claimed[0] ?? null;
 }
 
-/**
- * Atomically claim a specific job by id, transitioning it from `queued` (or a stale
- * `processing` left behind by a crashed worker) to `processing`. Returns true only if
- * this caller won the claim, so concurrent callers — e.g. the in-process `after()`
- * trigger and the standalone worker — never both process the same job.
- */
-export async function claimJob(jobId: string): Promise<boolean> {
-  const staleBefore = new Date(Date.now() - STALE_PROCESSING_MS);
-
-  const claimed = await prisma.$queryRaw<{ id: string }[]>`
-    UPDATE "upload_jobs"
-    SET "status" = 'processing',
-        "startedAt" = COALESCE("startedAt", NOW()),
-        "workerHeartbeatAt" = NOW(),
-        "updatedAt" = NOW()
-    WHERE "id" = ${jobId}
-      AND (
-        "status" = 'queued'
-        OR ("status" = 'processing' AND "workerHeartbeatAt" < ${staleBefore})
-      )
-    RETURNING "id"
-  `;
-
-  return claimed.length > 0;
-}
-
 export async function processJob(jobId: string): Promise<void> {
   currentJobId = jobId;
 
