@@ -5,6 +5,14 @@ import { formatUnits } from "viem";
 import { type ToastKind } from "@/components/Toast";
 import { truncateAddress } from "@/lib/wallet";
 
+function formatTokenBalance(weiStr: string): string {
+  try {
+    return formatUnits(BigInt(weiStr), 18);
+  } catch {
+    return "0";
+  }
+}
+
 interface AccountSheetProps {
   open: boolean;
   onClose: () => void;
@@ -128,14 +136,6 @@ export default function AccountSheet({
 
   const truncated = truncateAddress(walletAddress);
 
-  const formatTokenBalance = (weiStr: string): string => {
-    try {
-      return formatUnits(BigInt(weiStr), 18);
-    } catch {
-      return "0";
-    }
-  };
-
   const handleWithdraw = async () => {
     if (!withdrawalData?.canWithdraw || withdrawing) return;
     setWithdrawing(true);
@@ -143,7 +143,7 @@ export default function AccountSheet({
       const res = await fetch("/api/me/withdraw", { method: "POST" });
       const data = await res.json();
       if (res.ok) {
-        showToast(`Withdrawal initiated: ${data.amountWei} ${rewardSymbol}`, "success");
+        showToast(`Withdrawal initiated: ${formatTokenBalance(data.amountWei)} ${rewardSymbol}`, "success");
         const updated = await fetch("/api/me/withdraw").then((r) => r.json());
         setWithdrawalData(updated);
       } else {
@@ -240,19 +240,19 @@ export default function AccountSheet({
           </span>
           <div className="flex items-baseline gap-1">
             <span className="font-headline text-4xl font-extrabold tracking-tighter text-on-surface">
-              {withdrawalData ? formatTokenBalance(withdrawalData.pendingBalanceWei) : "—"}
+              {loadingWithdrawal ? "..." : withdrawalData ? formatTokenBalance(withdrawalData.pendingBalanceWei) : "—"}
             </span>
             <span className="font-headline text-xl font-bold text-secondary">
               {rewardSymbol}
             </span>
           </div>
           <span className="font-body text-xs text-on-surface-variant">
-            Min withdrawal: {withdrawalData ? formatTokenBalance(withdrawalData.thresholdWei) : "—"} {rewardSymbol}
+            Min withdrawal: {loadingWithdrawal ? "..." : withdrawalData ? formatTokenBalance(withdrawalData.thresholdWei) : "—"} {rewardSymbol}
           </span>
           <button
             type="button"
             onClick={handleWithdraw}
-            disabled={!withdrawalData?.canWithdraw || withdrawing}
+            disabled={loadingWithdrawal || !withdrawalData?.canWithdraw || withdrawing}
             className="mt-3 rounded-xl bg-primary px-6 py-2 font-label text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-50"
           >
             {withdrawing ? "Withdrawing..." : "Withdraw"}
