@@ -57,6 +57,20 @@ export const REWARD_TOKEN_SYMBOL = process.env.NEXT_PUBLIC_REWARD_TOKEN_SYMBOL ?
 export const REWARD_TOKEN_DECIMALS = Number(process.env.NEXT_PUBLIC_REWARD_TOKEN_DECIMALS ?? "18");
 export const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
+// Minimum accumulated balance (in wei) a labeler must have before they can
+// withdraw, keeping per-withdrawal gas economical. Required + fail-fast like
+// PLATFORM_FEE_WEI: an unset/invalid value fails the withdrawal closed (no payout)
+// rather than silently defaulting to "no minimum".
+export function getMinWithdrawalWei(): bigint {
+  const raw = process.env.MIN_WITHDRAWAL_WEI;
+  if (!raw || !/^\d+$/.test(raw)) {
+    throw new Error(
+      "MIN_WITHDRAWAL_WEI env var is required and must be a non-negative integer string"
+    );
+  }
+  return BigInt(raw);
+}
+
 export function parseGoldRatio(raw: string | undefined): number {
   const value = Number(raw?.trim() || "0.1");
   if (value < 0 || value > 1 || Number.isNaN(value)) {
