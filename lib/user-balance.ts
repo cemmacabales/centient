@@ -205,7 +205,10 @@ export async function enqueueWithdrawal(
           userId,
           type: "WITHDRAWAL",
           amountWei,
-          submissionId: job.id,
+          // `submissionId` is a reference to a Submission, not a PayoutJob, so it
+          // stays null for withdrawals. The created job is identified by `type`
+          // + `note` here and returned to the caller as `WithdrawalResult.payoutJobId`.
+          submissionId: null,
           note: "withdrawal",
         },
       });
