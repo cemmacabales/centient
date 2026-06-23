@@ -39,50 +39,8 @@ model User {
   disputes      Dispute[]
   balanceLedger UserBalanceLedger[]
   payoutJobs    PayoutJob[]
-  identifierHistory UserIdentifierHistory[]
 
   @@map("users")
-}
-
-enum BannedIdentifierType {
-  EMAIL
-  WALLET
-  USER_ID
-}
-
-model BannedIdentity {
-  id             String             @id @default(uuid())
-  identifierType BannedIdentifierType
-  identifierValue String
-  bannedAt       DateTime           @default(now())
-  bannedUntil    DateTime?
-  reason         String?
-
-  @@unique([identifierType, identifierValue])
-  @@index([identifierType, identifierValue])
-  @@map("banned_identities")
-}
-
-enum IdentifierType {
-  EMAIL
-  WALLET
-}
-
-model UserIdentifierHistory {
-  id           String        @id @default(uuid())
-  userId       String
-  identifierType IdentifierType
-  identifierValue String
-  linkedAt     DateTime      @default(now())
-  unlinkedAt   DateTime?
-  isActive     Boolean       @default(true)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([identifierType, identifierValue])
-  @@index([userId, isActive])
-  @@map("user_identifier_history")
 }
 
 model AdminUser {

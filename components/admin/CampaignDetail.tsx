@@ -252,10 +252,13 @@ export default function CampaignDetail({
       } as UploadJob);
     } else if (res.ok) {
       const result = await res.json();
+      const sample = result.errors?.length
+        ? ` First issue${result.errors.length > 1 ? "s" : ""}: ${result.errors.slice(0, 2).join("; ")}.`
+        : "";
       setError(
         result.errors?.length
-          ? `Upload parsed 0 rows. ${result.skipped} row(s) skipped.`
-          : "Upload contained no valid rows."
+          ? `No rows were imported — ${result.skipped} row(s) were skipped.${sample} Download the template to check the expected format.`
+          : "Upload contained no valid rows. Download the template to check the expected format."
       );
       fetchTasks();
     } else if (res.status === 413) {
@@ -263,7 +266,9 @@ export default function CampaignDetail({
     } else if (res.status === 400) {
       const body = await res.json().catch(() => ({}));
       const code = body?.error;
-      const message =
+      // The server sends an actionable `message` for schema problems (wrong columns,
+      // wrong delimiter, empty file, etc.); prefer it, then fall back to a code map.
+      const fallback =
         code === "gold_columns_not_allowed"
           ? "CSV contains gold columns. Strip isGold/goldAnswer before uploading."
           : code === "invalid_file_type"
@@ -271,7 +276,12 @@ export default function CampaignDetail({
           : code === "missing_file"
           ? "Choose a CSV file to upload."
           : "Upload request was rejected by the server.";
-      setError(message);
+      const base = body?.message || fallback;
+      setError(
+        /template/i.test(base)
+          ? base
+          : `${base} Download the template below for the correct format.`
+      );
     } else {
       setError("Upload failed. Try again or contact support.");
     }
@@ -1069,8 +1079,18 @@ export default function CampaignDetail({
       </section>
 
       {error && (
-        <div className="rounded-2xl bg-error-container px-4 py-3 font-body text-sm text-on-error-container">
-          {error}
+        <div className="flex flex-col gap-2 rounded-2xl bg-error-container px-4 py-3 font-body text-sm text-on-error-container">
+          <span>{error}</span>
+          {/template/i.test(error) && (
+            <button
+              type="button"
+              onClick={handleDownloadTemplate}
+              className="flex w-fit items-center gap-1 rounded-full bg-on-error-container/10 px-3 py-1 font-label text-xs font-medium text-on-error-container hover:bg-on-error-container/20"
+            >
+              <span className="material-symbols-outlined text-[16px]">download</span>
+              Download template
+            </button>
+          )}
         </div>
       )}
 

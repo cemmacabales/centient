@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 import { auditLog } from "@/lib/audit";
 import { parseCSV } from "@/lib/csv-parser";
+import { claimJob, processJob } from "@/lib/upload-worker";
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
@@ -55,7 +56,26 @@ export async function POST(
     );
   }
 
-  const { rows, errors: parseErrors } = parseCSV(text);
+  const { rows, errors: parseErrors, schemaError } = parseCSV(text);
+
+  // The file is structurally unusable (wrong columns, wrong delimiter, empty, binary).
+  // Reject up front with an actionable message so the user knows exactly what to fix,
+  // rather than enqueueing a job that would parse to zero rows.
+  if (schemaError) {
+    auditLog({
+      adminUserId: session.sub,
+      action: "tasks.upload.rejected",
+      targetType: "campaign",
+      targetId: campaign.id,
+      req,
+      metadata: { fileName: file.name, fileSize: file.size, reason: schemaError.code },
+    });
+
+    return NextResponse.json(
+      { error: schemaError.code, message: schemaError.message },
+      { status: 400 }
+    );
+  }
 
   if (rows.length === 0) {
     auditLog({
@@ -96,6 +116,19 @@ export async function POST(
       skippedRows: parseErrors.length,
     },
     select: { id: true, status: true, totalRows: true, createdAt: true },
+  });
+
+  // Process the job in this web server right after responding, so uploads work without
+  // a separately-deployed worker process. claimJob() guarantees only one consumer (this
+  // trigger or the standalone worker, if running) ever processes the job.
+  after(async () => {
+    try {
+      if (await claimJob(job.id)) {
+        await processJob(job.id);
+      }
+    } catch (err) {
+      console.error(`[upload] in-process trigger failed for job ${job.id}:`, err);
+    }
   });
 
   auditLog({
