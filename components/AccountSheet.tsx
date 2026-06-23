@@ -144,8 +144,10 @@ export default function AccountSheet({
       const data = await res.json();
       if (res.ok) {
         showToast(`Withdrawal initiated: ${formatTokenBalance(data.amountWei)} ${rewardSymbol}`, "success");
-        const updated = await fetch("/api/me/withdraw").then((r) => r.json());
-        setWithdrawalData(updated);
+        const updated = await fetch("/api/me/withdraw")
+          .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+          .catch(() => null);
+        if (updated) setWithdrawalData(updated);
       } else {
         showToast(data.error || "Withdrawal failed", "error");
       }
