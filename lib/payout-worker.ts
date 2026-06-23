@@ -5,6 +5,7 @@ import { payReward, PayoutCapError } from "./payout";
 import { creditBalance, totalDebitWei } from "./campaign-balance";
 import { checkAndAlert } from "./celo-balance";
 import { computeIAA } from "./quality";
+import { REWARDED_STATUSES } from "./constants";
 
 const STALE_PROCESSING_MS = 60_000;
 // Refresh the in-flight job's heartbeat well within STALE_PROCESSING_MS so a slow
@@ -137,7 +138,7 @@ export async function processJob(jobId: string, submissionId: string): Promise<v
         where: {
           taskId: submission.taskId,
           isGoldCheck: false,
-          payoutStatus: { in: ["sent", "confirmed"] },
+          payoutStatus: { in: [...REWARDED_STATUSES] },
         },
       });
       if (paidCount >= task.responseTarget) {

@@ -1,6 +1,7 @@
 import { requireRoleForPage } from "@/lib/admin-auth";
 import prisma from "@/lib/prisma";
 import CampaignList from "@/components/admin/CampaignList";
+import { REWARDED_STATUSES } from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +39,7 @@ export default async function AdminCampaignsPage() {
       tasks: {
         select: {
           responseTarget: true,
-          _count: { select: { submissions: { where: { payoutStatus: { in: ["sent", "confirmed"] }, isGoldCheck: false } } } },
+          _count: { select: { submissions: { where: { payoutStatus: { in: [...REWARDED_STATUSES] }, isGoldCheck: false } } } },
         },
       },
       adminUser: { select: { email: true, companyName: true } },
