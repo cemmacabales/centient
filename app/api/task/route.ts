@@ -107,7 +107,7 @@ export async function GET(req: NextRequest) {
             SELECT COUNT(*)
             FROM "submissions" s
             WHERE s."taskId" = t.id
-               AND s."payoutStatus" IN ('sent', 'confirmed', 'accrued')
+               AND s."payoutStatus" IN (${Prisma.join([...REWARDED_STATUSES])})
               AND s."isGoldCheck" = false
           ) < COALESCE(t."responseTarget", c."defaultResponseTarget")
         )
