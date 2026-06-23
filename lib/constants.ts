@@ -66,3 +66,5 @@ export function parseGoldRatio(raw: string | undefined): number {
 }
 
 export const GOLD_TASK_RATIO = parseGoldRatio(process.env.GOLD_TASK_RATIO);
+
+export const MIN_WITHDRAWAL_THRESHOLD_WEI = BigInt(process.env.MIN_WITHDRAWAL_THRESHOLD_WEI ?? "1000000000000000000"); // 1 token

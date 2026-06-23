@@ -120,18 +120,32 @@ export async function getWalletHealth(): Promise<WalletHealth> {
 
   const client = createPublicClient({ chain: activeChain(), transport: http(activeRpcUrl()) });
 
-  const [celoRaw, rewardRaw] = await Promise.all([
-    client.getBalance({ address: WALLET_ADDRESS }),
-    client.readContract({
-      address: REWARD_TOKEN_ADDRESS,
-      abi: erc20Abi,
-      functionName: "balanceOf",
-      args: [WALLET_ADDRESS],
-    }),
-  ]);
-
-  const celoBalance = Number(formatUnits(celoRaw, 18));
-  const rewardBalance = Number(formatUnits(rewardRaw, REWARD_TOKEN_DECIMALS));
+  let celoBalance = 0;
+  let rewardBalance = 0;
+  try {
+    const [celoRaw, rewardRaw] = await Promise.all([
+      client.getBalance({ address: WALLET_ADDRESS }),
+      client.readContract({
+        address: REWARD_TOKEN_ADDRESS,
+        abi: erc20Abi,
+        functionName: "balanceOf",
+        args: [WALLET_ADDRESS],
+      }),
+    ]);
+    celoBalance = Number(formatUnits(celoRaw, 18));
+    rewardBalance = Number(formatUnits(rewardRaw, REWARD_TOKEN_DECIMALS));
+  } catch (e) {
+    return {
+      address: WALLET_ADDRESS,
+      rewardTokenBalance: "—",
+      rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
+      celoBalance: "—",
+      healthy: false,
+      warnings: ["PAYOUT_PRIVATE_KEY not configured or network unavailable"],
+      pages: [],
+      thresholds,
+    };
+  }
 
   const { healthy, warnings, pages } = evaluateThresholds(celoBalance, rewardBalance, thresholds);
 
