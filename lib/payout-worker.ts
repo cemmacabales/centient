@@ -81,7 +81,6 @@ async function processWithdrawalJob(
 ): Promise<void> {
   const job = await prisma.payoutJob.findUnique({
     where: { id: jobId },
-    select: { destinationAddress: true },
   });
   if (!job) {
     console.error(`[payout-worker] withdrawal job ${jobId} not found`);
@@ -92,21 +91,23 @@ async function processWithdrawalJob(
     return;
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { walletAddress: true },
-  });
-  if (!user?.walletAddress) {
-    console.error(`[payout-worker] user ${userId} has no walletAddress`);
-    await prisma.payoutJob.update({
-      where: { id: jobId },
-      data: { status: "failed", completedAt: new Date(), lastError: "user wallet not found" },
+  let destination: string | null = job.destinationAddress;
+  if (!destination) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { walletAddress: true },
     });
-    await refundReversal(userId, amountWei, jobId, "Refund for missing wallet").catch(() => {});
-    return;
+    if (!user?.walletAddress) {
+      console.error(`[payout-worker] user ${userId} has no walletAddress and no destinationAddress on job`);
+      await prisma.payoutJob.update({
+        where: { id: jobId },
+        data: { status: "failed", completedAt: new Date(), lastError: "no destination address" },
+      });
+      await refundReversal(userId, amountWei, jobId, "Refund for missing destination").catch(() => {});
+      return;
+    }
+    destination = user.walletAddress;
   }
-
-  const walletAddress = user.walletAddress as `0x${string}`;
 
   const heartbeat = setInterval(() => {
     prisma.payoutJob
@@ -115,19 +116,17 @@ async function processWithdrawalJob(
   }, HEARTBEAT_REFRESH_MS);
 
   try {
-    const txHash = await payReward(walletAddress, amountWei);
+    const txHash = await payReward(destination as `0x${string}`, amountWei);
 
     await prisma.payoutJob.update({
       where: { id: jobId },
       data: {
-        status: "done",
-        completedAt: new Date(),
         txHash,
         workerHeartbeatAt: new Date(),
       },
     });
 
-    console.log(`[payout-worker] withdrawal job ${jobId} completed: paid ${amountWei} to ${walletAddress} (${txHash})`);
+    console.log(`[payout-worker] withdrawal job ${jobId} broadcast: paid ${amountWei} to ${destination} (${txHash})`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 
