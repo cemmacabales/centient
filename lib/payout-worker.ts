@@ -239,7 +239,27 @@ async function processSubmissionPayout(
         data: {
           submissionCount: { increment: 1 },
           totalEarnedWei: { increment: amount },
+          pendingBalanceWei: { increment: amount },
           lastSubmissionAt: new Date(),
+        },
+      });
+
+      const user = await tx.user.findUnique({
+        where: { walletAddress: submission.walletAddress },
+        select: { id: true },
+      });
+
+      if (!user) {
+        throw new Error(`No user found for walletAddress ${submission.walletAddress} — rolling back payout`);
+      }
+
+      await tx.userBalanceLedger.create({
+        data: {
+          userId: user.id,
+          type: "CREDIT_REWARD",
+          amountWei: amount,
+          submissionId: submissionId,
+          note: `Reward for submission ${submissionId}`,
         },
       });
     });
