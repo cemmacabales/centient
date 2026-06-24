@@ -124,4 +124,153 @@ describe("POST /api/me/withdraw", () => {
     expect(updated?.pendingBalanceWei).toBe(5000000000000000000n);
     expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(1);
   });
+
+  it("returns 403 when the user's email is banned", async () => {
+    const user = await createUser({ pendingBalanceWei: 5000000000000000000n, email: "banned@example.com" });
+    await prisma.bannedIdentity.create({
+      data: {
+        identifierType: "EMAIL",
+        identifierValue: "banned@example.com",
+        reason: "test ban",
+      },
+    });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+    const res = await POST(makeReq());
+
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("identity_banned");
+    expect(body.identifierType).toBe("EMAIL");
+    expect(body.identifierValue).toBe("banned@example.com");
+    expect(body.reason).toBe("test ban");
+  });
+
+  it("returns 403 when the user's wallet is banned", async () => {
+    const user = await createUser({ pendingBalanceWei: 5000000000000000000n });
+    await prisma.bannedIdentity.create({
+      data: {
+        identifierType: "WALLET",
+        identifierValue: user.walletAddress!.toLowerCase(),
+        reason: "wallet ban",
+      },
+    });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+    const res = await POST(makeReq());
+
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("identity_banned");
+    expect(body.identifierType).toBe("WALLET");
+    expect(body.identifierValue).toBe(user.walletAddress!.toLowerCase());
+  });
+
+  it("returns 403 when the userId is banned", async () => {
+    const user = await createUser({ pendingBalanceWei: 5000000000000000000n });
+    await prisma.bannedIdentity.create({
+      data: {
+        identifierType: "USER_ID",
+        identifierValue: user.id,
+        reason: "user ban",
+      },
+    });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+    const res = await POST(makeReq());
+
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("identity_banned");
+    expect(body.identifierType).toBe("USER_ID");
+    expect(body.identifierValue).toBe(user.id);
+  });
+
+  it("allows withdrawal when banned identity has expired", async () => {
+    const user = await createUser({ pendingBalanceWei: 5000000000000000000n, email: "expired@example.com" });
+    await prisma.bannedIdentity.create({
+      data: {
+        identifierType: "EMAIL",
+        identifierValue: "expired@example.com",
+        bannedUntil: new Date(Date.now() - 86400000), // yesterday
+      },
+    });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+    const res = await POST(makeReq());
+
+    expect(res.status).toBe(200);
+  });
+
+  it("returns 403 when shared wallet has received from MAX_WALLET_ACCOUNT_COUNT accounts", async () => {
+    const sharedWallet = "0x0000000000000000000000000000000000000aAa";
+    const users = await Promise.all(
+      Array.from({ length: 3 }, (_, i) =>
+        createUser({
+          walletAddress: `0x00000000000000000000000000000000000000${i.toString().padStart(2, "0")}`,
+          pendingBalanceWei: 5000000000000000000n,
+        }),
+      ),
+    );
+
+    for (const user of users) {
+      await prisma.payoutJob.create({
+        data: {
+          type: "WITHDRAWAL",
+          userId: user.id,
+          amountWei: 1000000000000000000n,
+          destinationAddress: sharedWallet.toLowerCase(),
+          status: "done",
+        },
+      });
+    }
+
+    const abuser = await createUser({
+      walletAddress: sharedWallet,
+      pendingBalanceWei: 5000000000000000000n,
+    });
+    vi.mocked(getLabelerSession).mockResolvedValue(abuser.id);
+
+    const res = await POST(makeReq());
+
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe("shared_wallet_detected");
+    expect(body.walletAddress).toBe(sharedWallet.toLowerCase());
+    expect(body.accountCount).toBe(3);
+  });
+
+  it("allows withdrawal when shared wallet count is below threshold", async () => {
+    const sharedWallet = "0x0000000000000000000000000000000000000bBb";
+    const users = await Promise.all(
+      Array.from({ length: 2 }, (_, i) =>
+        createUser({
+          walletAddress: `0x0000000000000000000000000000000000000${i}b`,
+          pendingBalanceWei: 5000000000000000000n,
+        }),
+      ),
+    );
+
+    for (const user of users) {
+      await prisma.payoutJob.create({
+        data: {
+          type: "WITHDRAWAL",
+          userId: user.id,
+          amountWei: 1000000000000000000n,
+          destinationAddress: sharedWallet.toLowerCase(),
+          status: "done",
+        },
+      });
+    }
+
+    const newUser = await createUser({
+      walletAddress: sharedWallet,
+      pendingBalanceWei: 5000000000000000000n,
+    });
+    vi.mocked(getLabelerSession).mockResolvedValue(newUser.id);
+
+    const res = await POST(makeReq());
+
+    expect(res.status).toBe(200);
+  });
 });

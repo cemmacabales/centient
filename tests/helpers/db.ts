@@ -32,6 +32,7 @@ export async function truncateAll(): Promise<void> {
     }
   };
 
+  await tryDelete(() => prisma.bannedIdentity.deleteMany());
   await tryDelete(() => prisma.balanceLedger.deleteMany());
   await tryDelete(() => prisma.campaignBalance.deleteMany());
   await tryDelete(() => prisma.submission.deleteMany());
