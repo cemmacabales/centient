@@ -13,6 +13,7 @@ const BATCH_SIZE = 50;
 let shouldStop = false;
 let currentId: string | null = null;
 
+
 async function claimNextSubmission(): Promise<{ id: string; payoutTxHash: string } | null> {
   const staleBefore = new Date(Date.now() - STALE_PROCESSING_MS);
 
@@ -89,13 +90,14 @@ async function handleSubmissionRetry(id: string, reason: string): Promise<void> 
   }
 }
 
+
 async function claimNextWithdrawal(): Promise<{ id: string; txHash: string; userId: string; amountWei: bigint } | null> {
   const staleBefore = new Date(Date.now() - STALE_PROCESSING_MS);
 
   const claimed = await prisma.payoutJob.findMany({
     where: {
       type: "WITHDRAWAL",
-      status: "processing", // or 'sent' depending on your status update
+      status: "processing",
       txHash: { not: null },
       OR: [
         { workerHeartbeatAt: null },
@@ -122,7 +124,7 @@ async function claimNextWithdrawal(): Promise<{ id: string; txHash: string; user
   };
 }
 
-async function processWithdrawal(id: string, txHash: string, userId: string, amountWei: bigint): Promise<void> {
+export async function processWithdrawal(id: string, txHash: string, userId: string, amountWei: bigint): Promise<void> {
   currentId = id;
   try {
     const receipt = await waitForTx(txHash as `0x${string}`);
@@ -154,14 +156,12 @@ async function handleWithdrawalRetry(id: string, userId: string, amountWei: bigi
 
   const newCount = (job.retryCount ?? 0) + 1;
   if (newCount >= MAX_RETRIES) {
-    // Mark as failed and refund the user balance (safety net – worker should have already refunded, but double‑check)
     await prisma.$transaction([
       prisma.payoutJob.update({
         where: { id },
         data: { status: "failed", completedAt: new Date(), lastError: reason, retryCount: newCount },
       }),
     ]);
-    // Refund user balance in case worker didn't (idempotent)
     await refundReversal(userId, amountWei, id, `Reconciler refund for failed withdrawal: ${reason}`).catch(() => {});
     console.warn(`[reconciler] withdrawal ${id} marked failed after ${MAX_RETRIES} retries: ${reason}`);
     Sentry.captureMessage(`[reconciler] withdrawal ${id} failed: ${reason}`, { level: "warning" });

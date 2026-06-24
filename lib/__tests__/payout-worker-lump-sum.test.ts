@@ -1,11 +1,10 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { processJob } from "@/lib/payout-worker";
-import { payReward, PayoutCapError } from "@/lib/payout";
+import { payReward, PayoutCapError, waitForTx } from "@/lib/payout";
 import { refundReversal } from "@/lib/user-balance";
 import { prisma } from "@/tests/helpers/db";
 import crypto from "crypto";
 
-// Safe database cleanup ignoring missing or uninitialized tables
 async function cleanDatabase() {
   try {
     await prisma.payoutJob.deleteMany({});
@@ -14,7 +13,6 @@ async function cleanDatabase() {
     await prisma.userBalanceLedger.deleteMany({});
     await prisma.user.deleteMany({});
   } catch (e) {
-    // Suppress errors gracefully if tables aren't set up yet during early test runs
   }
 }
 
@@ -40,6 +38,7 @@ vi.mock("@/lib/payout", async (importOriginal) => {
   return {
     ...actual,
     payReward: vi.fn(),
+    waitForTx: vi.fn(),
   };
 });
 
@@ -60,12 +59,12 @@ describe("Lump-sum withdrawal handling", () => {
     const wallet = generateWallet();
     const userId = crypto.randomUUID();
     const user = await prisma.user.create({
-      data: { 
-        id: userId, 
-        walletAddress: wallet, 
+      data: {
+        id: userId,
+        walletAddress: wallet,
         pendingBalanceWei: 0n,
         email: `${crypto.randomUUID()}@test.com`,
-        passwordHash: "dummy_hash"
+        passwordHash: "dummy_hash",
       },
     });
     const walletAddress = wallet as `0x${string}`;
@@ -77,7 +76,7 @@ describe("Lump-sum withdrawal handling", () => {
         userId: user.id,
         amountWei,
         destinationAddress: walletAddress,
-        status: "queued", // Valid PayoutJobStatus enum value
+        status: "queued",
       },
     });
 
@@ -101,12 +100,12 @@ describe("Lump-sum withdrawal handling", () => {
     const wallet = generateWallet();
     const userId = crypto.randomUUID();
     const user = await prisma.user.create({
-      data: { 
-        id: userId, 
-        walletAddress: wallet, 
+      data: {
+        id: userId,
+        walletAddress: wallet,
         pendingBalanceWei: 0n,
         email: `${crypto.randomUUID()}@test.com`,
-        passwordHash: "dummy_hash"
+        passwordHash: "dummy_hash",
       },
     });
     const walletAddress = wallet as `0x${string}`;
@@ -151,12 +150,12 @@ describe("Lump-sum withdrawal handling", () => {
     const wallet = generateWallet();
     const userId = crypto.randomUUID();
     const user = await prisma.user.create({
-      data: { 
-        id: userId, 
-        walletAddress: wallet, 
+      data: {
+        id: userId,
+        walletAddress: wallet,
         pendingBalanceWei: 0n,
         email: `${crypto.randomUUID()}@test.com`,
-        passwordHash: "dummy_hash"
+        passwordHash: "dummy_hash",
       },
     });
     const walletAddress = wallet as `0x${string}`;
@@ -195,12 +194,12 @@ describe("Lump-sum withdrawal handling", () => {
     const wallet = generateWallet();
     const userId = crypto.randomUUID();
     const user = await prisma.user.create({
-      data: { 
-        id: userId, 
-        walletAddress: wallet, 
+      data: {
+        id: userId,
+        walletAddress: wallet,
         pendingBalanceWei: 0n,
         email: `${crypto.randomUUID()}@test.com`,
-        passwordHash: "dummy_hash"
+        passwordHash: "dummy_hash",
       },
     });
     const walletAddress = wallet as `0x${string}`;
@@ -241,15 +240,19 @@ describe("Lump-sum withdrawal handling", () => {
 
 describe("Reconciler confirms lump-sum receipt", () => {
   it("confirms a withdrawal job when the transaction succeeds", async () => {
+    vi.mocked(payReward).mockReset();
+    vi.mocked(refundReversal).mockReset();
+    vi.mocked(refundReversal).mockResolvedValue(0n);
+
     const wallet = generateWallet();
     const userId = crypto.randomUUID();
     const user = await prisma.user.create({
-      data: { 
-        id: userId, 
-        walletAddress: wallet, 
+      data: {
+        id: userId,
+        walletAddress: wallet,
         pendingBalanceWei: 0n,
         email: `${crypto.randomUUID()}@test.com`,
-        passwordHash: "dummy_hash"
+        passwordHash: "dummy_hash",
       },
     });
     const walletAddress = wallet as `0x${string}`;
@@ -261,13 +264,23 @@ describe("Reconciler confirms lump-sum receipt", () => {
         userId: user.id,
         amountWei,
         destinationAddress: walletAddress,
-        status: "processing", // Valid enum check
+        status: "processing",
         txHash: "0x1234",
       },
     });
 
-    const found = await prisma.payoutJob.findUnique({ where: { id: job.id } });
-    expect(found).not.toBeNull();
-    expect(found?.txHash).toBe("0x1234");
+    const waitForTxMock = vi.mocked(waitForTx).mockResolvedValueOnce({
+      status: "success",
+      transactionHash: "0x1234",
+    } as any);
+
+    const { processWithdrawal } = await import("@/lib/reconciler");
+    await processWithdrawal(job.id, job.txHash!, job.userId!, job.amountWei!);
+
+    const updatedJob = await prisma.payoutJob.findUnique({ where: { id: job.id } });
+    expect(updatedJob?.status).toBe("done");
+    expect(updatedJob?.completedAt).not.toBeNull();
+
+    waitForTxMock.mockRestore();
   });
 });
