@@ -1,5 +1,6 @@
 import type { Chain } from "viem";
 import { celo, celoSepolia } from "viem/chains";
+import type { WithdrawalThresholds } from "@/lib/withdrawal-eligibility";
 
 const toHex = (id: number) => `0x${id.toString(16)}`;
 
@@ -80,6 +81,57 @@ export function parseGoldRatio(raw: string | undefined): number {
 }
 
 export const GOLD_TASK_RATIO = parseGoldRatio(process.env.GOLD_TASK_RATIO);
+
+// P4a — withdrawal eligibility gates. These anti-fraud thresholds (spec §4.4)
+// gate cash-out behind quality history so cheap mass-created accounts can't
+// instantly withdraw. Unlike MIN_WITHDRAWAL_WEI these fail *open*: an unset (or
+// 0) value disables that gate, so gating is opt-in per environment. Recommended
+// production values: WITHDRAWAL_MIN_SUBMISSIONS=50, WITHDRAWAL_MIN_GOLD_RATE=0.7,
+// WITHDRAWAL_MIN_ACCOUNT_AGE_HOURS=24.
+
+function parseNonNegativeInt(raw: string | undefined, name: string): number {
+  if (!raw) return 0;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`${name} must be a non-negative integer, got "${raw}"`);
+  }
+  return n;
+}
+
+export function getWithdrawalMinSubmissions(): number {
+  return parseNonNegativeInt(
+    process.env.WITHDRAWAL_MIN_SUBMISSIONS,
+    "WITHDRAWAL_MIN_SUBMISSIONS",
+  );
+}
+
+export function getWithdrawalMinGoldRate(): number {
+  const raw = process.env.WITHDRAWAL_MIN_GOLD_RATE;
+  if (!raw) return 0;
+  const value = Number(raw);
+  if (Number.isNaN(value) || value < 0 || value > 1) {
+    throw new Error(
+      `WITHDRAWAL_MIN_GOLD_RATE must be between 0 and 1, got "${raw}"`,
+    );
+  }
+  return value;
+}
+
+export function getWithdrawalMinAccountAgeMs(): number {
+  const hours = parseNonNegativeInt(
+    process.env.WITHDRAWAL_MIN_ACCOUNT_AGE_HOURS,
+    "WITHDRAWAL_MIN_ACCOUNT_AGE_HOURS",
+  );
+  return hours * 60 * 60 * 1000;
+}
+
+export function getWithdrawalThresholds(): WithdrawalThresholds {
+  return {
+    minSubmissions: getWithdrawalMinSubmissions(),
+    minGoldRate: getWithdrawalMinGoldRate(),
+    minAccountAgeMs: getWithdrawalMinAccountAgeMs(),
+  };
+}
 
 // Submission payout statuses that represent an *accepted & rewarded* answer:
 // legacy per-question on-chain payouts ("sent"/"confirmed") plus the

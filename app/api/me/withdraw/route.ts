@@ -2,12 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { getLabelerSession, requireLabelerSession } from "@/lib/labeler-auth";
-import { getMinWithdrawalWei, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import {
+  getMinWithdrawalWei,
+  getWithdrawalThresholds,
+  REWARD_TOKEN_SYMBOL,
+} from "@/lib/constants";
 import {
   enqueueWithdrawal,
   BelowMinimumWithdrawalError,
   WithdrawalInFlightError,
 } from "@/lib/user-balance";
+import { checkWithdrawalEligibility } from "@/lib/withdrawal-eligibility";
 
 /**
  * P3a — withdrawal endpoint. Turns the labeler's whole accumulated off-chain
@@ -27,7 +32,14 @@ export async function POST(req: NextRequest) {
 
   const user = await prisma.user.findUnique({
     where: { id: userId! },
-    select: { walletAddress: true, isBanned: true },
+    select: {
+      walletAddress: true,
+      isBanned: true,
+      submissionCount: true,
+      goldCorrect: true,
+      goldAttempted: true,
+      createdAt: true,
+    },
   });
 
   if (!user) {
@@ -40,6 +52,31 @@ export async function POST(req: NextRequest) {
   // Withdrawals always go to the linked wallet; wallet-less accounts can't withdraw.
   if (!user.walletAddress) {
     return NextResponse.json({ error: "no_wallet_linked" }, { status: 400 });
+  }
+
+  // P4a — anti-fraud eligibility gates: quality history (gold rate), minimum
+  // submissions, and account age. Checked before locking any balance so a
+  // rejection never touches funds. The reason is surfaced so the UI can tell the
+  // labeler exactly which gate they have not yet cleared.
+  const eligibility = checkWithdrawalEligibility(
+    {
+      submissionCount: user.submissionCount,
+      goldCorrect: user.goldCorrect,
+      goldAttempted: user.goldAttempted,
+      createdAt: user.createdAt,
+    },
+    getWithdrawalThresholds(),
+  );
+  if (!eligibility.eligible) {
+    return NextResponse.json(
+      {
+        error: "not_eligible",
+        reason: eligibility.reason,
+        required: eligibility.required,
+        actual: eligibility.actual,
+      },
+      { status: 403 },
+    );
   }
 
   try {
