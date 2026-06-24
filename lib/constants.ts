@@ -81,6 +81,10 @@ export function parseGoldRatio(raw: string | undefined): number {
 
 export const GOLD_TASK_RATIO = parseGoldRatio(process.env.GOLD_TASK_RATIO);
 
+// Fraud detection: maximum distinct accounts a single wallet can receive
+// withdrawals from before being flagged/blocked.
+export const MAX_SHARED_WALLET_ACCOUNTS = Number(process.env.MAX_SHARED_WALLET_ACCOUNTS ?? "3");
+
 // Submission payout statuses that represent an *accepted & rewarded* answer:
 // legacy per-question on-chain payouts ("sent"/"confirmed") plus the
 // accumulate-then-withdraw path ("accrued" — credited to the user's off-chain
