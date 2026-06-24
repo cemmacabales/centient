@@ -80,12 +80,17 @@ describe("Lump-sum withdrawal handling", () => {
       },
     });
 
+    await prisma.payoutJob.update({
+      where: { id: job.id },
+      data: { status: "processing" },
+    });
+
     vi.mocked(payReward).mockResolvedValueOnce("0x1234");
 
     await processJob(job.id, null, user.id, amountWei, "WITHDRAWAL");
 
     const updatedJob = await prisma.payoutJob.findUnique({ where: { id: job.id } });
-    expect(updatedJob?.status).toBe("done");
+    expect(updatedJob?.status).toBe("processing");
     expect(updatedJob?.txHash).toBe("0x1234");
 
     const updatedUser = await prisma.user.findUnique({ where: { id: user.id } });
@@ -124,6 +129,11 @@ describe("Lump-sum withdrawal handling", () => {
         destinationAddress: walletAddress,
         status: "queued",
       },
+    });
+
+    await prisma.payoutJob.update({
+      where: { id: job.id },
+      data: { status: "processing" },
     });
 
     vi.mocked(payReward).mockRejectedValueOnce(new PayoutCapError(0n, 0n));
@@ -171,6 +181,11 @@ describe("Lump-sum withdrawal handling", () => {
       },
     });
 
+    await prisma.payoutJob.update({
+      where: { id: job.id },
+      data: { status: "processing" },
+    });
+
     vi.mocked(payReward)
       .mockRejectedValueOnce(new Error("nonce too low"))
       .mockResolvedValueOnce("0x5678");
@@ -180,9 +195,14 @@ describe("Lump-sum withdrawal handling", () => {
     expect(jobAfter?.status).toBe("queued");
     expect(jobAfter?.retryCount).toBe(1);
 
+    await prisma.payoutJob.update({
+      where: { id: job.id },
+      data: { status: "processing" },
+    });
+
     await processJob(job.id, null, user.id, amountWei, "WITHDRAWAL");
     jobAfter = await prisma.payoutJob.findUnique({ where: { id: job.id } });
-    expect(jobAfter?.status).toBe("done");
+    expect(jobAfter?.status).toBe("processing");
     expect(jobAfter?.txHash).toBe("0x5678");
   });
 
@@ -219,6 +239,11 @@ describe("Lump-sum withdrawal handling", () => {
         status: "queued",
         retryCount: 2,
       },
+    });
+
+    await prisma.payoutJob.update({
+      where: { id: job.id },
+      data: { status: "processing" },
     });
 
     vi.mocked(payReward).mockRejectedValueOnce(new Error("RPC timeout"));
