@@ -9,7 +9,7 @@ vi.mock("@/lib/labeler-auth", async (importOriginal) => {
 import { POST } from "@/app/api/me/withdraw/route";
 import { getLabelerSession } from "@/lib/labeler-auth";
 import { prisma, truncateAll } from "@/tests/helpers/db";
-import { createUser } from "@/tests/helpers/factories";
+import { createUser, makeWallet } from "@/tests/helpers/factories";
 
 const ORIGINAL_ENV = { ...process.env };
 const MIN = "1000000000000000000"; // 1 token
@@ -99,6 +99,113 @@ describe("POST /api/me/withdraw", () => {
       where: { userId: user.id, type: "WITHDRAWAL" },
     });
     expect(ledger).toHaveLength(1);
+  });
+
+  describe("P4a eligibility gates", () => {
+    const ENOUGH = 5000000000000000000n; // above MIN, so below_minimum never fires first
+    const HOUR_MS = 60 * 60 * 1000;
+
+    // A user that clears every gate; individual tests override one field via prisma.
+    async function eligibleUser() {
+      return prisma.user.create({
+        data: {
+          walletAddress: makeWallet(),
+          pendingBalanceWei: ENOUGH,
+          submissionCount: 100,
+          goldCorrect: 9,
+          goldAttempted: 10,
+          createdAt: new Date(Date.now() - 7 * 24 * HOUR_MS),
+        },
+      });
+    }
+
+    beforeEach(() => {
+      process.env.WITHDRAWAL_MIN_SUBMISSIONS = "50";
+      process.env.WITHDRAWAL_MIN_GOLD_RATE = "0.7";
+      process.env.WITHDRAWAL_MIN_ACCOUNT_AGE_HOURS = "24";
+    });
+
+    it("blocks withdrawal with too few submissions", async () => {
+      const user = await prisma.user.create({
+        data: {
+          walletAddress: makeWallet(),
+          pendingBalanceWei: ENOUGH,
+          submissionCount: 10,
+          goldCorrect: 9,
+          goldAttempted: 10,
+          createdAt: new Date(Date.now() - 7 * 24 * HOUR_MS),
+        },
+      });
+      vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+      const res = await POST(makeReq());
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({
+        error: "not_eligible",
+        reason: "min_submissions",
+      });
+      expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(0);
+      const after = await prisma.user.findUnique({ where: { id: user.id } });
+      expect(after?.pendingBalanceWei).toBe(ENOUGH);
+    });
+
+    it("blocks withdrawal with a low gold pass rate", async () => {
+      const user = await prisma.user.create({
+        data: {
+          walletAddress: makeWallet(),
+          pendingBalanceWei: ENOUGH,
+          submissionCount: 100,
+          goldCorrect: 5,
+          goldAttempted: 10, // 0.5 < 0.7
+          createdAt: new Date(Date.now() - 7 * 24 * HOUR_MS),
+        },
+      });
+      vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+      const res = await POST(makeReq());
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({
+        error: "not_eligible",
+        reason: "gold_rate",
+      });
+      expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(0);
+    });
+
+    it("blocks withdrawal from a brand-new account", async () => {
+      const user = await prisma.user.create({
+        data: {
+          walletAddress: makeWallet(),
+          pendingBalanceWei: ENOUGH,
+          submissionCount: 100,
+          goldCorrect: 9,
+          goldAttempted: 10,
+          createdAt: new Date(), // just created
+        },
+      });
+      vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+      const res = await POST(makeReq());
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({
+        error: "not_eligible",
+        reason: "account_age",
+      });
+      expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(0);
+    });
+
+    it("lets an eligible user withdraw", async () => {
+      const user = await eligibleUser();
+      vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+      const res = await POST(makeReq());
+
+      expect(res.status).toBe(200);
+      expect((await res.json()).status).toBe("queued");
+      expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(1);
+    });
   });
 
   it("returns 409 when a withdrawal is already in flight", async () => {

@@ -20,7 +20,7 @@ vi.mock("@/lib/celo-balance", () => ({
   checkAndAlert: vi.fn(async () => {}),
 }));
 
-import { processJob } from "@/lib/payout-worker";
+import { processJob, claimNextJob } from "@/lib/payout-worker";
 import { payReward, PayoutCapError } from "@/lib/payout";
 import { creditBalance } from "@/lib/campaign-balance";
 import { prisma, truncateAll } from "@/tests/helpers/db";
@@ -54,7 +54,6 @@ async function enqueuePendingPayout(opts: {
   });
   const job = await prisma.payoutJob.create({
     data: {
-      type: "SUBMISSION_PAYOUT",           // ✅ required
       submissionId: submission.id,
       status: "processing",
       retryCount: opts.retryCount ?? 0,
@@ -75,9 +74,9 @@ describe("payout-worker campaign balance refunds", () => {
   it("refunds the campaign balance when the daily payout cap is reached", async () => {
     vi.mocked(payReward).mockRejectedValueOnce(new PayoutCapError(1n, 1n));
     const campaign = await createCampaign();
-    const { submission, job, user } = await enqueuePendingPayout({ campaignId: campaign.id });
+    const { submission, job } = await enqueuePendingPayout({ campaignId: campaign.id });
 
-    await processJob(job.id, submission.id, user.id, submission.payoutAmountWei, "SUBMISSION_PAYOUT");
+    await processJob(job.id, submission.id);
 
     expect(creditBalance).toHaveBeenCalledOnce();
     expect(creditBalance).toHaveBeenCalledWith(
@@ -95,12 +94,12 @@ describe("payout-worker campaign balance refunds", () => {
   it("refunds the campaign balance when the payout fails permanently", async () => {
     vi.mocked(payReward).mockRejectedValueOnce(new Error("rpc timeout"));
     const campaign = await createCampaign();
-    const { submission, job, user } = await enqueuePendingPayout({
+    const { submission, job } = await enqueuePendingPayout({
       campaignId: campaign.id,
       retryCount: RETRY_BUDGET_EXHAUSTED,
     });
 
-    await processJob(job.id, submission.id, user.id, submission.payoutAmountWei, "SUBMISSION_PAYOUT");
+    await processJob(job.id, submission.id);
 
     expect(creditBalance).toHaveBeenCalledOnce();
     expect(creditBalance).toHaveBeenCalledWith(
@@ -118,12 +117,12 @@ describe("payout-worker campaign balance refunds", () => {
   it("does not refund while the payout is still retryable", async () => {
     vi.mocked(payReward).mockRejectedValueOnce(new Error("rpc timeout"));
     const campaign = await createCampaign();
-    const { submission, job, user } = await enqueuePendingPayout({
+    const { submission, job } = await enqueuePendingPayout({
       campaignId: campaign.id,
       retryCount: 0,
     });
 
-    await processJob(job.id, submission.id, user.id, submission.payoutAmountWei, "SUBMISSION_PAYOUT");
+    await processJob(job.id, submission.id);
 
     expect(creditBalance).not.toHaveBeenCalled();
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
@@ -134,12 +133,12 @@ describe("payout-worker campaign balance refunds", () => {
 
   it("does not refund a payout failure for a task without a campaign", async () => {
     vi.mocked(payReward).mockRejectedValueOnce(new Error("rpc timeout"));
-    const { submission, job, user } = await enqueuePendingPayout({
+    const { submission, job } = await enqueuePendingPayout({
       campaignId: null,
       retryCount: RETRY_BUDGET_EXHAUSTED,
     });
 
-    await processJob(job.id, submission.id, user.id, submission.payoutAmountWei, "SUBMISSION_PAYOUT");
+    await processJob(job.id, submission.id);
 
     expect(creditBalance).not.toHaveBeenCalled();
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
@@ -149,12 +148,12 @@ describe("payout-worker campaign balance refunds", () => {
   it("does not refund a gold task", async () => {
     vi.mocked(payReward).mockRejectedValueOnce(new PayoutCapError(1n, 1n));
     const campaign = await createCampaign();
-    const { submission, job, user } = await enqueuePendingPayout({
+    const { submission, job } = await enqueuePendingPayout({
       campaignId: campaign.id,
       isGold: true,
     });
 
-    await processJob(job.id, submission.id, user.id, submission.payoutAmountWei, "SUBMISSION_PAYOUT");
+    await processJob(job.id, submission.id);
 
     expect(creditBalance).not.toHaveBeenCalled();
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
@@ -165,9 +164,9 @@ describe("payout-worker campaign balance refunds", () => {
     vi.mocked(payReward).mockRejectedValueOnce(new PayoutCapError(1n, 1n));
     vi.mocked(creditBalance).mockRejectedValueOnce(new Error("refund failed"));
     const campaign = await createCampaign();
-    const { submission, job, user } = await enqueuePendingPayout({ campaignId: campaign.id });
+    const { submission, job } = await enqueuePendingPayout({ campaignId: campaign.id });
 
-    await expect(processJob(job.id, submission.id, user.id, submission.payoutAmountWei, "SUBMISSION_PAYOUT")).resolves.toBeUndefined();
+    await expect(processJob(job.id, submission.id)).resolves.toBeUndefined();
 
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
     expect(updated?.payoutStatus).toBe("skipped");
@@ -177,14 +176,64 @@ describe("payout-worker campaign balance refunds", () => {
     vi.mocked(payReward).mockRejectedValueOnce(new Error("rpc timeout"));
     vi.mocked(creditBalance).mockRejectedValueOnce(new Error("refund failed"));
     const campaign = await createCampaign();
-    const { submission, job, user } = await enqueuePendingPayout({
+    const { submission, job } = await enqueuePendingPayout({
       campaignId: campaign.id,
       retryCount: RETRY_BUDGET_EXHAUSTED,
     });
 
-    await expect(processJob(job.id, submission.id, user.id, submission.payoutAmountWei, "SUBMISSION_PAYOUT")).resolves.toBeUndefined();
+    await expect(processJob(job.id, submission.id)).resolves.toBeUndefined();
 
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
     expect(updated?.payoutStatus).toBe("failed");
+  });
+});
+
+describe("claimNextJob — withdrawal jobs are not claimed by the submission worker", () => {
+  async function queueWithdrawalJob() {
+    const user = await createUser({ pendingBalanceWei: 0n });
+    return prisma.payoutJob.create({
+      data: {
+        type: "WITHDRAWAL",
+        userId: user.id,
+        amountWei: 5000000000000000000n,
+        destinationAddress: user.walletAddress,
+        status: "queued",
+      },
+    });
+  }
+
+  it("returns null when only a queued WITHDRAWAL job exists", async () => {
+    await queueWithdrawalJob();
+
+    const claimed = await claimNextJob();
+
+    expect(claimed).toBeNull();
+  });
+
+  it("claims the submission job and leaves the withdrawal job queued", async () => {
+    const withdrawal = await queueWithdrawalJob();
+    const user = await createUser();
+    const task = await createTask();
+    const submission = await prisma.submission.create({
+      data: {
+        walletAddress: user.walletAddress,
+        userId: user.id,
+        taskId: task.id,
+        choice: "A",
+        reason: VALID_REASON,
+        payoutAmountWei: AMOUNT_WEI,
+        payoutStatus: "pending",
+      },
+    });
+    await prisma.payoutJob.create({
+      data: { submissionId: submission.id, status: "queued" },
+    });
+
+    const claimed = await claimNextJob();
+
+    expect(claimed?.submissionId).toBe(submission.id);
+
+    const withdrawalAfter = await prisma.payoutJob.findUnique({ where: { id: withdrawal.id } });
+    expect(withdrawalAfter?.status).toBe("queued");
   });
 });
