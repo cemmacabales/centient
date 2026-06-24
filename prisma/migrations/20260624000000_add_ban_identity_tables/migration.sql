@@ -4,7 +4,7 @@ CREATE TYPE "BannedIdentifierType" AS ENUM ('EMAIL', 'WALLET', 'USER_ID');
 CREATE TYPE "IdentifierType" AS ENUM ('EMAIL', 'WALLET');
 
 CREATE TABLE "banned_identities" (
-  "id" UUID NOT NULL DEFAULT uuid(),
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
   "identifierType" "BannedIdentifierType" NOT NULL,
   "identifierValue" TEXT NOT NULL,
   "bannedAt" TIMESTAMP NOT NULL DEFAULT now(),
@@ -17,7 +17,7 @@ CREATE UNIQUE INDEX "banned_identities_identifierType_identifierValue_key" ON "b
 CREATE INDEX "banned_identities_identifierType_identifierValue_idx" ON "banned_identities"("identifierType", "identifierValue");
 
 CREATE TABLE "user_identifier_history" (
-  "id" UUID NOT NULL DEFAULT uuid(),
+  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
   "userId" TEXT NOT NULL,
   "identifierType" "IdentifierType" NOT NULL,
   "identifierValue" TEXT NOT NULL,
