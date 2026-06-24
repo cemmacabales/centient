@@ -176,7 +176,7 @@ describe("checkSharedWallet", () => {
     });
 
     const otherUsers = await Promise.all(
-      Array.from({ length: MAX_SHARED_WALLET_ACCOUNTS }, (_, i) =>
+      Array.from({ length: MAX_SHARED_WALLET_ACCOUNTS - 1 }, (_, i) =>
         prisma.user.create({
           data: {
             walletAddress: `0x0000000000000000000000000000000000000${i}f`,
