@@ -46,6 +46,9 @@ jobs:
       - name: Run migrations
         run: npx prisma migrate deploy
 
+      - name: Push schema changes (for new tables not in migrations)
+        run: npx prisma db push --accept-data-loss
+
       - name: Run tests
         run: npm test
 
