@@ -109,9 +109,10 @@ export async function checkSharedWallet(
   });
 
   const accountCount = result.length;
+  const walletLower = destinationAddress.toLowerCase();
 
   if (accountCount >= MAX_SHARED_WALLET_ACCOUNTS) {
-    return new SharedWalletError(destinationAddress, accountCount);
+    return new SharedWalletError(walletLower, accountCount);
   }
 
   return null;
