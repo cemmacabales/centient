@@ -10,18 +10,11 @@ import WalletLoginButton, { type WalletLoginType } from "./WalletLoginButton";
 
 interface LoginScreenProps {
   onConnect: (type: WalletLoginType) => void;
-  /** Open the email account flow. P5a: this is the primary entry. */
-  onEmailAuth: (mode: "login" | "register") => void;
+  onEmailLogin: () => void;
   error: string | null;
 }
 
-/**
- * P5a — account-first entry. Email account creation/sign-in is the primary path;
- * wallet login is demoted to a clearly-labelled secondary option so existing
- * wallet users can still get in. A short explainer clarifies how the account and a
- * wallet relate (one account holds the balance; a wallet is only needed to withdraw).
- */
-export default function LoginScreen({ onConnect, onEmailAuth, error }: LoginScreenProps) {
+export default function LoginScreen({ onConnect, onEmailLogin, error }: LoginScreenProps) {
   const [ready, setReady] = useState(false);
   const [miniPay, setMiniPay] = useState(false);
   const [metaMask, setMetaMask] = useState(false);
@@ -48,7 +41,7 @@ export default function LoginScreen({ onConnect, onEmailAuth, error }: LoginScre
       </div>
 
       <div className="relative z-10 mx-auto max-w-2xl px-5 pb-20 pt-16">
-        <section className="flex flex-col items-center gap-6 pb-10 text-center">
+        <section className="flex flex-col items-center gap-6 pb-12 text-center">
           <Image
             src="/logo.png"
             alt="Centient logo"
@@ -60,80 +53,25 @@ export default function LoginScreen({ onConnect, onEmailAuth, error }: LoginScre
 
           <div>
             <h1 className="text-[2.25rem] font-headline font-extrabold leading-[1.1] tracking-tight text-on-surface">
-              Earn with{" "}
+              Login to{" "}
               <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
                 Centient
               </span>
             </h1>
             <p className="mt-2 font-body text-base text-on-surface-variant">
-              Train AI, cent by cent. Create an account to start — no wallet needed.
+              Train AI, cent by cent. Connect your wallet to start.
             </p>
           </div>
 
           {error && <p className="max-w-xs text-sm text-error">{error}</p>}
 
-          {/* PRIMARY (P5a): account-first */}
           <div className="flex w-full max-w-xs flex-col items-center gap-3">
-            <button
-              type="button"
-              onClick={() => onEmailAuth("register")}
-              className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-br from-primary to-primary-container font-label text-lg font-bold text-white shadow-[0_8px_24px_rgba(0,109,61,0.2)] transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-            >
-              <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
-                mail
-              </span>
-              Create account
-            </button>
-            <p className="font-body text-sm text-on-surface-variant">
-              Already have an account?{" "}
-              <button
-                type="button"
-                onClick={() => onEmailAuth("login")}
-                className="font-semibold text-primary underline-offset-2 hover:underline"
-              >
-                Sign in
-              </button>
-            </p>
-          </div>
-
-          {/* How it works — account ↔ wallet relationship + earnings flow */}
-          <div className="w-full max-w-xs rounded-2xl bg-surface-container-low p-4 text-left">
-            <div className="flex items-start gap-3">
-              <span
-                className="material-symbols-outlined mt-0.5 text-[22px] text-primary"
-                aria-hidden="true"
-              >
-                savings
-              </span>
-              <p className="font-body text-sm text-on-surface-variant">
-                Your <span className="font-semibold text-on-surface">account</span> holds the
-                balance you earn from labelling. Approved answers add to it automatically —
-                connect a wallet only when you&apos;re ready to withdraw. One account, one
-                balance, withdraw anytime.
-              </p>
-            </div>
-          </div>
-
-          {/* SECONDARY (P5a): wallet login, still supported for existing users */}
-          <div className="flex w-full max-w-xs flex-col items-center gap-3">
-            <div className="my-1 flex w-full items-center gap-3">
-              <span className="h-px flex-1 bg-outline-variant/60" />
-              <span className="font-label text-xs font-semibold uppercase tracking-widest text-outline">
-                Have a wallet?
-              </span>
-              <span className="h-px flex-1 bg-outline-variant/60" />
-            </div>
-
-            {!ready && (
-              <div className="h-14 w-full max-w-xs animate-pulse rounded-full bg-surface-container-high" />
-            )}
-
             {showMiniPay && (
-              <WalletLoginButton type="minipay" variant="secondary" onClick={() => onConnect("minipay")} />
+              <WalletLoginButton type="minipay" onClick={() => onConnect("minipay")} />
             )}
 
             {showMetaMaskPrimary && (
-              <WalletLoginButton type="metamask" variant="secondary" onClick={() => onConnect("metamask")} />
+              <WalletLoginButton type="metamask" onClick={() => onConnect("metamask")} />
             )}
 
             {showOpenMiniPay && (
@@ -141,7 +79,7 @@ export default function LoginScreen({ onConnect, onEmailAuth, error }: LoginScre
                 href="https://minipay.to"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex h-14 w-full items-center justify-center gap-2 rounded-full border border-outline-variant bg-surface-container-lowest font-label text-base font-bold text-on-surface transition duration-200 hover:bg-surface-container-low active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+                className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-br from-primary to-primary-container font-label text-lg font-bold text-white shadow-[0_8px_24px_rgba(0,109,61,0.2)] transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
               >
                 Open in MiniPay
                 <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
@@ -151,7 +89,7 @@ export default function LoginScreen({ onConnect, onEmailAuth, error }: LoginScre
             )}
 
             {showMetaMaskSecondary && (
-              <WalletLoginButton type="metamask" variant="secondary" onClick={() => onConnect("metamask")} />
+              <WalletLoginButton type="metamask" onClick={() => onConnect("metamask")} />
             )}
 
             {showSimButton && (
@@ -167,10 +105,34 @@ export default function LoginScreen({ onConnect, onEmailAuth, error }: LoginScre
               </button>
             )}
 
-            <p className="mt-1 max-w-xs text-center text-xs text-on-surface-variant">
-              Wallet login is still fully supported — existing users can sign in with their
-              wallet as before.
-            </p>
+            {ready && !miniPay && !metaMask && (
+              <p className="mt-1 max-w-xs text-center text-xs text-on-surface-variant">
+                MetaMask is not installed. Open Centient in MiniPay on Android for the full experience.
+              </p>
+            )}
+
+            {!ready && (
+              <div className="h-14 w-full max-w-xs animate-pulse rounded-full bg-surface-container-high" />
+            )}
+
+            <div className="my-1 flex w-full items-center gap-3">
+              <span className="h-px flex-1 bg-outline-variant/60" />
+              <span className="font-label text-xs font-semibold uppercase tracking-widest text-outline">
+                or
+              </span>
+              <span className="h-px flex-1 bg-outline-variant/60" />
+            </div>
+
+            <button
+              type="button"
+              onClick={onEmailLogin}
+              className="flex h-14 w-full items-center justify-center gap-2 rounded-full border border-outline-variant bg-surface-container-lowest font-label text-base font-bold text-on-surface transition duration-200 hover:bg-surface-container-low active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+            >
+              <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
+                mail
+              </span>
+              Continue with email
+            </button>
           </div>
         </section>
 

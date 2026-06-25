@@ -110,7 +110,6 @@ export default function Home() {
   const [submitting, setSubmitting] = useState(false);
   const [submissionCount, setSubmissionCount] = useState(0);
   const [accountOpen, setAccountOpen] = useState(false);
-  const [accountAuthMode, setAccountAuthMode] = useState<"login" | "register">("register");
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [onboardingCompleted, setOnboardingCompleted] = useState(false);
   const [unbannedAt, setUnbannedAt] = useState<string | null>(null);
@@ -403,10 +402,7 @@ export default function Home() {
     body = (
       <LoginScreen
         onConnect={handleWalletConnect}
-        onEmailAuth={(mode) => {
-          setAccountAuthMode(mode);
-          setScreen("account_auth");
-        }}
+        onEmailLogin={() => setScreen("account_auth")}
         error={connectError}
       />
     );
@@ -415,7 +411,6 @@ export default function Home() {
       <AccountAuthScreen
         onBack={() => setScreen("login")}
         onLoggedIn={handleAccountLoggedIn}
-        initialMode={accountAuthMode}
       />
     );
   } else if (screen === "account_home") {

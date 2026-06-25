@@ -3,16 +3,14 @@
 import Image from "next/image";
 import { useState } from "react";
 
-type Mode = "login" | "register";
-
 interface AccountAuthScreenProps {
   /** Return to the wallet/entry screen. */
   onBack: () => void;
   /** Called after a successful email/password login (session cookie set). */
   onLoggedIn: () => void;
-  /** P5a: which mode to open in — "register" when entering account-first. */
-  initialMode?: Mode;
 }
+
+type Mode = "login" | "register";
 
 function authErrorMessage(code: string | undefined, status: number, mode: Mode): string {
   switch (code) {
@@ -36,8 +34,8 @@ function authErrorMessage(code: string | undefined, status: number, mode: Mode):
     : `Sign up failed (${code ?? status}). Please try again.`;
 }
 
-export default function AccountAuthScreen({ onBack, onLoggedIn, initialMode = "login" }: AccountAuthScreenProps) {
-  const [mode, setMode] = useState<Mode>(initialMode);
+export default function AccountAuthScreen({ onBack, onLoggedIn }: AccountAuthScreenProps) {
+  const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
