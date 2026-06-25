@@ -19,6 +19,7 @@ import {
   SharedWalletError,
 } from "@/lib/ban-identity";
 import { checkWithdrawalEligibility } from "@/lib/withdrawal-eligibility";
+import { recordFlaggedWithdrawal } from "@/lib/flagged-withdrawal";
 
 /**
  * P3a — withdrawal endpoint. Turns the labeler's whole accumulated off-chain
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
       goldCorrect: true,
       goldAttempted: true,
       createdAt: true,
+      pendingBalanceWei: true,
     },
   });
 
@@ -59,10 +61,32 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "no_wallet_linked" }, { status: 400 });
   }
 
+  // P4c — every withdrawal blocked below is recorded for the admin review queue
+  // with its trigger reason. Best-effort: a failure to record must never turn a
+  // clean 403 rejection into a 500, so it is captured and swallowed.
+  const flag = (
+    reason: "BANNED_IDENTITY" | "SHARED_WALLET" | "INELIGIBLE",
+    detail: Record<string, unknown>,
+  ) =>
+    recordFlaggedWithdrawal({
+      userId: userId!,
+      walletAddress: user.walletAddress,
+      reason,
+      detail: detail as never,
+      balanceWei: user.pendingBalanceWei,
+    }).catch((err) => {
+      Sentry.captureException(err, { extra: { context: "flag-withdrawal", userId } });
+    });
+
   // P4b — identity-based anti-fraud gates: reject if the account's email or
   // wallet is banned, or if the wallet is shared across too many accounts.
   const banError = await isAnyIdentifierBanned(user.email, user.walletAddress, userId!);
   if (banError) {
+    await flag("BANNED_IDENTITY", {
+      identifierType: banError.bannedIdentifierType,
+      identifierValue: banError.identifierValue,
+      reason: banError.reason,
+    });
     return NextResponse.json(
       {
         error: "identity_banned",
@@ -76,6 +100,10 @@ export async function POST(req: NextRequest) {
 
   const sharedWalletError = await checkSharedWallet(user.walletAddress, userId!);
   if (sharedWalletError) {
+    await flag("SHARED_WALLET", {
+      walletAddress: sharedWalletError.walletAddress,
+      accountCount: sharedWalletError.accountCount,
+    });
     return NextResponse.json(
       {
         error: "shared_wallet_detected",
@@ -100,6 +128,11 @@ export async function POST(req: NextRequest) {
     getWithdrawalThresholds(),
   );
   if (!eligibility.eligible) {
+    await flag("INELIGIBLE", {
+      reason: eligibility.reason,
+      required: eligibility.required,
+      actual: eligibility.actual,
+    });
     return NextResponse.json(
       {
         error: "not_eligible",
@@ -140,6 +173,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "withdrawal_in_flight" }, { status: 409 });
     }
     if (err instanceof BannedIdentityError) {
+      await flag("BANNED_IDENTITY", {
+        identifierType: err.bannedIdentifierType,
+        identifierValue: err.identifierValue,
+        reason: err.reason,
+      });
       return NextResponse.json(
         {
           error: "identity_banned",
@@ -151,6 +189,10 @@ export async function POST(req: NextRequest) {
       );
     }
     if (err instanceof SharedWalletError) {
+      await flag("SHARED_WALLET", {
+        walletAddress: err.walletAddress,
+        accountCount: err.accountCount,
+      });
       return NextResponse.json(
         {
           error: "shared_wallet_detected",
