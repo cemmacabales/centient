@@ -226,6 +226,7 @@ model PayoutJob {
   userId             String?
   amountWei          BigInt?
   destinationAddress String?
+  txHash             String?
   status             PayoutJobStatus @default(queued)
   workerHeartbeatAt  DateTime?
   startedAt          DateTime?

@@ -6,6 +6,7 @@ import { creditBalance, totalDebitWei } from "./campaign-balance";
 import { checkAndAlert } from "./celo-balance";
 import { computeIAA } from "./quality";
 import { REWARDED_STATUSES } from "./constants";
+import { refundReversal } from "./user-balance";
 
 const STALE_PROCESSING_MS = 60_000;
 // Refresh the in-flight job's heartbeat well within STALE_PROCESSING_MS so a slow
@@ -19,13 +20,24 @@ const BATCH_SIZE = 20;
 let shouldStop = false;
 let currentJobId: string | null = null;
 
-// Only per-submission payouts are drained here. Lump-sum WITHDRAWAL jobs have a
-// null submissionId and are handled by their own worker path (P3c); claiming one
-// here would fall into the "submission not found" branch and wrongly mark it failed.
-export async function claimNextJob(): Promise<{ id: string; submissionId: string } | null> {
+export async function claimNextJob(): Promise<{
+  id: string;
+  submissionId: string | null;
+  userId: string;
+  amountWei: bigint;
+  type: string;
+} | null> {
   const staleBefore = new Date(Date.now() - STALE_PROCESSING_MS);
 
-  const claimed = await prisma.$queryRaw<{ id: string; submissionId: string }[]>`
+  const claimed = await prisma.$queryRaw<
+    {
+      id: string;
+      submissionId: string | null;
+      userId: string;
+      amountWei: bigint;
+      type: string;
+    }[]
+  >`
     UPDATE "payout_jobs"
     SET "status" = 'processing',
         "startedAt" = COALESCE("startedAt", NOW()),
@@ -33,26 +45,20 @@ export async function claimNextJob(): Promise<{ id: string; submissionId: string
         "updatedAt" = NOW()
     WHERE "id" = (
       SELECT "id" FROM "payout_jobs"
-      WHERE "type" = 'SUBMISSION_PAYOUT'
+      WHERE "type" IN ('SUBMISSION_PAYOUT', 'WITHDRAWAL')
         AND ("status" = 'queued'
              OR ("status" = 'processing' AND "workerHeartbeatAt" < ${staleBefore}))
       ORDER BY "createdAt" ASC
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )
-    RETURNING "id", "submissionId"
+    RETURNING "id", "submissionId", "userId", "amountWei", "type"
   `;
 
   if (claimed.length === 0) return null;
-
-  const first = claimed[0];
-  return { id: first.id, submissionId: first.submissionId };
+  return claimed[0];
 }
 
-// The campaign balance is debited up front when the submission is enqueued. If the
-// payout ends in a terminal non-paid state (daily cap reached, or permanently failed),
-// reverse that debit so the operator isn't charged for a label that was never paid.
-// Best-effort: a failed refund must not block marking the submission/job terminal.
 async function refundCampaignBalance(
   task: { isGold: boolean; campaignId: string | null },
   submissionId: string,
@@ -68,9 +74,119 @@ async function refundCampaignBalance(
   ).catch(() => {});
 }
 
-export async function processJob(jobId: string, submissionId: string): Promise<void> {
-  currentJobId = jobId;
+async function processWithdrawalJob(
+  jobId: string,
+  userId: string,
+  amountWei: bigint,
+): Promise<void> {
+  const job = await prisma.payoutJob.findUnique({
+    where: { id: jobId },
+  });
+  if (!job) {
+    console.error(`[payout-worker] withdrawal job ${jobId} not found`);
+    await prisma.payoutJob.update({
+      where: { id: jobId },
+      data: { status: "failed", completedAt: new Date(), lastError: "job not found" },
+    });
+    return;
+  }
 
+  let destination: string | null = job.destinationAddress;
+  if (!destination) {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { walletAddress: true },
+    });
+    if (!user?.walletAddress) {
+      console.error(`[payout-worker] user ${userId} has no walletAddress and no destinationAddress on job`);
+      await prisma.payoutJob.update({
+        where: { id: jobId },
+        data: { status: "failed", completedAt: new Date(), lastError: "no destination address" },
+      });
+      await refundReversal(userId, amountWei, jobId, "Refund for missing destination").catch(() => {});
+      return;
+    }
+    destination = user.walletAddress;
+  }
+
+  const heartbeat = setInterval(() => {
+    prisma.payoutJob
+      .update({ where: { id: jobId }, data: { workerHeartbeatAt: new Date() } })
+      .catch(() => {});
+  }, HEARTBEAT_REFRESH_MS);
+
+  try {
+    const txHash = await payReward(destination as `0x${string}`, amountWei);
+
+    await prisma.payoutJob.update({
+      where: { id: jobId },
+      data: {
+        txHash,
+        workerHeartbeatAt: new Date(),
+      },
+    });
+
+    console.log(`[payout-worker] withdrawal job ${jobId} broadcast: paid ${amountWei} to ${destination} (${txHash})`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+
+    if (err instanceof PayoutCapError) {
+      await prisma.$transaction([
+        prisma.payoutJob.update({
+          where: { id: jobId },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            lastError: `payout cap exceeded: ${message}`,
+            retryCount: MAX_RETRIES,
+          },
+        }),
+      ]);
+      await refundReversal(userId, amountWei, jobId, "Refund for daily cap hit").catch(() => {});
+      console.warn(`[payout-worker] withdrawal job ${jobId} failed: daily cap reached`);
+      Sentry.captureMessage(`[payout-worker] withdrawal job ${jobId} daily cap hit: ${message}`, { level: "warning" });
+      return;
+    }
+
+    const jobRecord = await prisma.payoutJob.findUnique({ where: { id: jobId } });
+    const newRetryCount = (jobRecord?.retryCount ?? 0) + 1;
+
+    if (newRetryCount >= MAX_RETRIES) {
+      await prisma.$transaction([
+        prisma.payoutJob.update({
+          where: { id: jobId },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            lastError: message,
+            retryCount: newRetryCount,
+          },
+        }),
+      ]);
+      await refundReversal(userId, amountWei, jobId, `Refund for failed withdrawal: ${message}`).catch(() => {});
+      console.error(`[payout-worker] withdrawal job ${jobId} failed permanently after ${MAX_RETRIES} retries: ${message}`);
+      Sentry.captureMessage(`[payout-worker] withdrawal job ${jobId} permanently failed: ${message}`, { level: "error" });
+    } else {
+      await prisma.payoutJob.update({
+        where: { id: jobId },
+        data: {
+          status: "queued",
+          workerHeartbeatAt: null,
+          lastError: message,
+          retryCount: newRetryCount,
+        },
+      });
+      console.warn(`[payout-worker] withdrawal job ${jobId} retry ${newRetryCount}/${MAX_RETRIES}: ${message}`);
+    }
+  } finally {
+    clearInterval(heartbeat);
+  }
+}
+
+async function processSubmissionPayout(
+  jobId: string,
+  submissionId: string,
+): Promise<void> {
   const submission = await prisma.submission.findUnique({
     where: { id: submissionId },
     include: {
@@ -86,23 +202,16 @@ export async function processJob(jobId: string, submissionId: string): Promise<v
     console.error(`[payout-worker] submission ${submissionId} not found`);
     await prisma.payoutJob.update({
       where: { id: jobId },
-      data: {
-        status: "failed",
-        completedAt: new Date(),
-        lastError: "submission not found",
-      },
+      data: { status: "failed", completedAt: new Date(), lastError: "submission not found" },
     });
     return;
   }
 
   if (submission.payoutStatus !== "pending") {
-    console.warn(`[payout-worker] submission ${submissionId} has unexpected status: ${submission.payoutStatus}`);
+    console.warn(`[payout-worker] submission ${submissionId} unexpected status: ${submission.payoutStatus}`);
     await prisma.payoutJob.update({
       where: { id: jobId },
-      data: {
-        status: "done",
-        completedAt: new Date(),
-      },
+      data: { status: "done", completedAt: new Date() },
     });
     return;
   }
@@ -110,7 +219,6 @@ export async function processJob(jobId: string, submissionId: string): Promise<v
   const walletAddress = submission.walletAddress as `0x${string}`;
   const amount = submission.payoutAmountWei;
 
-  // Keep this job's claim fresh while payReward is in flight so it is not reclaimed as stale.
   const heartbeat = setInterval(() => {
     prisma.payoutJob
       .update({ where: { id: jobId }, data: { workerHeartbeatAt: new Date() } })
@@ -131,7 +239,27 @@ export async function processJob(jobId: string, submissionId: string): Promise<v
         data: {
           submissionCount: { increment: 1 },
           totalEarnedWei: { increment: amount },
+          pendingBalanceWei: { increment: amount },
           lastSubmissionAt: new Date(),
+        },
+      });
+
+      const user = await tx.user.findUnique({
+        where: { walletAddress: submission.walletAddress },
+        select: { id: true },
+      });
+
+      if (!user) {
+        throw new Error(`No user found for walletAddress ${submission.walletAddress} — rolling back payout`);
+      }
+
+      await tx.userBalanceLedger.create({
+        data: {
+          userId: user.id,
+          type: "CREDIT_REWARD",
+          amountWei: amount,
+          submissionId: submissionId,
+          note: `Reward for submission ${submissionId}`,
         },
       });
     });
@@ -162,14 +290,10 @@ export async function processJob(jobId: string, submissionId: string): Promise<v
 
     await prisma.payoutJob.update({
       where: { id: jobId },
-      data: {
-        status: "done",
-        completedAt: new Date(),
-        workerHeartbeatAt: new Date(),
-      },
+      data: { status: "done", completedAt: new Date(), workerHeartbeatAt: new Date() },
     });
 
-    console.log(`[payout-worker] job ${jobId} completed: submission ${submissionId} paid ${txHash}`);
+    console.log(`[payout-worker] submission job ${jobId} completed: submission ${submissionId} paid ${txHash}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 
@@ -181,16 +305,11 @@ export async function processJob(jobId: string, submissionId: string): Promise<v
         }),
         prisma.payoutJob.update({
           where: { id: jobId },
-          data: {
-            status: "failed",
-            completedAt: new Date(),
-            lastError: `payout cap exceeded: ${message}`,
-            retryCount: MAX_RETRIES,
-          },
+          data: { status: "failed", completedAt: new Date(), lastError: `payout cap exceeded: ${message}`, retryCount: MAX_RETRIES },
         }),
       ]);
       await refundCampaignBalance(submission.task, submissionId, amount, "refund: payout cap reached");
-      console.warn(`[payout-worker] job ${jobId} failed: daily cap reached`);
+      console.warn(`[payout-worker] submission job ${jobId} failed: daily cap reached`);
       return;
     }
 
@@ -214,28 +333,18 @@ export async function processJob(jobId: string, submissionId: string): Promise<v
           }),
           prisma.payoutJob.update({
             where: { id: jobId },
-            data: {
-              status: "failed",
-              completedAt: new Date(),
-              lastError: `nonce error: ${message}`,
-              retryCount: newRetryCount,
-            },
+            data: { status: "failed", completedAt: new Date(), lastError: `nonce error: ${message}`, retryCount: newRetryCount },
           }),
         ]);
         await refundCampaignBalance(submission.task, submissionId, amount, "refund: payout failed");
-        console.error(`[payout-worker] job ${jobId} failed permanently after ${MAX_RETRIES} nonce-error retries: ${message}`);
-        Sentry.captureMessage(`[payout-worker] job ${jobId} failed permanently (nonce): ${message}`, { level: "error" });
+        console.error(`[payout-worker] submission job ${jobId} failed permanently after ${MAX_RETRIES} nonce-error retries: ${message}`);
+        Sentry.captureMessage(`[payout-worker] submission job ${jobId} failed permanently (nonce): ${message}`, { level: "error" });
       } else {
         await prisma.payoutJob.update({
           where: { id: jobId },
-          data: {
-            status: "queued",
-            workerHeartbeatAt: null,
-            lastError: `nonce error, will retry: ${message}`,
-            retryCount: newRetryCount,
-          },
+          data: { status: "queued", workerHeartbeatAt: null, lastError: `nonce error, will retry: ${message}`, retryCount: newRetryCount },
         });
-        console.warn(`[payout-worker] job ${jobId} nonce error, requeued (retry ${newRetryCount}/${MAX_RETRIES}): ${message}`);
+        console.warn(`[payout-worker] submission job ${jobId} nonce error, requeued (retry ${newRetryCount}/${MAX_RETRIES}): ${message}`);
       }
       return;
     }
@@ -251,33 +360,46 @@ export async function processJob(jobId: string, submissionId: string): Promise<v
         }),
         prisma.payoutJob.update({
           where: { id: jobId },
-          data: {
-            status: "failed",
-            completedAt: new Date(),
-            lastError: message,
-            retryCount: newRetryCount,
-          },
+          data: { status: "failed", completedAt: new Date(), lastError: message, retryCount: newRetryCount },
         }),
       ]);
       await refundCampaignBalance(submission.task, submissionId, amount, "refund: payout failed");
-      console.error(`[payout-worker] job ${jobId} failed permanently after ${MAX_RETRIES} retries: ${message}`);
-      Sentry.captureMessage(`[payout-worker] job ${jobId} failed permanently: ${message}`, { level: "error" });
+      console.error(`[payout-worker] submission job ${jobId} failed permanently after ${MAX_RETRIES} retries: ${message}`);
+      Sentry.captureMessage(`[payout-worker] submission job ${jobId} failed permanently: ${message}`, { level: "error" });
     } else {
       await prisma.payoutJob.update({
         where: { id: jobId },
-        data: {
-          status: "queued",
-          workerHeartbeatAt: null,
-          lastError: message,
-          retryCount: newRetryCount,
-        },
+        data: { status: "queued", workerHeartbeatAt: null, lastError: message, retryCount: newRetryCount },
       });
-      console.warn(`[payout-worker] job ${jobId} retry ${newRetryCount}/${MAX_RETRIES}: ${message}`);
+      console.warn(`[payout-worker] submission job ${jobId} retry ${newRetryCount}/${MAX_RETRIES}: ${message}`);
     }
   } finally {
     clearInterval(heartbeat);
-    currentJobId = null;
   }
+}
+
+export async function processJob(
+  jobId: string,
+  submissionId: string | null,
+  userId: string,
+  amountWei: bigint,
+  type: string,
+): Promise<void> {
+  currentJobId = jobId;
+
+  if (type === "SUBMISSION_PAYOUT" && submissionId) {
+    await processSubmissionPayout(jobId, submissionId);
+  } else if (type === "WITHDRAWAL" && !submissionId) {
+    await processWithdrawalJob(jobId, userId, amountWei);
+  } else {
+    console.error(`[payout-worker] job ${jobId} has invalid type/fields: type=${type}, submissionId=${submissionId}`);
+    await prisma.payoutJob.update({
+      where: { id: jobId },
+      data: { status: "failed", completedAt: new Date(), lastError: "invalid job type or fields" },
+    });
+  }
+
+  currentJobId = null;
 }
 
 export async function runWorkerLoop(): Promise<void> {
@@ -291,12 +413,10 @@ export async function runWorkerLoop(): Promise<void> {
         await sleep(POLL_IDLE_MS);
         continue;
       }
-      await processJob(claimed.id, claimed.submissionId);
+      await processJob(claimed.id, claimed.submissionId, claimed.userId, claimed.amountWei, claimed.type);
     } catch (err) {
       console.error("[payout-worker] loop error:", err);
-      Sentry.captureException(err, {
-        extra: { context: "payout-worker-loop" },
-      });
+      Sentry.captureException(err, { extra: { context: "payout-worker-loop" } });
       await sleep(POLL_IDLE_MS);
     }
   }
@@ -329,9 +449,7 @@ if (isEntrypoint) {
   installSignalHandlers();
   runWorkerLoop().catch((err) => {
     console.error("[payout-worker] fatal:", err);
-    Sentry.captureException(err, {
-      extra: { context: "payout-worker-fatal" },
-    });
+    Sentry.captureException(err, { extra: { context: "payout-worker-fatal" } });
     process.exit(1);
   });
 }

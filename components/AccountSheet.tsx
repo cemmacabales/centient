@@ -1,8 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { formatUnits } from "viem";
 import { type ToastKind } from "@/components/Toast";
 import { truncateAddress } from "@/lib/wallet";
+
+function formatTokenBalance(weiStr: string): string {
+  try {
+    return formatUnits(BigInt(weiStr), 18);
+  } catch {
+    return "0";
+  }
+}
 
 interface AccountSheetProps {
   open: boolean;
@@ -35,6 +44,23 @@ interface Submission {
   payoutStatus: string;
   payoutTxHash: string | null;
   submittedAt: string;
+}
+
+interface Withdrawal {
+  id: string;
+  amountWei: string;
+  status: string;
+  txHash: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  error: string | null;
+}
+
+interface WithdrawalData {
+  pendingBalanceWei: string;
+  thresholdWei: string;
+  canWithdraw: boolean;
+  withdrawals: Withdrawal[];
 }
 
 function PayoutChip({ status }: { status: string }) {
@@ -72,6 +98,9 @@ export default function AccountSheet({
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState(false);
+  const [withdrawalData, setWithdrawalData] = useState<WithdrawalData | null>(null);
+  const [loadingWithdrawal, setLoadingWithdrawal] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -93,9 +122,41 @@ export default function AccountSheet({
       .finally(() => setLoadingHistory(false));
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    setLoadingWithdrawal(true);
+    fetch("/api/me/withdraw")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((data) => setWithdrawalData(data))
+      .catch(() => setWithdrawalData(null))
+      .finally(() => setLoadingWithdrawal(false));
+  }, [open]);
+
   if (!open) return null;
 
   const truncated = truncateAddress(walletAddress);
+
+  const handleWithdraw = async () => {
+    if (!withdrawalData?.canWithdraw || withdrawing) return;
+    setWithdrawing(true);
+    try {
+      const res = await fetch("/api/me/withdraw", { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        showToast(`Withdrawal initiated: ${formatTokenBalance(data.amountWei)} ${rewardSymbol}`, "success");
+        const updated = await fetch("/api/me/withdraw")
+          .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+          .catch(() => null);
+        if (updated) setWithdrawalData(updated);
+      } else {
+        showToast(data.error || "Withdrawal failed", "error");
+      }
+    } catch {
+      showToast("Withdrawal failed", "error");
+    } finally {
+      setWithdrawing(false);
+    }
+  };
 
   const handleDeleteDemographics = async () => {
     if (deleting) return;
@@ -174,6 +235,62 @@ export default function AccountSheet({
             {submissionCount} submissions
           </span>
         </div>
+
+        <div className="mb-6 flex flex-col items-center gap-1">
+          <span className="text-xs font-label font-bold uppercase tracking-widest text-outline">
+            Pending balance
+          </span>
+          <div className="flex items-baseline gap-1">
+            <span className="font-headline text-4xl font-extrabold tracking-tighter text-on-surface">
+              {loadingWithdrawal ? "..." : withdrawalData ? formatTokenBalance(withdrawalData.pendingBalanceWei) : "—"}
+            </span>
+            <span className="font-headline text-xl font-bold text-secondary">
+              {rewardSymbol}
+            </span>
+          </div>
+          <span className="font-body text-xs text-on-surface-variant">
+            Min withdrawal: {loadingWithdrawal ? "..." : withdrawalData ? formatTokenBalance(withdrawalData.thresholdWei) : "—"} {rewardSymbol}
+          </span>
+          <button
+            type="button"
+            onClick={handleWithdraw}
+            disabled={loadingWithdrawal || !withdrawalData?.canWithdraw || withdrawing}
+            className="mt-3 rounded-xl bg-primary px-6 py-2 font-label text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-50"
+          >
+            {withdrawing ? "Withdrawing..." : "Withdraw"}
+          </button>
+        </div>
+
+        {withdrawalData && withdrawalData.withdrawals.length > 0 && (
+          <div className="mb-6">
+            <h3 className="mb-3 font-label text-[10px] font-bold uppercase tracking-[0.2em] text-outline">
+              Recent withdrawals
+            </h3>
+            <ul className="divide-y divide-outline-variant/20">
+              {withdrawalData.withdrawals.slice(0, 5).map((w) => (
+                <li key={w.id} className="py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <PayoutChip status={w.status} />
+                    </div>
+                    <span className="font-label text-[10px] text-on-surface-variant">
+                      {new Date(w.createdAt).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                      {" · "}+{formatTokenBalance(w.amountWei)} {rewardSymbol}
+                    </span>
+                  </div>
+                  {w.txHash && (
+                    <p className="mt-1 font-mono text-[10px] text-on-surface-variant">
+                      Tx: {w.txHash.slice(0, 10)}...
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <div className="mb-4">
           <button
