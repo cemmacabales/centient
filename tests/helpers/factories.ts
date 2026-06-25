@@ -69,6 +69,7 @@ export async function createCampaignBalance(
 export async function createUser(
   overrides: Partial<{
     walletAddress: string;
+    email: string | null;
     isBanned: boolean;
     banCount: number;
     bannedUntil: Date | null;
@@ -82,6 +83,7 @@ export async function createUser(
   const user = await db.user.create({
     data: {
       walletAddress,
+      email: overrides.email ?? null,
       isBanned: overrides.isBanned ?? false,
       banCount: overrides.banCount ?? (overrides.isBanned ? 1 : 0),
       bannedUntil: overrides.bannedUntil ?? null,

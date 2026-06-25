@@ -12,6 +12,12 @@ import {
   BelowMinimumWithdrawalError,
   WithdrawalInFlightError,
 } from "@/lib/user-balance";
+import {
+  isAnyIdentifierBanned,
+  checkSharedWallet,
+  BannedIdentityError,
+  SharedWalletError,
+} from "@/lib/ban-identity";
 import { checkWithdrawalEligibility } from "@/lib/withdrawal-eligibility";
 
 /**
@@ -34,6 +40,7 @@ export async function POST(req: NextRequest) {
     where: { id: userId! },
     select: {
       walletAddress: true,
+      email: true,
       isBanned: true,
       submissionCount: true,
       goldCorrect: true,
@@ -45,13 +52,38 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  // Banned users have their balance frozen (locked policy) — no withdrawals.
   if (user.isBanned) {
     return NextResponse.json({ error: "account_frozen" }, { status: 403 });
   }
-  // Withdrawals always go to the linked wallet; wallet-less accounts can't withdraw.
   if (!user.walletAddress) {
     return NextResponse.json({ error: "no_wallet_linked" }, { status: 400 });
+  }
+
+  // P4b — identity-based anti-fraud gates: reject if the account's email or
+  // wallet is banned, or if the wallet is shared across too many accounts.
+  const banError = await isAnyIdentifierBanned(user.email, user.walletAddress, userId!);
+  if (banError) {
+    return NextResponse.json(
+      {
+        error: "identity_banned",
+        identifierType: banError.bannedIdentifierType,
+        identifierValue: banError.identifierValue,
+        reason: banError.reason,
+      },
+      { status: 403 },
+    );
+  }
+
+  const sharedWalletError = await checkSharedWallet(user.walletAddress, userId!);
+  if (sharedWalletError) {
+    return NextResponse.json(
+      {
+        error: "shared_wallet_detected",
+        walletAddress: sharedWalletError.walletAddress,
+        accountCount: sharedWalletError.accountCount,
+      },
+      { status: 403 },
+    );
   }
 
   // P4a — anti-fraud eligibility gates: quality history (gold rate), minimum
@@ -106,6 +138,27 @@ export async function POST(req: NextRequest) {
     }
     if (err instanceof WithdrawalInFlightError) {
       return NextResponse.json({ error: "withdrawal_in_flight" }, { status: 409 });
+    }
+    if (err instanceof BannedIdentityError) {
+      return NextResponse.json(
+        {
+          error: "identity_banned",
+          identifierType: err.bannedIdentifierType,
+          identifierValue: err.identifierValue,
+          reason: err.reason,
+        },
+        { status: 403 },
+      );
+    }
+    if (err instanceof SharedWalletError) {
+      return NextResponse.json(
+        {
+          error: "shared_wallet_detected",
+          walletAddress: err.walletAddress,
+          accountCount: err.accountCount,
+        },
+        { status: 403 },
+      );
     }
     Sentry.captureException(err, { extra: { context: "withdraw", userId } });
     return NextResponse.json({ error: "server_error" }, { status: 500 });
