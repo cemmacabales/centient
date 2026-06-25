@@ -796,3 +796,47 @@ describe("POST /api/submit - balance accrual", () => {
     expect((await res.json()).error).toBe("response_target_reached");
   });
 });
+
+// P5b (#268): accrue-then-withdraw is the ONLY payout path for new earnings. The
+// per-question PayoutJob enqueue was retired in P2a; these tests are the regression
+// guard that fails if it is ever reintroduced — an approved answer must never
+// create a PayoutJob, and certainly never a per-question SUBMISSION_PAYOUT job.
+describe("POST /api/submit - P5b regression: accrual is the only payout path", () => {
+  it("creates no PayoutJob of any type for an approved answer", async () => {
+    const campaign = await createCampaign();
+    const task = await createTask({ campaignId: campaign.id });
+    const user = await createUser();
+
+    const res = await submit({
+      walletAddress: user.walletAddress,
+      taskId: task.id,
+      choice: "A",
+      reason: VALID_REASON,
+    });
+    expect(res.status).toBe(200);
+
+    expect(await prisma.payoutJob.count()).toBe(0);
+    expect(await prisma.payoutJob.count({ where: { type: "SUBMISSION_PAYOUT" } })).toBe(0);
+  });
+
+  it("never enqueues a SUBMISSION_PAYOUT job across many approved answers", async () => {
+    const campaign = await createCampaign();
+    const user = await createUser();
+
+    for (let i = 0; i < 5; i++) {
+      const task = await createTask({ campaignId: campaign.id, prompt: `Test prompt ${i}?` });
+      const res = await submit({
+        walletAddress: user.walletAddress,
+        taskId: task.id,
+        choice: "A",
+        reason: VALID_REASON,
+      });
+      expect(res.status).toBe(200);
+    }
+
+    expect(await prisma.payoutJob.count({ where: { type: "SUBMISSION_PAYOUT" } })).toBe(0);
+    // All earnings accrued to the off-chain balance instead.
+    const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(refreshed.pendingBalanceWei).toBeGreaterThan(0n);
+  });
+});
