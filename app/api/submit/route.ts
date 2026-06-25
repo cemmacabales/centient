@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { rewardInWei, resolveRewardWei } from "@/lib/payout";
+import { resolveRewardWei } from "@/lib/payout";
 import { isSpamReason, checkReasonRepetition } from "@/lib/quality";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { validateReason } from "@/lib/validators";
