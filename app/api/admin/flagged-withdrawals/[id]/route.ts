@@ -74,7 +74,7 @@ export async function PATCH(
         isBanned: true,
         bannedAt: new Date(),
         bannedReason: note ?? `flagged withdrawal: ${flag.reason}`,
-        banCount: 3,
+        banCount: { increment: 1 },
         bannedUntil: null,
         lastBanAt: new Date(),
       },

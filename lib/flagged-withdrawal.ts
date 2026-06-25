@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import prisma from "@/lib/prisma";
 import {
   FlaggedWithdrawalReason,
@@ -54,30 +55,26 @@ export async function recordFlaggedWithdrawal(
 ): Promise<void> {
   const { userId, walletAddress, reason, detail, balanceWei } = params;
 
-  const existing = await prisma.flaggedWithdrawal.findFirst({
-    where: { userId, reason, status: "PENDING" },
-    select: { id: true },
-  });
-
-  if (existing) {
-    await prisma.flaggedWithdrawal.update({
-      where: { id: existing.id },
-      data: {
-        walletAddress,
-        detail: detail ?? Prisma.JsonNull,
-        balanceWei,
-      },
-    });
-    return;
-  }
-
-  await prisma.flaggedWithdrawal.create({
-    data: {
-      userId,
-      walletAddress,
-      reason,
-      detail: detail ?? Prisma.JsonNull,
-      balanceWei,
-    },
-  });
+  // The partial unique index flagged_withdrawals_userId_reason_pending_uniq
+  // guarantees atomicity: two concurrent blocked withdrawals for the same
+  // (userId, reason) cannot both insert a PENDING row. We use a raw UPSERT
+  // because Prisma's upsert() does not infer the WHERE predicate of a partial
+  // unique index when generating ON CONFLICT. The id is generated here because
+  // the migration defines it as a DB default (UUID) while prisma db push uses a
+  // client-side default, so supplying it explicitly works on both schemas.
+  await prisma.$executeRaw`
+    INSERT INTO "flagged_withdrawals" (
+      "id", "userId", "walletAddress", "reason", "detail", "balanceWei", "createdAt", "updatedAt"
+    )
+    VALUES (
+      ${randomUUID()}, ${userId}, ${walletAddress}, ${reason},
+      ${detail ?? Prisma.JsonNull}, ${balanceWei}, now(), now()
+    )
+    ON CONFLICT ("userId", "reason") WHERE "status" = 'PENDING'
+    DO UPDATE SET
+      "walletAddress" = EXCLUDED."walletAddress",
+      "detail"        = EXCLUDED."detail",
+      "balanceWei"    = EXCLUDED."balanceWei",
+      "updatedAt"     = now();
+  `;
 }

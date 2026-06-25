@@ -1,6 +1,7 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../app/generated/prisma"
+  provider        = "prisma-client"
+  output          = "../app/generated/prisma"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
@@ -285,6 +286,7 @@ model PayoutJob {
   @@index([status, createdAt])
   @@index([status, workerHeartbeatAt])
   @@index([userId])
+  @@unique([userId], name: "payout_jobs_user_inflight_withdrawal_key", map: "payout_jobs_user_inflight_withdrawal_key", where: raw("\"type\" = 'WITHDRAWAL' AND \"status\" IN ('queued', 'processing')"))
   @@map("payout_jobs")
 }
 
@@ -412,5 +414,6 @@ model FlaggedWithdrawal {
 
   @@index([status, createdAt])
   @@index([userId])
+  @@unique([userId, reason], name: "flagged_withdrawals_userId_reason_pending_uniq", map: "flagged_withdrawals_userId_reason_pending_uniq", where: { status: "PENDING" })
   @@map("flagged_withdrawals")
 }

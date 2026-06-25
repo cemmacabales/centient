@@ -76,4 +76,34 @@ describe("recordFlaggedWithdrawal", () => {
     const flags = await prisma.flaggedWithdrawal.findMany({ where: { userId: user.id } });
     expect(flags).toHaveLength(2);
   });
+
+  it("allows a new PENDING flag when a resolved flag for the same reason already exists", async () => {
+    const user = await createUser({ email: "d@example.com" });
+    await recordFlaggedWithdrawal({
+      userId: user.id,
+      walletAddress: user.walletAddress,
+      reason: "SHARED_WALLET",
+      balanceWei: 1000n,
+    });
+    await prisma.flaggedWithdrawal.updateMany({
+      where: { userId: user.id },
+      data: { status: "REJECTED" },
+    });
+
+    await recordFlaggedWithdrawal({
+      userId: user.id,
+      walletAddress: user.walletAddress,
+      reason: "SHARED_WALLET",
+      balanceWei: 2000n,
+    });
+
+    const flags = await prisma.flaggedWithdrawal.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(flags).toHaveLength(2);
+    expect(flags[0].status).toBe("REJECTED");
+    expect(flags[1].status).toBe("PENDING");
+    expect(flags[1].balanceWei).toBe(2000n);
+  });
 });

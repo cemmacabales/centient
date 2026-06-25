@@ -159,6 +159,22 @@ describe("PATCH /api/admin/flagged-withdrawals/[id]", () => {
     );
   });
 
+  it("increments banCount instead of overwriting it", async () => {
+    const user = await createUser({ email: "repeat@example.com" });
+    await prisma.user.update({ where: { id: user.id }, data: { banCount: 2 } });
+    const flag = await createFlag(user.id, {
+      reason: "BANNED_IDENTITY",
+      walletAddress: user.walletAddress,
+    });
+
+    const res = await call(flag.id, { action: "ban", confirm: true });
+    expect(res.status).toBe(200);
+
+    const u = await prisma.user.findUnique({ where: { id: user.id } });
+    expect(u?.isBanned).toBe(true);
+    expect(u?.banCount).toBe(3);
+  });
+
   it("returns 409 when the flag is already resolved", async () => {
     const user = await createUser();
     const flag = await createFlag(user.id);
