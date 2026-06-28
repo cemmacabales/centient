@@ -2,6 +2,15 @@ import type { Chain } from "viem";
 import { celo, celoSepolia } from "viem/chains";
 import type { WithdrawalThresholds } from "@/lib/withdrawal-eligibility";
 
+// ── Celo / EVM chain-config (legacy — being migrated to Stellar) ──
+// ST-1a (#291) introduces the Stellar chain foundation in `lib/stellar/config.ts`.
+// The CELO_* / activeChain / activeRpcUrl / REWARD_TOKEN_ADDRESS exports below are
+// deliberately RETAINED here, not deleted, because their consumers — lib/payout.ts,
+// lib/celo-balance.ts, lib/admin-data.ts, lib/metamask.ts — are still on viem and
+// migrate in Waves 2–5. Removing them now would break `tsc` (the harder DoD gate).
+// Final removal lands with the closing viem-removal step after ST-4c/ST-5, per the
+// roadmap (#289). New chain config goes in lib/stellar/config.ts, not here.
+
 const toHex = (id: number) => `0x${id.toString(16)}`;
 
 export const CELO_MAINNET = {
@@ -36,7 +45,6 @@ export const CELO_SEPOLIA_CHAIN_PARAMS = {
 
 // Reference token addresses (informational — the active reward token is env-driven).
 export const CUSD_MAINNET = "0x765DE816845861e75A25fCA122bb6898B8B1282a" as const;
-export const USDC_MAINNET = "0xcebA9300f2b948710d2653dD7B07f33A8B32118C" as const;
 
 const ACTIVE_CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? celo.id.toString());
 
