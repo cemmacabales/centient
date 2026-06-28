@@ -7,7 +7,7 @@
 // Requires `@stellar/stellar-sdk` (added to the app in ST-1a). To run before then, use a
 // scratch workspace:
 //   mkdir -p /tmp/stellar-spike && cd /tmp/stellar-spike && pnpm init && pnpm add @stellar/stellar-sdk
-//   node /home/ainnovation/t2p/scripts/stellar-spike.mjs
+//   node "$OLDPWD/scripts/stellar-spike.mjs"   # $OLDPWD = the repo root you ran mkdir from
 //
 // Findings recorded on issue #290. Go/no-go: Stellar rail proven, ST-1a unblocked.
 import {
