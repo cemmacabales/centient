@@ -5,6 +5,14 @@
 -- would emit DROP COLUMN + ADD COLUMN (data loss) because it cannot infer a
 -- rename, so this migration is hand-written. The wei->stroops *scale* change
 -- (18 -> 7 decimals) is a value-layer concern handled in ST-2b (#294), not here.
+--
+-- ASSUMPTION: a fresh, Celo-free database. Because this is a byte-for-byte
+-- RENAME, any pre-existing Celo-era row keeps its 18-decimal wei value while now
+-- living in a *Stroops column — off by 10^11 (1 cUSD = 1e18 wei vs 1 XLM = 1e7
+-- stroops). The `stellar` branch targets a fresh DB with no Celo production
+-- history, so no value conversion is performed here. If this is ever run against
+-- a DB holding real Celo-era rows, a data-conversion step (… / 100000000000) per
+-- renamed column must run before/alongside this migration.
 
 -- users
 ALTER TABLE "users" RENAME COLUMN "totalEarnedWei" TO "totalEarnedStroops";
