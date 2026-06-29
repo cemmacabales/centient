@@ -1,23 +1,29 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-  STROOPS_PER_XLM,
+  STROOPS_PER_USDC,
   stellarNetwork,
   horizonUrl,
   networkPassphrase,
   explorerUrl,
   server,
-  xlmToStroops,
-  stroopsToXlmString,
+  usdcToStroops,
+  stroopsToUsdcString,
+  usdcAsset,
 } from "@/lib/stellar/config";
-import { Networks } from "@stellar/stellar-sdk";
+import { Keypair, Networks } from "@stellar/stellar-sdk";
 
 const ORIGINAL_ENV = { ...process.env };
+
+// A throwaway but structurally valid issuer key (StrKey `G…`). Never funded.
+const ISSUER = Keypair.random().publicKey();
 
 beforeEach(() => {
   // Start each case from a known-clean slate so one test's override can't leak.
   delete process.env.STELLAR_NETWORK;
   delete process.env.STELLAR_HORIZON_URL;
   delete process.env.NEXT_PUBLIC_EXPLORER_URL;
+  delete process.env.STELLAR_USDC_CODE;
+  process.env.STELLAR_USDC_ISSUER = ISSUER;
 });
 
 afterEach(() => {
@@ -77,58 +83,82 @@ describe("server", () => {
   });
 });
 
-describe("xlmToStroops", () => {
-  it("converts whole XLM", () => {
-    expect(xlmToStroops("1")).toBe(STROOPS_PER_XLM);
-    expect(xlmToStroops("10")).toBe(100_000_000n);
+describe("usdcAsset", () => {
+  it("builds the USDC asset from the configured issuer (default code)", () => {
+    const asset = usdcAsset();
+    expect(asset.getCode()).toBe("USDC");
+    expect(asset.getIssuer()).toBe(ISSUER);
+    expect(asset.isNative()).toBe(false);
   });
 
-  it("converts fractional XLM at full 7-dp precision", () => {
-    expect(xlmToStroops("1.5")).toBe(15_000_000n);
-    expect(xlmToStroops("0.0000001")).toBe(1n); // one stroop (dust)
-    expect(xlmToStroops("0.1234567")).toBe(1_234_567n);
+  it("honors a STELLAR_USDC_CODE override (e.g. USDCAllow)", () => {
+    process.env.STELLAR_USDC_CODE = "USDCAllow";
+    expect(usdcAsset().getCode()).toBe("USDCAllow");
   });
 
-  it("handles zero", () => {
-    expect(xlmToStroops("0")).toBe(0n);
-    expect(xlmToStroops("0.0000000")).toBe(0n);
+  it("throws when STELLAR_USDC_ISSUER is unset", () => {
+    delete process.env.STELLAR_USDC_ISSUER;
+    expect(() => usdcAsset()).toThrow("STELLAR_USDC_ISSUER");
   });
 
-  it("keeps precision on large amounts (no float math)", () => {
-    // 100,000,000 XLM — well past Number's safe-integer range once in stroops.
-    expect(xlmToStroops("100000000.1234567")).toBe(1_000_000_001_234_567n);
-  });
-
-  it("rejects more than 7 decimal places", () => {
-    expect(() => xlmToStroops("0.12345678")).toThrow("xlmToStroops");
-  });
-
-  it("rejects negative and non-numeric input", () => {
-    expect(() => xlmToStroops("-1")).toThrow("xlmToStroops");
-    expect(() => xlmToStroops("abc")).toThrow("xlmToStroops");
-    expect(() => xlmToStroops("")).toThrow("xlmToStroops");
-    expect(() => xlmToStroops("1.2.3")).toThrow("xlmToStroops");
+  it("throws when STELLAR_USDC_ISSUER is not a valid Stellar public key", () => {
+    process.env.STELLAR_USDC_ISSUER = "not-a-key";
+    expect(() => usdcAsset()).toThrow("STELLAR_USDC_ISSUER");
   });
 });
 
-describe("stroopsToXlmString", () => {
+describe("usdcToStroops", () => {
+  it("converts whole USDC", () => {
+    expect(usdcToStroops("1")).toBe(STROOPS_PER_USDC);
+    expect(usdcToStroops("10")).toBe(100_000_000n);
+  });
+
+  it("converts fractional USDC at full 7-dp precision", () => {
+    expect(usdcToStroops("1.5")).toBe(15_000_000n);
+    expect(usdcToStroops("0.0000001")).toBe(1n); // one stroop (dust)
+    expect(usdcToStroops("0.1234567")).toBe(1_234_567n);
+  });
+
+  it("handles zero", () => {
+    expect(usdcToStroops("0")).toBe(0n);
+    expect(usdcToStroops("0.0000000")).toBe(0n);
+  });
+
+  it("keeps precision on large amounts (no float math)", () => {
+    // 100,000,000 USDC — well past Number's safe-integer range once in stroops.
+    expect(usdcToStroops("100000000.1234567")).toBe(1_000_000_001_234_567n);
+  });
+
+  it("rejects more than 7 decimal places", () => {
+    expect(() => usdcToStroops("0.12345678")).toThrow("usdcToStroops");
+  });
+
+  it("rejects negative and non-numeric input", () => {
+    expect(() => usdcToStroops("-1")).toThrow("usdcToStroops");
+    expect(() => usdcToStroops("abc")).toThrow("usdcToStroops");
+    expect(() => usdcToStroops("")).toThrow("usdcToStroops");
+    expect(() => usdcToStroops("1.2.3")).toThrow("usdcToStroops");
+  });
+});
+
+describe("stroopsToUsdcString", () => {
   it("renders a fixed 7-decimal string", () => {
-    expect(stroopsToXlmString(15_000_000n)).toBe("1.5000000");
-    expect(stroopsToXlmString(1n)).toBe("0.0000001");
-    expect(stroopsToXlmString(0n)).toBe("0.0000000");
-    expect(stroopsToXlmString(100_000_000n)).toBe("10.0000000");
+    expect(stroopsToUsdcString(15_000_000n)).toBe("1.5000000");
+    expect(stroopsToUsdcString(1n)).toBe("0.0000001");
+    expect(stroopsToUsdcString(0n)).toBe("0.0000000");
+    expect(stroopsToUsdcString(100_000_000n)).toBe("10.0000000");
   });
 
   it("rejects negative stroops", () => {
-    expect(() => stroopsToXlmString(-1n)).toThrow("stroopsToXlmString");
+    expect(() => stroopsToUsdcString(-1n)).toThrow("stroopsToUsdcString");
   });
 });
 
 describe("round-trip", () => {
-  it("xlmToStroops ∘ stroopsToXlmString is identity over stroops", () => {
+  it("usdcToStroops ∘ stroopsToUsdcString is identity over stroops", () => {
     const cases = [0n, 1n, 15_000_000n, 1_234_567n, 1_000_000_001_234_567n];
     for (const s of cases) {
-      expect(xlmToStroops(stroopsToXlmString(s))).toBe(s);
+      expect(usdcToStroops(stroopsToUsdcString(s))).toBe(s);
     }
   });
 });
