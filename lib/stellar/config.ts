@@ -1,14 +1,20 @@
 // Stellar chain configuration — the single source of truth for which network we
-// talk to (Horizon URL + passphrase + explorer) and the stroop<->XLM conversion
-// boundary. Introduced in ST-1a (#291) as the foundation Wave 1+ builds on,
-// replacing the Celo/EVM chain-parameter layer.
+// talk to (Horizon URL + passphrase + explorer), the USDC asset we pay in, and
+// the stroop<->USDC conversion boundary. Introduced in ST-1a (#291) as the
+// foundation Wave 1+ builds on, replacing the Celo/EVM chain-parameter layer.
 //
-// Stellar ledger amounts are integer **stroops** (1 XLM = 10^7 stroops, exactly
-// 7 decimal places). The SDK's `Operation.payment` `amount`, however, takes a
-// *decimal XLM string*. The helpers below own that boundary and use only
-// string/BigInt arithmetic — never floating point — so large values and dust
-// never lose precision (ST-0 #290 finding; reviewer note on #309).
-import { Horizon, Networks } from "@stellar/stellar-sdk";
+// Payouts settle in **USDC**, a Stellar *issued* asset (code + issuer account),
+// not the native XLM. Every Stellar asset — USDC included — uses integer
+// **stroops** at exactly 7 decimal places (1 USDC = 10^7 stroops). The SDK's
+// `Operation.payment` `amount`, however, takes a *decimal string*. The helpers
+// below own that boundary and use only string/BigInt arithmetic — never floating
+// point — so large values and dust never lose precision (ST-0 #290 finding;
+// reviewer note on #309).
+//
+// Unlike native XLM, a recipient must hold a **trustline** to the USDC issuer
+// before they can be paid; a payment to an account without that trustline fails
+// with `op_no_trust` (handled non-retryably in client.ts).
+import { Asset, Horizon, Networks, StrKey } from "@stellar/stellar-sdk";
 
 export type StellarNetwork = "testnet" | "public";
 
@@ -17,9 +23,12 @@ const HORIZON_PUBLIC = "https://horizon.stellar.org";
 const EXPLORER_TESTNET = "https://stellar.expert/explorer/testnet";
 const EXPLORER_PUBLIC = "https://stellar.expert/explorer/public";
 
-/** 1 XLM = 10^7 stroops (7 decimal places). */
-export const STROOPS_PER_XLM = 10_000_000n;
-const XLM_DECIMALS = 7;
+/** 1 USDC = 10^7 stroops (7 decimal places — true for every Stellar asset). */
+export const STROOPS_PER_USDC = 10_000_000n;
+const USDC_DECIMALS = 7;
+
+/** Default asset code when `STELLAR_USDC_CODE` is unset. */
+const DEFAULT_USDC_CODE = "USDC";
 
 /**
  * Active network from `STELLAR_NETWORK` (`testnet` | `public`), defaulting to
@@ -61,31 +70,62 @@ export function server(): Horizon.Server {
 }
 
 /**
- * Parse a decimal XLM string into integer stroops. Accepts a non-negative
- * decimal with at most 7 fractional digits; rejects anything else (negatives,
- * non-numeric, or >7 decimal places — which would silently truncate on-chain).
+ * The USDC asset payouts settle in, built from `STELLAR_USDC_ISSUER` (the
+ * issuer's Stellar public key, `G…`) and an optional `STELLAR_USDC_CODE`
+ * (defaults to `USDC`). Fails fast if the issuer is missing or malformed so a
+ * misconfiguration can't silently point payouts at the wrong / a non-existent
+ * asset.
+ *
+ * Known Circle USDC issuers (set via `STELLAR_USDC_ISSUER`):
+ *   - mainnet (`STELLAR_NETWORK=public`):
+ *       GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
+ *   - testnet (Circle test USDC):
+ *       GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5
+ * The issuer is intentionally NOT hardcoded per network — it stays in env so the
+ * active network and its issuer are configured together and can't drift.
  */
-export function xlmToStroops(xlm: string): bigint {
-  const match = /^(\d+)(?:\.(\d{1,7}))?$/.exec(xlm.trim());
-  if (!match) {
+export function usdcAsset(): Asset {
+  const issuer = process.env.STELLAR_USDC_ISSUER?.trim();
+  if (!issuer) {
     throw new Error(
-      `xlmToStroops: invalid XLM amount "${xlm}" — expected a non-negative decimal with at most ${XLM_DECIMALS} decimal places`,
+      "STELLAR_USDC_ISSUER is not configured — set it to the USDC issuer's Stellar public key (G…)",
     );
   }
-  const whole = BigInt(match[1]);
-  const frac = BigInt((match[2] ?? "").padEnd(XLM_DECIMALS, "0"));
-  return whole * STROOPS_PER_XLM + frac;
+  if (!StrKey.isValidEd25519PublicKey(issuer)) {
+    throw new Error(
+      `STELLAR_USDC_ISSUER must be a valid Stellar public key (G…), got "${issuer}"`,
+    );
+  }
+  const code = process.env.STELLAR_USDC_CODE?.trim() || DEFAULT_USDC_CODE;
+  return new Asset(code, issuer);
 }
 
 /**
- * Render integer stroops as a fixed 7-decimal XLM string suitable for the SDK's
- * `Operation.payment` `amount`. Round-trips with {@link xlmToStroops}.
+ * Parse a decimal USDC string into integer stroops. Accepts a non-negative
+ * decimal with at most 7 fractional digits; rejects anything else (negatives,
+ * non-numeric, or >7 decimal places — which would silently truncate on-chain).
  */
-export function stroopsToXlmString(stroops: bigint): string {
-  if (stroops < 0n) {
-    throw new Error(`stroopsToXlmString: stroops must be non-negative, got ${stroops}`);
+export function usdcToStroops(usdc: string): bigint {
+  const match = /^(\d+)(?:\.(\d{1,7}))?$/.exec(usdc.trim());
+  if (!match) {
+    throw new Error(
+      `usdcToStroops: invalid USDC amount "${usdc}" — expected a non-negative decimal with at most ${USDC_DECIMALS} decimal places`,
+    );
   }
-  const whole = stroops / STROOPS_PER_XLM;
-  const frac = (stroops % STROOPS_PER_XLM).toString().padStart(XLM_DECIMALS, "0");
+  const whole = BigInt(match[1]);
+  const frac = BigInt((match[2] ?? "").padEnd(USDC_DECIMALS, "0"));
+  return whole * STROOPS_PER_USDC + frac;
+}
+
+/**
+ * Render integer stroops as a fixed 7-decimal USDC string suitable for the SDK's
+ * `Operation.payment` `amount`. Round-trips with {@link usdcToStroops}.
+ */
+export function stroopsToUsdcString(stroops: bigint): string {
+  if (stroops < 0n) {
+    throw new Error(`stroopsToUsdcString: stroops must be non-negative, got ${stroops}`);
+  }
+  const whole = stroops / STROOPS_PER_USDC;
+  const frac = (stroops % STROOPS_PER_USDC).toString().padStart(USDC_DECIMALS, "0");
   return `${whole}.${frac}`;
 }
