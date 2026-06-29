@@ -40,7 +40,7 @@ async function createFlag(
       userId,
       walletAddress: overrides.walletAddress ?? null,
       reason: overrides.reason ?? "SHARED_WALLET",
-      balanceWei: 5000000000000000000n,
+      balanceStroops: 5000000000000000000n,
     },
   });
 }

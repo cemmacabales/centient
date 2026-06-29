@@ -60,21 +60,23 @@ export function activeRpcUrl(): string {
 // Server-only — used in payout.
 export const REWARD_TOKEN_ADDRESS = (process.env.REWARD_TOKEN_ADDRESS ?? CUSD_MAINNET) as `0x${string}`;
 
-// Public — also used by the client UI.
+// Public — also used by the client UI. Stellar's native asset is XLM with 7
+// decimals (1 XLM = 10^7 stroops); see lib/stellar/config.ts for the conversion
+// boundary. ST-2b (#294) re-valued these from the legacy 18-decimal token layer.
 export const REWARD_AMOUNT = process.env.NEXT_PUBLIC_REWARD_AMOUNT ?? "0.05";
-export const REWARD_TOKEN_SYMBOL = process.env.NEXT_PUBLIC_REWARD_TOKEN_SYMBOL ?? "cUSD";
-export const REWARD_TOKEN_DECIMALS = Number(process.env.NEXT_PUBLIC_REWARD_TOKEN_DECIMALS ?? "18");
+export const REWARD_TOKEN_SYMBOL = process.env.NEXT_PUBLIC_REWARD_TOKEN_SYMBOL ?? "XLM";
+export const REWARD_TOKEN_DECIMALS = Number(process.env.NEXT_PUBLIC_REWARD_TOKEN_DECIMALS ?? "7");
 export const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
-// Minimum accumulated balance (in wei) a labeler must have before they can
-// withdraw, keeping per-withdrawal gas economical. Required + fail-fast like
-// PLATFORM_FEE_WEI: an unset/invalid value fails the withdrawal closed (no payout)
-// rather than silently defaulting to "no minimum".
-export function getMinWithdrawalWei(): bigint {
-  const raw = process.env.MIN_WITHDRAWAL_WEI;
+// Minimum accumulated balance (in stroops) a labeler must have before they can
+// withdraw, keeping per-withdrawal fees economical. Required + fail-fast like
+// PLATFORM_FEE_STROOPS: an unset/invalid value fails the withdrawal closed (no
+// payout) rather than silently defaulting to "no minimum".
+export function getMinWithdrawalStroops(): bigint {
+  const raw = process.env.MIN_WITHDRAWAL_STROOPS;
   if (!raw || !/^\d+$/.test(raw)) {
     throw new Error(
-      "MIN_WITHDRAWAL_WEI env var is required and must be a non-negative integer string"
+      "MIN_WITHDRAWAL_STROOPS env var is required and must be a non-negative integer string"
     );
   }
   return BigInt(raw);
@@ -96,7 +98,7 @@ export const MAX_SHARED_WALLET_ACCOUNTS = Number(process.env.MAX_SHARED_WALLET_A
 
 // P4a — withdrawal eligibility gates. These anti-fraud thresholds (spec §4.4)
 // gate cash-out behind quality history so cheap mass-created accounts can't
-// instantly withdraw. Unlike MIN_WITHDRAWAL_WEI these fail *open*: an unset (or
+// instantly withdraw. Unlike MIN_WITHDRAWAL_STROOPS these fail *open*: an unset (or
 // 0) value disables that gate, so gating is opt-in per environment. Recommended
 // production values: WITHDRAWAL_MIN_SUBMISSIONS=50, WITHDRAWAL_MIN_GOLD_RATE=0.7,
 // WITHDRAWAL_MIN_ACCOUNT_AGE_HOURS=24.

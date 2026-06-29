@@ -1,27 +1,25 @@
 // Platform-side Stellar payment client (ST-1b #292). The single primitive the
-// payout rail (Wave 3) builds on: send USDC from the pooled platform hot wallet
-// and report transaction status. Replaces the EVM `payReward` mechanics in
-// lib/payout.ts.
+// payout rail (Wave 3) builds on: send native XLM from the pooled platform hot
+// wallet and report transaction status. Replaces the EVM `payReward` mechanics
+// in lib/payout.ts.
 //
 // Custodial model (unchanged from Celo): every payout originates from one pooled
 // platform account. We load that account (for its sequence number), build a
-// USDC `payment`, sign with the platform Keypair, and submit to Horizon. USDC is
-// an issued asset, so the platform account must itself hold a USDC trustline and
-// balance (and XLM to cover fees), and each recipient must hold a USDC trustline
-// before they can be paid — see `op_no_trust` below.
+// native `payment`, sign with the platform Keypair, and submit to Horizon.
 //
 // Sequence-number safety reuses the existing payout pattern: an `async-mutex`
 // serializes account-load + submit so concurrent payouts can't reuse a sequence
 // (mirrors `nonceMutex` in lib/payout.ts).
 import {
   Account,
+  Asset,
   BASE_FEE,
   Keypair,
   Operation,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
 import { Mutex } from "async-mutex";
-import { server, networkPassphrase, stroopsToUsdcString, usdcAsset } from "./config";
+import { server, networkPassphrase, stroopsToXlmString } from "./config";
 
 /** How long a built transaction stays valid before Horizon rejects it. */
 const TX_TIMEOUT_SECONDS = 180;
@@ -29,8 +27,7 @@ const TX_TIMEOUT_SECONDS = 180;
 /**
  * A payment failure surfaced to the caller. `retryable: false` means the caller
  * must NOT retry — e.g. `op_no_destination` (the destination account doesn't
- * exist / is unfunded) or `op_no_trust` (the destination holds no USDC
- * trustline), both of which would loop forever. The payout should be marked
+ * exist / is unfunded), which would loop forever. The payout should be marked
  * failed instead. Error shapes confirmed in ST-0 (#290).
  */
 export class StellarPaymentError extends Error {
@@ -68,7 +65,7 @@ function resultCodes(err: unknown): { transaction?: string; operations?: string[
 async function buildSignSubmit(
   kp: Keypair,
   to: string,
-  amountUsdc: string,
+  amountXlm: string,
 ): Promise<{ hash: string }> {
   const srv = server();
   // Load the platform account fresh each attempt — this is the source of the
@@ -81,7 +78,7 @@ async function buildSignSubmit(
     networkPassphrase: networkPassphrase(),
   })
     .addOperation(
-      Operation.payment({ destination: to, asset: usdcAsset(), amount: amountUsdc }),
+      Operation.payment({ destination: to, asset: Asset.native(), amount: amountXlm }),
     )
     .setTimeout(TX_TIMEOUT_SECONDS)
     .build();
@@ -92,55 +89,44 @@ async function buildSignSubmit(
 }
 
 /**
- * Send `amountStroops` of USDC from the platform account to `to` (a `G…`
+ * Send `amountStroops` of native XLM from the platform account to `to` (a `G…`
  * address). Returns the confirmed transaction hash.
  *
  * Behavior:
  * - Serialized under a mutex so concurrent calls don't reuse a sequence number.
  * - Retries exactly once on `tx_bad_seq` (reloads the account, resubmits).
  * - Throws a non-retryable {@link StellarPaymentError} on `op_no_destination`
- *   (destination unfunded / doesn't exist) or `op_no_trust` (destination holds
- *   no USDC trustline) — never retried.
+ *   (destination unfunded / doesn't exist) — never retried.
  */
-export async function payUsdc(to: string, amountStroops: bigint): Promise<{ hash: string }> {
+export async function payXlm(to: string, amountStroops: bigint): Promise<{ hash: string }> {
   if (amountStroops <= 0n) {
     throw new StellarPaymentError(
-      `payUsdc: amount must be positive, got ${amountStroops} stroops`,
+      `payXlm: amount must be positive, got ${amountStroops} stroops`,
       "invalid_amount",
       false,
     );
   }
   const kp = platformKeypair();
-  const amountUsdc = stroopsToUsdcString(amountStroops);
+  const amountXlm = stroopsToXlmString(amountStroops);
 
   return seqMutex.runExclusive(async () => {
     try {
-      return await buildSignSubmit(kp, to, amountUsdc);
+      return await buildSignSubmit(kp, to, amountXlm);
     } catch (err) {
       const codes = resultCodes(err);
 
       // Destination doesn't exist / unfunded — non-retryable, must bubble up.
       if (codes.operations?.includes("op_no_destination")) {
         throw new StellarPaymentError(
-          `payUsdc: destination ${to} does not exist or is unfunded (op_no_destination)`,
+          `payXlm: destination ${to} does not exist or is unfunded (op_no_destination)`,
           "op_no_destination",
-          false,
-        );
-      }
-
-      // Destination holds no USDC trustline — non-retryable, must bubble up.
-      // (USDC is an issued asset; the recipient must add the trustline first.)
-      if (codes.operations?.includes("op_no_trust")) {
-        throw new StellarPaymentError(
-          `payUsdc: destination ${to} has no USDC trustline (op_no_trust)`,
-          "op_no_trust",
           false,
         );
       }
 
       // Stale sequence — reload + resubmit exactly once.
       if (codes.transaction === "tx_bad_seq") {
-        return await buildSignSubmit(kp, to, amountUsdc);
+        return await buildSignSubmit(kp, to, amountXlm);
       }
 
       throw err;

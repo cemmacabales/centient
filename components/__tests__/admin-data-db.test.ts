@@ -27,7 +27,7 @@ describe("getWalletRows", () => {
     });
     await prisma.user.update({
       where: { walletAddress: u2.walletAddress },
-      data: { submissionCount: 3, totalEarnedWei: 100000000000000000n },
+      data: { submissionCount: 3, totalEarnedStroops: 1000000n }, // 0.1 XLM
     });
 
     const rows = await getWalletRows();
@@ -202,7 +202,7 @@ describe("getDashboardTotals", () => {
           taskId: task1.id,
           choice: "A",
           reason: "Good",
-          payoutAmountWei: 50000000000000000,
+          payoutAmountStroops: 50000000000000000,
           payoutStatus: "sent",
         },
         {
@@ -211,7 +211,7 @@ describe("getDashboardTotals", () => {
           taskId: task2.id,
           choice: "A",
           reason: "Good",
-          payoutAmountWei: 0,
+          payoutAmountStroops: 0,
           payoutStatus: "failed",
         },
       ],

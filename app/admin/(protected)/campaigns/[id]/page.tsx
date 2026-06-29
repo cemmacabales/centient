@@ -24,7 +24,7 @@ export default async function AdminCampaignDetailPage({
       adminUserId: true,
       name: true,
       defaultResponseTarget: true,
-      rewardWei: true,
+      rewardStroops: true,
       pausedAt: true,
       createdAt: true,
       adminUser: { select: { companyName: true, email: true } },
@@ -42,7 +42,7 @@ export default async function AdminCampaignDetailPage({
     );
   }
 
-  const balanceSummary = await getBalanceSummary(id, campaign.rewardWei);
+  const balanceSummary = await getBalanceSummary(id, campaign.rewardStroops);
 
   const recentLedger = await prisma.balanceLedger.findMany({
     where: { campaignId: id },
@@ -50,7 +50,7 @@ export default async function AdminCampaignDetailPage({
     take: 10,
     select: {
       type: true,
-      amountWei: true,
+      amountStroops: true,
       note: true,
       submissionId: true,
       createdAt: true,
@@ -70,16 +70,16 @@ export default async function AdminCampaignDetailPage({
       campaignId={id}
       campaignName={campaign.name}
       defaultResponseTarget={campaign.defaultResponseTarget}
-      rewardWei={campaign.rewardWei.toString()}
+      rewardStroops={campaign.rewardStroops.toString()}
       pausedAt={campaign.pausedAt?.toISOString() ?? null}
       ownerEmail={campaign.adminUser.companyName ?? campaign.adminUser.email}
       isReadOnly={isReadOnly}
       canManage={canManage}
-      balanceWei={balanceSummary.balanceWei.toString()}
+      balanceStroops={balanceSummary.balanceStroops.toString()}
       estimatedSubmissionsRemaining={balanceSummary.estimatedSubmissionsRemaining}
       recentLedger={recentLedger.map((e) => ({
         type: e.type,
-        amountWei: e.amountWei.toString(),
+        amountStroops: e.amountStroops.toString(),
         note: e.note,
         submissionId: e.submissionId,
         createdAt: e.createdAt.toISOString(),
