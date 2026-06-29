@@ -1,0 +1,153 @@
+// Platform-side Stellar payment client (ST-1b #292). The single primitive the
+// payout rail (Wave 3) builds on: send native XLM from the pooled platform hot
+// wallet and report transaction status. Replaces the EVM `payReward` mechanics
+// in lib/payout.ts.
+//
+// Custodial model (unchanged from Celo): every payout originates from one pooled
+// platform account. We load that account (for its sequence number), build a
+// native `payment`, sign with the platform Keypair, and submit to Horizon.
+//
+// Sequence-number safety reuses the existing payout pattern: an `async-mutex`
+// serializes account-load + submit so concurrent payouts can't reuse a sequence
+// (mirrors `nonceMutex` in lib/payout.ts).
+import {
+  Account,
+  Asset,
+  BASE_FEE,
+  Keypair,
+  Operation,
+  TransactionBuilder,
+} from "@stellar/stellar-sdk";
+import { Mutex } from "async-mutex";
+import { server, networkPassphrase, stroopsToXlmString } from "./config";
+
+/** How long a built transaction stays valid before Horizon rejects it. */
+const TX_TIMEOUT_SECONDS = 180;
+
+/**
+ * A payment failure surfaced to the caller. `retryable: false` means the caller
+ * must NOT retry — e.g. `op_no_destination` (the destination account doesn't
+ * exist / is unfunded), which would loop forever. The payout should be marked
+ * failed instead. Error shapes confirmed in ST-0 (#290).
+ */
+export class StellarPaymentError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = "StellarPaymentError";
+  }
+}
+
+const seqMutex = new Mutex();
+
+let _platformKeypair: Keypair | null = null;
+
+function platformKeypair(): Keypair {
+  if (_platformKeypair) return _platformKeypair;
+  const secret = process.env.STELLAR_PLATFORM_SECRET;
+  if (!secret) {
+    throw new Error("STELLAR_PLATFORM_SECRET is not configured");
+  }
+  _platformKeypair = Keypair.fromSecret(secret);
+  return _platformKeypair;
+}
+
+/** Horizon error → `{ transaction, operations }` result codes (ST-0 #290 shapes). */
+function resultCodes(err: unknown): { transaction?: string; operations?: string[] } {
+  const extras = (err as { response?: { data?: { extras?: { result_codes?: unknown } } } })
+    ?.response?.data?.extras?.result_codes;
+  return (extras as { transaction?: string; operations?: string[] }) ?? {};
+}
+
+async function buildSignSubmit(
+  kp: Keypair,
+  to: string,
+  amountXlm: string,
+): Promise<{ hash: string }> {
+  const srv = server();
+  // Load the platform account fresh each attempt — this is the source of the
+  // sequence number, and a tx_bad_seq retry needs the *current* one.
+  const account = await srv.loadAccount(kp.publicKey());
+  const fee = await srv.fetchBaseFee().catch(() => Number(BASE_FEE));
+
+  const tx = new TransactionBuilder(account, {
+    fee: String(fee),
+    networkPassphrase: networkPassphrase(),
+  })
+    .addOperation(
+      Operation.payment({ destination: to, asset: Asset.native(), amount: amountXlm }),
+    )
+    .setTimeout(TX_TIMEOUT_SECONDS)
+    .build();
+  tx.sign(kp);
+
+  const res = await srv.submitTransaction(tx);
+  return { hash: res.hash };
+}
+
+/**
+ * Send `amountStroops` of native XLM from the platform account to `to` (a `G…`
+ * address). Returns the confirmed transaction hash.
+ *
+ * Behavior:
+ * - Serialized under a mutex so concurrent calls don't reuse a sequence number.
+ * - Retries exactly once on `tx_bad_seq` (reloads the account, resubmits).
+ * - Throws a non-retryable {@link StellarPaymentError} on `op_no_destination`
+ *   (destination unfunded / doesn't exist) — never retried.
+ */
+export async function payXlm(to: string, amountStroops: bigint): Promise<{ hash: string }> {
+  if (amountStroops <= 0n) {
+    throw new StellarPaymentError(
+      `payXlm: amount must be positive, got ${amountStroops} stroops`,
+      "invalid_amount",
+      false,
+    );
+  }
+  const kp = platformKeypair();
+  const amountXlm = stroopsToXlmString(amountStroops);
+
+  return seqMutex.runExclusive(async () => {
+    try {
+      return await buildSignSubmit(kp, to, amountXlm);
+    } catch (err) {
+      const codes = resultCodes(err);
+
+      // Destination doesn't exist / unfunded — non-retryable, must bubble up.
+      if (codes.operations?.includes("op_no_destination")) {
+        throw new StellarPaymentError(
+          `payXlm: destination ${to} does not exist or is unfunded (op_no_destination)`,
+          "op_no_destination",
+          false,
+        );
+      }
+
+      // Stale sequence — reload + resubmit exactly once.
+      if (codes.transaction === "tx_bad_seq") {
+        return await buildSignSubmit(kp, to, amountXlm);
+      }
+
+      throw err;
+    }
+  });
+}
+
+/**
+ * Look up a transaction by hash and map it to a coarse status for the reconciler
+ * (ST-3b): `confirmed` (Horizon `successful: true`), `failed` (explicit
+ * failure), or `not_found` (404 — not yet visible or never submitted).
+ */
+export async function getTxStatus(
+  hash: string,
+): Promise<"confirmed" | "failed" | "not_found"> {
+  try {
+    const tx = await server().transactions().transaction(hash).call();
+    return tx.successful ? "confirmed" : "failed";
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    if (status === 404) return "not_found";
+    throw err;
+  }
+}
