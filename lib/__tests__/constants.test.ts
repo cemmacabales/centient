@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { getMinWithdrawalWei } from "@/lib/constants";
+import { getMinWithdrawalStroops } from "@/lib/constants";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -11,29 +11,29 @@ afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
 });
 
-describe("getMinWithdrawalWei", () => {
-  it("returns the configured MIN_WITHDRAWAL_WEI as a bigint", () => {
-    process.env.MIN_WITHDRAWAL_WEI = "5000000000000000000";
-    expect(getMinWithdrawalWei()).toBe(5000000000000000000n);
+describe("getMinWithdrawalStroops", () => {
+  it("returns the configured MIN_WITHDRAWAL_STROOPS as a bigint", () => {
+    process.env.MIN_WITHDRAWAL_STROOPS = "50000000"; // 5 XLM
+    expect(getMinWithdrawalStroops()).toBe(50000000n);
   });
 
   it("accepts zero (no effective minimum)", () => {
-    process.env.MIN_WITHDRAWAL_WEI = "0";
-    expect(getMinWithdrawalWei()).toBe(0n);
+    process.env.MIN_WITHDRAWAL_STROOPS = "0";
+    expect(getMinWithdrawalStroops()).toBe(0n);
   });
 
-  it("throws when MIN_WITHDRAWAL_WEI is unset", () => {
-    delete process.env.MIN_WITHDRAWAL_WEI;
-    expect(() => getMinWithdrawalWei()).toThrow("MIN_WITHDRAWAL_WEI");
+  it("throws when MIN_WITHDRAWAL_STROOPS is unset", () => {
+    delete process.env.MIN_WITHDRAWAL_STROOPS;
+    expect(() => getMinWithdrawalStroops()).toThrow("MIN_WITHDRAWAL_STROOPS");
   });
 
-  it("throws when MIN_WITHDRAWAL_WEI is not a non-negative integer string", () => {
-    process.env.MIN_WITHDRAWAL_WEI = "not-a-number";
-    expect(() => getMinWithdrawalWei()).toThrow("MIN_WITHDRAWAL_WEI");
+  it("throws when MIN_WITHDRAWAL_STROOPS is not a non-negative integer string", () => {
+    process.env.MIN_WITHDRAWAL_STROOPS = "not-a-number";
+    expect(() => getMinWithdrawalStroops()).toThrow("MIN_WITHDRAWAL_STROOPS");
   });
 
-  it("throws when MIN_WITHDRAWAL_WEI is negative", () => {
-    process.env.MIN_WITHDRAWAL_WEI = "-1";
-    expect(() => getMinWithdrawalWei()).toThrow("MIN_WITHDRAWAL_WEI");
+  it("throws when MIN_WITHDRAWAL_STROOPS is negative", () => {
+    process.env.MIN_WITHDRAWAL_STROOPS = "-1";
+    expect(() => getMinWithdrawalStroops()).toThrow("MIN_WITHDRAWAL_STROOPS");
   });
 });

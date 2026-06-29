@@ -2,18 +2,18 @@ import prisma from "@/lib/prisma";
 
 export class InsufficientBalanceError extends Error {
   constructor(
-    public readonly balanceWei: bigint,
-    public readonly requiredWei: bigint,
+    public readonly balanceStroops: bigint,
+    public readonly requiredStroops: bigint,
   ) {
-    super(`Campaign balance insufficient: have ${balanceWei}, need ${requiredWei}`);
+    super(`Campaign balance insufficient: have ${balanceStroops}, need ${requiredStroops}`);
     this.name = "InsufficientBalanceError";
   }
 }
 
-export function getPlatformFeeWei(): bigint {
-  const raw = process.env.PLATFORM_FEE_WEI;
+export function getPlatformFeeStroops(): bigint {
+  const raw = process.env.PLATFORM_FEE_STROOPS;
   if (!raw || !/^\d+$/.test(raw)) {
-    throw new Error("PLATFORM_FEE_WEI env var is required and must be a non-negative integer string");
+    throw new Error("PLATFORM_FEE_STROOPS env var is required and must be a non-negative integer string");
   }
   return BigInt(raw);
 }
@@ -21,30 +21,30 @@ export function getPlatformFeeWei(): bigint {
 // Single source of truth for the per-submission debit/refund amount so the
 // labeler reward + platform fee is never computed inconsistently across the
 // debit site (checkAndDebit) and the refund sites in the submit route.
-export function totalDebitWei(labelerRewardWei: bigint): bigint {
-  return labelerRewardWei + getPlatformFeeWei();
+export function totalDebitStroops(labelerRewardStroops: bigint): bigint {
+  return labelerRewardStroops + getPlatformFeeStroops();
 }
 
 export async function checkAndDebit(
   campaignId: string,
-  labelerRewardWei: bigint,
+  labelerRewardStroops: bigint,
   submissionId: string,
 ): Promise<void> {
-  const platformFeeWei = getPlatformFeeWei();
-  const required = totalDebitWei(labelerRewardWei);
+  const platformFeeStroops = getPlatformFeeStroops();
+  const required = totalDebitStroops(labelerRewardStroops);
 
   await prisma.$transaction(async (tx) => {
     // Acquire a row-level lock on the campaign balance for the duration of the
     // transaction. Under READ COMMITTED two concurrent submissions for the same
     // campaign could otherwise both read the same balance, both pass the check,
     // and both debit (TOCTOU / overselling). FOR UPDATE serializes them.
-    const locked = await tx.$queryRaw<{ balanceWei: bigint }[]>`
-      SELECT "balanceWei" FROM "campaign_balances"
+    const locked = await tx.$queryRaw<{ balanceStroops: bigint }[]>`
+      SELECT "balanceStroops" FROM "campaign_balances"
       WHERE "campaignId" = ${campaignId}
       FOR UPDATE
     `;
 
-    const currentBalance = locked[0]?.balanceWei ?? 0n;
+    const currentBalance = locked[0]?.balanceStroops ?? 0n;
 
     if (currentBalance < required) {
       throw new InsufficientBalanceError(currentBalance, required);
@@ -52,13 +52,13 @@ export async function checkAndDebit(
 
     await tx.campaignBalance.update({
       where: { campaignId },
-      data: { balanceWei: { decrement: required } },
+      data: { balanceStroops: { decrement: required } },
     });
 
     await tx.balanceLedger.createMany({
       data: [
-        { campaignId, type: "DEBIT_REWARD", amountWei: labelerRewardWei, submissionId },
-        { campaignId, type: "DEBIT_FEE", amountWei: platformFeeWei, submissionId },
+        { campaignId, type: "DEBIT_REWARD", amountStroops: labelerRewardStroops, submissionId },
+        { campaignId, type: "DEBIT_FEE", amountStroops: platformFeeStroops, submissionId },
       ],
     });
   });
@@ -66,28 +66,28 @@ export async function checkAndDebit(
 
 export async function creditBalance(
   campaignId: string,
-  amountWei: bigint,
+  amountStroops: bigint,
   note?: string,
   type: "DEPOSIT" | "REFUND" = "DEPOSIT",
 ): Promise<bigint> {
   const result = await prisma.$transaction(async (tx) => {
     await tx.campaignBalance.upsert({
       where: { campaignId },
-      create: { campaignId, balanceWei: amountWei },
-      update: { balanceWei: { increment: amountWei } },
+      create: { campaignId, balanceStroops: amountStroops },
+      update: { balanceStroops: { increment: amountStroops } },
     });
 
     // Query the updated row explicitly — upsert may return the pre-increment value in some Prisma versions
     const updated = await tx.campaignBalance.findUnique({
       where: { campaignId },
-      select: { balanceWei: true },
+      select: { balanceStroops: true },
     });
 
     await tx.balanceLedger.create({
-      data: { campaignId, type, amountWei, note: note ?? null },
+      data: { campaignId, type, amountStroops, note: note ?? null },
     });
 
-    return updated!.balanceWei;
+    return updated!.balanceStroops;
   });
 
   return result;
@@ -95,25 +95,25 @@ export async function creditBalance(
 
 export async function getBalanceSummary(
   campaignId: string,
-  campaignRewardWei: bigint,
-): Promise<{ balanceWei: bigint; estimatedSubmissionsRemaining: number | null }> {
+  campaignRewardStroops: bigint,
+): Promise<{ balanceStroops: bigint; estimatedSubmissionsRemaining: number | null }> {
   const balance = await prisma.campaignBalance.findUnique({
     where: { campaignId },
-    select: { balanceWei: true },
+    select: { balanceStroops: true },
   });
 
-  const balanceWei = balance?.balanceWei ?? 0n;
+  const balanceStroops = balance?.balanceStroops ?? 0n;
 
   let estimatedSubmissionsRemaining: number | null = null;
   try {
-    const platformFeeWei = getPlatformFeeWei();
-    const costPerSubmission = campaignRewardWei + platformFeeWei;
+    const platformFeeStroops = getPlatformFeeStroops();
+    const costPerSubmission = campaignRewardStroops + platformFeeStroops;
     if (costPerSubmission > 0n) {
-      estimatedSubmissionsRemaining = Number(balanceWei / costPerSubmission);
+      estimatedSubmissionsRemaining = Number(balanceStroops / costPerSubmission);
     }
   } catch {
-    // PLATFORM_FEE_WEI not configured — estimate unavailable
+    // PLATFORM_FEE_STROOPS not configured — estimate unavailable
   }
 
-  return { balanceWei, estimatedSubmissionsRemaining };
+  return { balanceStroops, estimatedSubmissionsRemaining };
 }

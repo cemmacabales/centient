@@ -91,7 +91,7 @@ async function handleSubmissionRetry(id: string, reason: string): Promise<void> 
 }
 
 
-async function claimNextWithdrawal(): Promise<{ id: string; txHash: string; userId: string; amountWei: bigint } | null> {
+async function claimNextWithdrawal(): Promise<{ id: string; txHash: string; userId: string; amountStroops: bigint } | null> {
   const staleBefore = new Date(Date.now() - STALE_PROCESSING_MS);
 
   const claimed = await prisma.payoutJob.findMany({
@@ -106,7 +106,7 @@ async function claimNextWithdrawal(): Promise<{ id: string; txHash: string; user
     },
     orderBy: { createdAt: "asc" },
     take: BATCH_SIZE,
-    select: { id: true, txHash: true, userId: true, amountWei: true },
+    select: { id: true, txHash: true, userId: true, amountStroops: true },
   });
 
   if (claimed.length === 0) return null;
@@ -120,11 +120,11 @@ async function claimNextWithdrawal(): Promise<{ id: string; txHash: string; user
     id: first.id,
     txHash: first.txHash!,
     userId: first.userId!,
-    amountWei: first.amountWei!,
+    amountStroops: first.amountStroops!,
   };
 }
 
-export async function processWithdrawal(id: string, txHash: string, userId: string, amountWei: bigint): Promise<void> {
+export async function processWithdrawal(id: string, txHash: string, userId: string, amountStroops: bigint): Promise<void> {
   currentId = id;
   try {
     const receipt = await waitForTx(txHash as `0x${string}`);
@@ -135,22 +135,22 @@ export async function processWithdrawal(id: string, txHash: string, userId: stri
       });
       console.log(`[reconciler] confirmed withdrawal ${id}`);
     } else {
-      await handleWithdrawalRetry(id, userId, amountWei, `reverted: status=${receipt.status}`);
+      await handleWithdrawalRetry(id, userId, amountStroops, `reverted: status=${receipt.status}`);
     }
   } catch (err: any) {
     const message = err?.message ?? String(err);
     const isTimeout = message.includes("timed out") || message.includes("timeout") || message.includes("request");
     if (isTimeout) {
-      await handleWithdrawalRetry(id, userId, amountWei, `timeout after ${STALE_PROCESSING_MS / 1000}s`);
+      await handleWithdrawalRetry(id, userId, amountStroops, `timeout after ${STALE_PROCESSING_MS / 1000}s`);
     } else {
-      await handleWithdrawalRetry(id, userId, amountWei, message);
+      await handleWithdrawalRetry(id, userId, amountStroops, message);
     }
   } finally {
     currentId = null;
   }
 }
 
-async function handleWithdrawalRetry(id: string, userId: string, amountWei: bigint, reason: string): Promise<void> {
+async function handleWithdrawalRetry(id: string, userId: string, amountStroops: bigint, reason: string): Promise<void> {
   const job = await prisma.payoutJob.findUnique({ where: { id } });
   if (!job) return;
 
@@ -162,7 +162,7 @@ async function handleWithdrawalRetry(id: string, userId: string, amountWei: bigi
         data: { status: "failed", completedAt: new Date(), lastError: reason, retryCount: newCount },
       }),
     ]);
-    await refundReversal(userId, amountWei, id, `Reconciler refund for failed withdrawal: ${reason}`).catch(() => {});
+    await refundReversal(userId, amountStroops, id, `Reconciler refund for failed withdrawal: ${reason}`).catch(() => {});
     console.warn(`[reconciler] withdrawal ${id} marked failed after ${MAX_RETRIES} retries: ${reason}`);
     Sentry.captureMessage(`[reconciler] withdrawal ${id} failed: ${reason}`, { level: "warning" });
   } else {
@@ -187,7 +187,7 @@ export async function runReconcilerLoop(): Promise<void> {
 
       const wdClaim = await claimNextWithdrawal();
       if (wdClaim) {
-        await processWithdrawal(wdClaim.id, wdClaim.txHash, wdClaim.userId, wdClaim.amountWei);
+        await processWithdrawal(wdClaim.id, wdClaim.txHash, wdClaim.userId, wdClaim.amountStroops);
         continue;
       }
 

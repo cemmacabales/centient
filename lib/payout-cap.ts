@@ -2,30 +2,30 @@ import prisma from "./prisma";
 import { redis } from "./redis";
 import { REWARD_TOKEN_DECIMALS } from "./constants";
 
-const DEFAULT_DAILY_CAP_WEI = 200_000000000000000000n; // ~$200 in 18-decimal cUSD
+const DEFAULT_DAILY_CAP_STROOPS = 2_000_000_000n; // 200 XLM (200 * 10^7 stroops)
 const DISCORD_ALERT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
 const DISCORD_ALERT_REDIS_KEY = "t2p:cap_alert:last_sent";
 
 export class PayoutCapError extends Error {
   readonly code = "daily_cap_reached";
-  readonly currentWei: bigint;
-  readonly capWei: bigint;
+  readonly currentStroops: bigint;
+  readonly capStroops: bigint;
 
-  constructor(currentWei: bigint, capWei: bigint) {
-    super(`Daily payout cap reached: ${currentWei} / ${capWei} wei`);
+  constructor(currentStroops: bigint, capStroops: bigint) {
+    super(`Daily payout cap reached: ${currentStroops} / ${capStroops} stroops`);
     this.name = "PayoutCapError";
-    this.currentWei = currentWei;
-    this.capWei = capWei;
+    this.currentStroops = currentStroops;
+    this.capStroops = capStroops;
   }
 }
 
-export function getDailyPayoutCapWei(): bigint {
-  const raw = process.env.DAILY_PAYOUT_CAP_WEI;
-  if (!raw) return DEFAULT_DAILY_CAP_WEI;
+export function getDailyPayoutCapStroops(): bigint {
+  const raw = process.env.DAILY_PAYOUT_CAP_STROOPS;
+  if (!raw) return DEFAULT_DAILY_CAP_STROOPS;
   const value = BigInt(raw.trim());
   if (value < 0n) {
-    console.warn("[payout-cap] DAILY_PAYOUT_CAP_WEI is negative, falling back to default");
-    return DEFAULT_DAILY_CAP_WEI;
+    console.warn("[payout-cap] DAILY_PAYOUT_CAP_STROOPS is negative, falling back to default");
+    return DEFAULT_DAILY_CAP_STROOPS;
   }
   return value;
 }
@@ -33,13 +33,13 @@ export function getDailyPayoutCapWei(): bigint {
 export async function getRolling24hPayoutSum(): Promise<bigint> {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const aggregate = await prisma.submission.aggregate({
-    _sum: { payoutAmountWei: true },
+    _sum: { payoutAmountStroops: true },
     where: {
       payoutStatus: { in: ["sent", "confirmed"] },
       createdAt: { gte: since },
     },
   });
-  return aggregate._sum.payoutAmountWei ?? 0n;
+  return aggregate._sum.payoutAmountStroops ?? 0n;
 }
 
 export async function checkPayoutCap(amount: bigint): Promise<{
@@ -48,7 +48,7 @@ export async function checkPayoutCap(amount: bigint): Promise<{
   cap: bigint;
   remaining: bigint;
 }> {
-  const cap = getDailyPayoutCapWei();
+  const cap = getDailyPayoutCapStroops();
 
   if (cap === 0n) {
     return { allowed: true, current: 0n, cap: 0n, remaining: 0n };
@@ -60,7 +60,7 @@ export async function checkPayoutCap(amount: bigint): Promise<{
 
   if (!allowed) {
     console.warn(
-      `[payout-cap] daily cap reached — current: ${current} wei, cap: ${cap} wei, attempt: ${amount} wei`,
+      `[payout-cap] daily cap reached — current: ${current} stroops, cap: ${cap} stroops, attempt: ${amount} stroops`,
     );
     throw new PayoutCapError(current, cap);
   }
@@ -72,7 +72,7 @@ export async function maybeSendCapAlert(): Promise<void> {
   const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
   if (!webhookUrl) return;
 
-  const cap = getDailyPayoutCapWei();
+  const cap = getDailyPayoutCapStroops();
   if (cap === 0n) return;
 
   const current = await getRolling24hPayoutSum();
@@ -88,9 +88,9 @@ export async function maybeSendCapAlert(): Promise<void> {
 
     const message = [
       `Daily payout cap alert — **${pct}%** consumed`,
-      `Current 24h spend: **${current}** wei`,
-      `Cap: **${cap}** wei`,
-      `Remaining: **${cap - current}** wei`,
+      `Current 24h spend: **${current}** stroops`,
+      `Cap: **${cap}** stroops`,
+      `Remaining: **${cap - current}** stroops`,
       `Token decimals: ${REWARD_TOKEN_DECIMALS}`,
     ].join("\n");
 

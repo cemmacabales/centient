@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { resolveRewardWei } from "@/lib/payout";
+import { resolveRewardStroops } from "@/lib/payout";
 import { isSpamReason, checkReasonRepetition } from "@/lib/quality";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
 import { validateReason } from "@/lib/validators";
@@ -17,7 +17,7 @@ import {
 import {
   checkAndDebit,
   creditBalance,
-  totalDebitWei,
+  totalDebitStroops,
   InsufficientBalanceError,
 } from "@/lib/campaign-balance";
 import { creditReward } from "@/lib/user-balance";
@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
     const task = await prisma.task.findUnique({
       where: { id: taskId },
       include: {
-        campaign: { select: { defaultResponseTarget: true, rewardWei: true } },
+        campaign: { select: { defaultResponseTarget: true, rewardStroops: true } },
         _count: { select: { submissions: { where: { payoutStatus: { in: [...REWARDED_STATUSES] }, isGoldCheck: false } } } },
       },
     });
@@ -136,7 +136,7 @@ export async function POST(req: NextRequest) {
               reason: reason.trim(),
               isGoldCheck: true,
               goldPassed: correct,
-              payoutAmountWei: 0n,
+              payoutAmountStroops: 0n,
               payoutStatus: "skipped",
             },
           });
@@ -201,7 +201,7 @@ export async function POST(req: NextRequest) {
               reason: reason.trim(),
               isGoldCheck: true,
               goldPassed: false,
-              payoutAmountWei: 0n,
+              payoutAmountStroops: 0n,
               payoutStatus: "skipped",
             },
           });
@@ -272,7 +272,7 @@ export async function POST(req: NextRequest) {
             choice,
             reason: reason.trim(),
             isGoldCheck: task.isGold,
-            payoutAmountWei: 0n,
+            payoutAmountStroops: 0n,
             payoutStatus: "skipped",
           },
         });
@@ -289,7 +289,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const amount = resolveRewardWei(task.rewardWei, task.campaign?.rewardWei ?? null);
+    const amount = resolveRewardStroops(task.rewardStroops, task.campaign?.rewardStroops ?? null);
     const submission = await prisma.submission.create({
       data: {
         walletAddress,
@@ -299,7 +299,7 @@ export async function POST(req: NextRequest) {
         reason: reason.trim(),
         isGoldCheck: task.isGold,
         goldPassed: task.isGold ? true : null,
-        payoutAmountWei: amount,
+        payoutAmountStroops: amount,
         payoutStatus: "accrued",
       },
     });
@@ -319,8 +319,8 @@ export async function POST(req: NextRequest) {
             walletAddress,
             taskId,
             campaignId: task.campaignId,
-            balanceWei: String(err.balanceWei),
-            requiredWei: String(err.requiredWei),
+            balanceStroops: String(err.balanceStroops),
+            requiredStroops: String(err.requiredStroops),
           });
         }
         throw err;
@@ -341,7 +341,7 @@ export async function POST(req: NextRequest) {
       if (!task.isGold && task.campaignId) {
         await creditBalance(
           task.campaignId,
-          totalDebitWei(amount),
+          totalDebitStroops(amount),
           `refund: balance accrual failed for submission ${submission.id}`,
           "REFUND",
         ).catch(() => {});

@@ -82,8 +82,8 @@ ensure("PAYOUT_PRIVATE_KEY", `0x${hex(32)}`, (v) => isMissing(v) || !/^0x[0-9a-f
 // App URL — used in email links and redirects.
 ensure("NEXT_PUBLIC_APP_URL", "http://localhost:3000", (v) => isMissing(v) || !/^https?:\/\//.test(v));
 
-// Per-submission platform fee in wei — getPlatformFeeWei() throws if unset/invalid.
-ensure("PLATFORM_FEE_WEI", "150000000000000000", (v) => isMissing(v) || !/^\d+$/.test(v));
+// Per-submission platform fee in stroops — getPlatformFeeStroops() throws if unset/invalid.
+ensure("PLATFORM_FEE_STROOPS", "1500000", (v) => isMissing(v) || !/^\d+$/.test(v));
 
 // Cron shared secret — /api/cron/* return 401 unless this is set. Generate one so
 // the cron endpoints are testable with `Authorization: Bearer <CRON_SECRET>`.
