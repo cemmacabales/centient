@@ -6,7 +6,7 @@ import type { WithdrawalThresholds } from "@/lib/withdrawal-eligibility";
 // ST-1a (#291) introduces the Stellar chain foundation in `lib/stellar/config.ts`.
 // The CELO_* / activeChain / activeRpcUrl / REWARD_TOKEN_ADDRESS exports below are
 // deliberately RETAINED here, not deleted, because their consumers — lib/payout.ts,
-// lib/celo-balance.ts, lib/admin-data.ts, lib/metamask.ts — are still on viem and
+// lib/admin-data.ts, lib/metamask.ts — are still on viem and
 // migrate in Waves 2–5. Removing them now would break `tsc` (the harder DoD gate).
 // Final removal lands with the closing viem-removal step after ST-4c/ST-5, per the
 // roadmap (#289). New chain config goes in lib/stellar/config.ts, not here.

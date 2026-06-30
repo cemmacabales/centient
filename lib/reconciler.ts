@@ -2,7 +2,7 @@ import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "./prisma";
 import { waitForTx } from "./payout";
-import { checkAndAlert } from "./celo-balance";
+import { checkAndAlert } from "./stellar/balance";
 import { refundReversal } from "./user-balance";
 
 const STALE_PROCESSING_MS = 30_000;

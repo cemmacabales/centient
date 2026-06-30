@@ -1,6 +1,6 @@
 import { requireRoleForPage } from "@/lib/admin-auth";
 import { getHealthSnapshot, isStuckPending } from "@/lib/admin-data";
-import { getWalletHealth } from "@/lib/celo-balance";
+import { getWalletHealth } from "@/lib/stellar/balance";
 import StatCard from "@/components/admin/StatCard";
 
 export const dynamic = "force-dynamic";
@@ -102,20 +102,20 @@ export default async function AdminStatusHealthPage() {
             subline={
               snap.hotWalletBalance === "—"
                 ? "RPC lookup failed or wallet not configured"
-                : `Warning: <${walletHealth.thresholds.warnReward} | Page: <${walletHealth.thresholds.pageReward}`
+                : `Warning: <${walletHealth.thresholds.warnUsdc} | Page: <${walletHealth.thresholds.pageUsdc}`
             }
           />
           <StatCard
-            label="CELO (gas) balance"
+            label="XLM (fees/reserve) balance"
             value={
-              walletHealth.celoBalance === "—"
+              walletHealth.xlmBalance === "—"
                 ? "—"
-                : `${walletHealth.celoBalance} CELO`
+                : `${walletHealth.xlmBalance} XLM`
             }
             subline={
-              walletHealth.celoBalance === "—"
-                ? "RPC lookup failed"
-                : `Warning: <${walletHealth.thresholds.warnCelo} | Page: <${walletHealth.thresholds.pageCelo}`
+              walletHealth.xlmBalance === "—"
+                ? "Horizon lookup failed"
+                : `Warning: <${walletHealth.thresholds.warnXlm} | Page: <${walletHealth.thresholds.pageXlm}`
             }
           />
         </div>

@@ -3,7 +3,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "./prisma";
 import { payReward, PayoutCapError } from "./payout";
 import { creditBalance, totalDebitUnits } from "./campaign-balance";
-import { checkAndAlert } from "./celo-balance";
+import { checkAndAlert } from "./stellar/balance";
 import { computeIAA } from "./quality";
 import { REWARDED_STATUSES } from "./constants";
 import { refundReversal } from "./user-balance";

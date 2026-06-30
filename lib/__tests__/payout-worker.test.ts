@@ -16,7 +16,7 @@ vi.mock("@/lib/campaign-balance", async (importOriginal) => {
   return { ...actual, creditBalance: vi.fn() };
 });
 
-vi.mock("@/lib/celo-balance", () => ({
+vi.mock("@/lib/stellar/balance", () => ({
   checkAndAlert: vi.fn(async () => {}),
 }));
 
