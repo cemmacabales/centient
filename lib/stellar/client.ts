@@ -165,37 +165,3 @@ export async function getTxStatus(
     throw err;
   }
 }
-
-/** A Horizon `account.balances[]` line — the subset we read for trustline checks. */
-interface HorizonBalanceLine {
-  asset_type: string;
-  asset_code?: string;
-  asset_issuer?: string;
-}
-
-/**
- * True iff `address` (a `G…`) holds a USDC trustline for the configured issuer.
- * Holding the trustline is a precondition for receiving USDC — without it a
- * payment fails non-retryably with `op_no_trust`. Used to precheck a withdrawal
- * destination so an untrusted address is rejected with clear guidance up front
- * instead of failing silently at payout time (ST-4b #300).
- *
- * A non-existent / unfunded account (Horizon 404) holds no trustline → `false`.
- * ST-4e (#314) turns this gate from a hard reject into a sponsored-trustline flow.
- */
-export async function accountHasUsdcTrustline(address: string): Promise<boolean> {
-  const asset = usdcAsset();
-  try {
-    const account = await server().loadAccount(address);
-    return (account.balances as HorizonBalanceLine[]).some(
-      (b) =>
-        b.asset_type !== "native" &&
-        b.asset_code === asset.getCode() &&
-        b.asset_issuer === asset.getIssuer(),
-    );
-  } catch (err) {
-    const status = (err as { response?: { status?: number } })?.response?.status;
-    if (status === 404) return false;
-    throw err;
-  }
-}
