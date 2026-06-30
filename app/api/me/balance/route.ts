@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
 
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { pendingBalanceUnits: true },
+    select: { pendingBalanceStroops: true },
   });
   if (!user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
     select: {
       id: true,
       type: true,
-      amountUnits: true,
+      amountStroops: true,
       submissionId: true,
       note: true,
       createdAt: true,
@@ -44,14 +44,14 @@ export async function GET(req: NextRequest) {
   });
 
   return NextResponse.json({
-    pendingBalanceUnits: user.pendingBalanceUnits.toString(),
-    pendingBalance: formatUnits(user.pendingBalanceUnits, REWARD_TOKEN_DECIMALS),
+    pendingBalanceStroops: user.pendingBalanceStroops.toString(),
+    pendingBalance: formatUnits(user.pendingBalanceStroops, REWARD_TOKEN_DECIMALS),
     rewardSymbol: REWARD_TOKEN_SYMBOL,
     ledger: ledger.map((e) => ({
       id: e.id,
       type: e.type,
-      amountUnits: e.amountUnits.toString(),
-      amount: formatUnits(e.amountUnits, REWARD_TOKEN_DECIMALS),
+      amountStroops: e.amountStroops.toString(),
+      amount: formatUnits(e.amountStroops, REWARD_TOKEN_DECIMALS),
       submissionId: e.submissionId,
       note: e.note,
       createdAt: e.createdAt.toISOString(),

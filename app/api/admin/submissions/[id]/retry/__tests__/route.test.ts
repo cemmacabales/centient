@@ -64,7 +64,7 @@ function makeRow(opts: {
   retryCount: number;
   lastRetriedAt?: Date | null;
   walletAddress?: string;
-  payoutAmountUnits?: string;
+  payoutAmountStroops?: string;
 }) {
   return {
     id: opts.id,
@@ -72,7 +72,7 @@ function makeRow(opts: {
     retryCount: opts.retryCount,
     lastRetriedAt: opts.lastRetriedAt ?? null,
     walletAddress: opts.walletAddress ?? "0xabc",
-    payoutAmountUnits: opts.payoutAmountUnits ?? "100",
+    payoutAmountStroops: opts.payoutAmountStroops ?? "100",
   };
 }
 

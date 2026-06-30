@@ -21,7 +21,7 @@ import {
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
 import { Mutex } from "async-mutex";
-import { server, networkPassphrase, unitsToUsdcString, usdcAsset } from "./config";
+import { server, networkPassphrase, stroopsToUsdcString, usdcAsset } from "./config";
 
 /** How long a built transaction stays valid before Horizon rejects it. */
 const TX_TIMEOUT_SECONDS = 180;
@@ -92,7 +92,7 @@ async function buildSignSubmit(
 }
 
 /**
- * Send `amountUnits` of USDC from the platform account to `to` (a `G…`
+ * Send `amountStroops` of USDC from the platform account to `to` (a `G…`
  * address). Returns the confirmed transaction hash.
  *
  * Behavior:
@@ -102,16 +102,16 @@ async function buildSignSubmit(
  *   (destination unfunded / doesn't exist) or `op_no_trust` (destination holds
  *   no USDC trustline) — never retried.
  */
-export async function payUsdc(to: string, amountUnits: bigint): Promise<{ hash: string }> {
-  if (amountUnits <= 0n) {
+export async function payUsdc(to: string, amountStroops: bigint): Promise<{ hash: string }> {
+  if (amountStroops <= 0n) {
     throw new StellarPaymentError(
-      `payUsdc: amount must be positive, got ${amountUnits} units`,
+      `payUsdc: amount must be positive, got ${amountStroops} stroops`,
       "invalid_amount",
       false,
     );
   }
   const kp = platformKeypair();
-  const amountUsdc = unitsToUsdcString(amountUnits);
+  const amountUsdc = stroopsToUsdcString(amountStroops);
 
   return seqMutex.runExclusive(async () => {
     try {

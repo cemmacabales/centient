@@ -18,7 +18,7 @@ export async function GET(
 
   const campaign = await prisma.campaign.findFirst({
     where,
-    select: { defaultResponseTarget: true, rewardUnits: true },
+    select: { defaultResponseTarget: true, rewardStroops: true },
   });
 
   if (!campaign) {
@@ -31,7 +31,7 @@ export async function GET(
       id: true,
       prompt: true,
       responseTarget: true,
-      rewardUnits: true,
+      rewardStroops: true,
       majorityAnswer: true,
       agreementScore: true,
       resolvedAt: true,
@@ -43,7 +43,7 @@ export async function GET(
     const responseTarget = t.responseTarget ?? campaign.defaultResponseTarget;
     const responseCount = t._count.submissions;
     const pct = Math.min(100, Math.floor((responseCount / responseTarget) * 100));
-    const resolvedRewardUnits = t.rewardUnits ?? campaign.rewardUnits;
+    const resolvedRewardStroops = t.rewardStroops ?? campaign.rewardStroops;
     const agreementPct = t.agreementScore != null ? Math.round(t.agreementScore * 100) : null;
 
     return {
@@ -52,7 +52,7 @@ export async function GET(
       responseTarget,
       responseCount,
       pct,
-      rewardUnits: resolvedRewardUnits.toString(),
+      rewardStroops: resolvedRewardStroops.toString(),
       majorityAnswer: t.majorityAnswer,
       agreementScore: t.agreementScore,
       agreementPct,
@@ -78,7 +78,7 @@ export async function POST(
 
   const campaign = await prisma.campaign.findFirst({
     where,
-    select: { id: true, defaultResponseTarget: true, rewardUnits: true },
+    select: { id: true, defaultResponseTarget: true, rewardStroops: true },
   });
 
   if (!campaign) {
@@ -86,7 +86,7 @@ export async function POST(
   }
 
   const body = await req.json().catch(() => ({}));
-  const { prompt, responseTarget, rewardUnits: rewardUnitsRaw } = body;
+  const { prompt, responseTarget, rewardStroops: rewardStroopsRaw } = body;
 
   if (!prompt || typeof prompt !== "string" || prompt.trim().length === 0) {
     return NextResponse.json({ error: "invalid_prompt" }, { status: 400 });
@@ -97,12 +97,12 @@ export async function POST(
     return NextResponse.json({ error: "invalid_response_target" }, { status: 400 });
   }
 
-  let rewardUnits: bigint | null = null;
-  if (rewardUnitsRaw !== undefined) {
-    if (typeof rewardUnitsRaw !== "string" || !/^\d+$/.test(rewardUnitsRaw)) {
-      return NextResponse.json({ error: "invalid_reward_units" }, { status: 400 });
+  let rewardStroops: bigint | null = null;
+  if (rewardStroopsRaw !== undefined) {
+    if (typeof rewardStroopsRaw !== "string" || !/^\d+$/.test(rewardStroopsRaw)) {
+      return NextResponse.json({ error: "invalid_reward_stroops" }, { status: 400 });
     }
-    rewardUnits = BigInt(rewardUnitsRaw);
+    rewardStroops = BigInt(rewardStroopsRaw);
   }
 
   const existing = await prisma.task.findUnique({
@@ -120,17 +120,17 @@ export async function POST(
       responseA: "(add via CSV)",
       responseB: "(add via CSV)",
       responseTarget: target,
-      rewardUnits,
+      rewardStroops,
     },
   });
 
-  const resolvedRewardUnits = task.rewardUnits ?? campaign.rewardUnits;
+  const resolvedRewardStroops = task.rewardStroops ?? campaign.rewardStroops;
 
   return NextResponse.json({
     taskId: task.id,
     prompt: task.prompt,
     responseTarget: task.responseTarget ?? campaign.defaultResponseTarget,
-    rewardUnits: resolvedRewardUnits.toString(),
+    rewardStroops: resolvedRewardStroops.toString(),
     responseCount: 0,
     pct: 0,
   }, { status: 201 });

@@ -14,7 +14,7 @@ interface TaskProgress {
   responseTarget: number;
   responseCount: number;
   pct: number;
-  rewardUnits?: string;
+  rewardStroops?: string;
   majorityAnswer?: string | null;
   agreementScore?: number | null;
   agreementPct?: number | null;
@@ -24,23 +24,23 @@ interface EditingRow {
   taskId: string | null;
   prompt: string;
   responseTarget: number;
-  rewardUnits?: string | null;
+  rewardStroops?: string | null;
 }
 
 interface CampaignDetailProps {
   campaignId: string;
   campaignName: string;
   defaultResponseTarget: number;
-  rewardUnits: string;
+  rewardStroops: string;
   pausedAt: string | null;
   ownerEmail: string | null;
   isReadOnly: boolean;
   canManage: boolean;
-  balanceUnits: string;
+  balanceStroops: string;
   estimatedSubmissionsRemaining: number | null;
   recentLedger: Array<{
     type: "DEPOSIT" | "DEBIT_REWARD" | "DEBIT_FEE" | "REFUND";
-    amountUnits: string;
+    amountStroops: string;
     note: string | null;
     submissionId: string | null;
     createdAt: string;
@@ -80,12 +80,12 @@ export default function CampaignDetail({
   campaignId,
   campaignName: initialCampaignName,
   defaultResponseTarget,
-  rewardUnits,
+  rewardStroops,
   pausedAt: initialPausedAt,
   ownerEmail,
   isReadOnly,
   canManage,
-  balanceUnits,
+  balanceStroops,
   estimatedSubmissionsRemaining,
   recentLedger,
   isSuperAdmin,
@@ -104,7 +104,7 @@ export default function CampaignDetail({
   const [error, setError] = useState<string | null>(null);
   const [campaignRewardEdit, setCampaignRewardEdit] = useState(false);
   const [campaignRewardDisplay, setCampaignRewardDisplay] = useState(() => {
-    try { return formatUnits(BigInt(rewardUnits), REWARD_TOKEN_DECIMALS); } catch { return "0.05"; }
+    try { return formatUnits(BigInt(rewardStroops), REWARD_TOKEN_DECIMALS); } catch { return "0.05"; }
   });
   const [campaignRewardSaving, setCampaignRewardSaving] = useState(false);
   const [pausedAt, setPausedAt] = useState<string | null>(initialPausedAt);
@@ -187,16 +187,16 @@ export default function CampaignDetail({
   async function handleSaveCampaignReward() {
     setCampaignRewardSaving(true);
     try {
-      const units = parseUnits(campaignRewardDisplay.trim(), REWARD_TOKEN_DECIMALS).toString();
+      const stroops = parseUnits(campaignRewardDisplay.trim(), REWARD_TOKEN_DECIMALS).toString();
       const res = await fetch(`/api/admin/campaigns/${campaignId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rewardUnits: units }),
+        body: JSON.stringify({ rewardStroops: stroops }),
       });
       if (!res.ok) {
         setError("Failed to save campaign reward");
         setCampaignRewardDisplay(() => {
-          try { return formatUnits(BigInt(rewardUnits), REWARD_TOKEN_DECIMALS); } catch { return "0.05"; }
+          try { return formatUnits(BigInt(rewardStroops), REWARD_TOKEN_DECIMALS); } catch { return "0.05"; }
         });
       } else {
         setCampaignRewardEdit(false);
@@ -204,7 +204,7 @@ export default function CampaignDetail({
     } catch {
       setError("Invalid reward amount");
       setCampaignRewardDisplay(() => {
-        try { return formatUnits(BigInt(rewardUnits), REWARD_TOKEN_DECIMALS); } catch { return "0.05"; }
+        try { return formatUnits(BigInt(rewardStroops), REWARD_TOKEN_DECIMALS); } catch { return "0.05"; }
       });
     }
     setCampaignRewardSaving(false);
@@ -428,7 +428,7 @@ export default function CampaignDetail({
   }
 
   function handleEdit(task: TaskProgress) {
-    setEditing({ taskId: task.taskId, prompt: task.prompt, responseTarget: task.responseTarget, rewardUnits: task.rewardUnits ?? null });
+    setEditing({ taskId: task.taskId, prompt: task.prompt, responseTarget: task.responseTarget, rewardStroops: task.rewardStroops ?? null });
     setError(null);
   }
 
@@ -452,8 +452,8 @@ export default function CampaignDetail({
       prompt: editing.prompt.trim(),
       responseTarget: editing.responseTarget,
     };
-    if (editing.rewardUnits !== undefined) {
-      body.rewardUnits = editing.rewardUnits;
+    if (editing.rewardStroops !== undefined) {
+      body.rewardStroops = editing.rewardStroops;
     }
 
     const original = tasks.find(t => t.taskId === editing.taskId);
@@ -481,7 +481,7 @@ export default function CampaignDetail({
 
   function handleStartAdd() {
     setAddingNew(true);
-    setEditing({ taskId: null, prompt: "", responseTarget: defaultResponseTarget, rewardUnits: null });
+    setEditing({ taskId: null, prompt: "", responseTarget: defaultResponseTarget, rewardStroops: null });
     setError(null);
   }
 
@@ -519,8 +519,8 @@ export default function CampaignDetail({
       prompt: editing.prompt.trim(),
       responseTarget: editing.responseTarget,
     };
-    if (editing.rewardUnits !== undefined && editing.rewardUnits !== null) {
-      body.rewardUnits = editing.rewardUnits;
+    if (editing.rewardStroops !== undefined && editing.rewardStroops !== null) {
+      body.rewardStroops = editing.rewardStroops;
     }
 
     const res = await fetch(`/api/admin/campaigns/${campaignId}/tasks`, {
@@ -682,7 +682,7 @@ export default function CampaignDetail({
             <button
               onClick={() => {
                 setCampaignRewardEdit(false);
-                try { setCampaignRewardDisplay(formatUnits(BigInt(rewardUnits), REWARD_TOKEN_DECIMALS)); } catch { setCampaignRewardDisplay("0.05"); }
+                try { setCampaignRewardDisplay(formatUnits(BigInt(rewardStroops), REWARD_TOKEN_DECIMALS)); } catch { setCampaignRewardDisplay("0.05"); }
               }}
               className="flex h-8 w-8 items-center justify-center rounded text-on-surface-variant transition-colors hover:bg-surface-container-high"
               title="Cancel"
@@ -794,7 +794,7 @@ export default function CampaignDetail({
 
       <BalanceCard
         campaignId={campaignId}
-        initialBalanceUnits={balanceUnits}
+        initialBalanceStroops={balanceStroops}
         initialEstimated={estimatedSubmissionsRemaining}
         initialLedger={recentLedger}
         isSuperAdmin={isSuperAdmin}
@@ -903,19 +903,19 @@ export default function CampaignDetail({
                           inputMode="decimal"
                           placeholder="Inherit"
                           className="w-full rounded-lg border border-outline-variant bg-surface-container px-2 py-2 text-right font-body text-xs text-on-surface placeholder-on-surface-variant/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                          value={editing.rewardUnits !== undefined && editing.rewardUnits !== null ? (() => { try { return formatUnits(BigInt(editing.rewardUnits), REWARD_TOKEN_DECIMALS); } catch { return ""; } })() : ""}
+                          value={editing.rewardStroops !== undefined && editing.rewardStroops !== null ? (() => { try { return formatUnits(BigInt(editing.rewardStroops), REWARD_TOKEN_DECIMALS); } catch { return ""; } })() : ""}
                           onChange={e => {
                             const v = e.target.value.trim();
                             if (v === "") {
-                              setEditing({ ...editing, rewardUnits: null });
+                              setEditing({ ...editing, rewardStroops: null });
                             } else {
-                              try { setEditing({ ...editing, rewardUnits: parseUnits(v, REWARD_TOKEN_DECIMALS).toString() }); } catch {}
+                              try { setEditing({ ...editing, rewardStroops: parseUnits(v, REWARD_TOKEN_DECIMALS).toString() }); } catch {}
                             }
                           }}
                         />
                       ) : (
                         <span className="block text-right font-body text-sm text-on-surface-variant">
-                          {(() => { try { return formatUnits(BigInt(t.rewardUnits || "0"), REWARD_TOKEN_DECIMALS); } catch { return "—"; } })()}
+                          {(() => { try { return formatUnits(BigInt(t.rewardStroops || "0"), REWARD_TOKEN_DECIMALS); } catch { return "—"; } })()}
                         </span>
                       )}
                     </td>
@@ -1026,13 +1026,13 @@ export default function CampaignDetail({
                       inputMode="decimal"
                       placeholder="Inherit"
                       className="w-full rounded-lg border border-outline-variant bg-surface-container px-2 py-2 text-right font-body text-xs text-on-surface placeholder-on-surface-variant/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                      value={editing.rewardUnits !== undefined && editing.rewardUnits !== null ? (() => { try { return formatUnits(BigInt(editing.rewardUnits), REWARD_TOKEN_DECIMALS); } catch { return ""; } })() : ""}
+                      value={editing.rewardStroops !== undefined && editing.rewardStroops !== null ? (() => { try { return formatUnits(BigInt(editing.rewardStroops), REWARD_TOKEN_DECIMALS); } catch { return ""; } })() : ""}
                       onChange={e => {
                         const v = e.target.value.trim();
                         if (v === "") {
-                          setEditing({ ...editing, rewardUnits: null });
+                          setEditing({ ...editing, rewardStroops: null });
                         } else {
-                          try { setEditing({ ...editing, rewardUnits: parseUnits(v, REWARD_TOKEN_DECIMALS).toString() }); } catch {}
+                          try { setEditing({ ...editing, rewardStroops: parseUnits(v, REWARD_TOKEN_DECIMALS).toString() }); } catch {}
                         }
                       }}
                     />

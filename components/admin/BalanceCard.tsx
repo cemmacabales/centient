@@ -7,7 +7,7 @@ import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
 interface LedgerEntry {
   type: "DEPOSIT" | "DEBIT_REWARD" | "DEBIT_FEE" | "REFUND";
-  amountUnits: string;
+  amountStroops: string;
   note: string | null;
   submissionId: string | null;
   createdAt: string;
@@ -15,7 +15,7 @@ interface LedgerEntry {
 
 interface BalanceCardProps {
   campaignId: string;
-  initialBalanceUnits: string;
+  initialBalanceStroops: string;
   initialEstimated: number | null;
   initialLedger: LedgerEntry[];
   isSuperAdmin: boolean;
@@ -32,13 +32,13 @@ const LOW_BALANCE_THRESHOLD = 100;
 
 export default function BalanceCard({
   campaignId,
-  initialBalanceUnits,
+  initialBalanceStroops,
   initialEstimated,
   initialLedger,
   isSuperAdmin,
 }: BalanceCardProps) {
   const router = useRouter();
-  const [balanceUnits, setBalanceUnits] = useState(initialBalanceUnits);
+  const [balanceStroops, setBalanceStroops] = useState(initialBalanceStroops);
   const [estimated, setEstimated] = useState(initialEstimated);
   const [ledger, setLedger] = useState(initialLedger);
   const [amount, setAmount] = useState("");
@@ -46,17 +46,17 @@ export default function BalanceCard({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const balanceFormatted = formatUnits(BigInt(balanceUnits), REWARD_TOKEN_DECIMALS);
+  const balanceFormatted = formatUnits(BigInt(balanceStroops), REWARD_TOKEN_DECIMALS);
   const isLowBalance = estimated !== null && estimated < LOW_BALANCE_THRESHOLD;
 
   async function handleDeposit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
-    let amountUnits: bigint;
+    let amountStroops: bigint;
     try {
-      amountUnits = parseUnits(amount, REWARD_TOKEN_DECIMALS);
-      if (amountUnits <= 0n) throw new Error();
+      amountStroops = parseUnits(amount, REWARD_TOKEN_DECIMALS);
+      if (amountStroops <= 0n) throw new Error();
     } catch {
       setError("Enter a valid positive amount.");
       return;
@@ -67,7 +67,7 @@ export default function BalanceCard({
       const res = await fetch(`/api/admin/campaigns/${campaignId}/deposit`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ amountUnits: amountUnits.toString(), note: note || undefined }),
+        body: JSON.stringify({ amountStroops: amountStroops.toString(), note: note || undefined }),
       });
 
       if (!res.ok) {
@@ -77,7 +77,7 @@ export default function BalanceCard({
       }
 
       const data = await res.json();
-      setBalanceUnits(data.balanceUnits);
+      setBalanceStroops(data.balanceStroops);
       setEstimated(data.estimatedSubmissionsRemaining);
       setAmount("");
       setNote("");
@@ -88,7 +88,7 @@ export default function BalanceCard({
       setLedger((prev) => [
         {
           type: "DEPOSIT",
-          amountUnits: amountUnits.toString(),
+          amountStroops: amountStroops.toString(),
           note: note || null,
           submissionId: null,
           createdAt: new Date().toISOString(),
@@ -188,7 +188,7 @@ export default function BalanceCard({
                   <td className="py-1 text-on-surface">{LEDGER_LABELS[entry.type]}</td>
                   <td className="py-1 text-on-surface">
                     {entry.type === "DEPOSIT" || entry.type === "REFUND" ? "+" : "−"}
-                    {Number(formatUnits(BigInt(entry.amountUnits), REWARD_TOKEN_DECIMALS)).toFixed(4)}{" "}
+                    {Number(formatUnits(BigInt(entry.amountStroops), REWARD_TOKEN_DECIMALS)).toFixed(4)}{" "}
                     {REWARD_TOKEN_SYMBOL}
                   </td>
                   <td className="py-1 text-on-surface-variant">{entry.note ?? "—"}</td>

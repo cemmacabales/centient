@@ -10,7 +10,7 @@ export interface UserProfileProps {
   walletAddress: string;
   createdAt: string;
   totalEarned: string;
-  totalEarnedUnits: string;
+  totalEarnedStroops: string;
   submissionCount: number;
   goldCorrect: number;
   goldAttempted: number;
@@ -41,7 +41,7 @@ export interface UserProfileProps {
     reason: string;
     isGoldCheck: boolean;
     goldPassed: boolean | null;
-    payoutAmountUnits: string;
+    payoutAmountStroops: string;
     payoutStatus: string;
     payoutError?: string | null;
     payoutTxHash: string | null;
@@ -214,7 +214,7 @@ export default function UserProfileView({ profile }: { profile: UserProfileProps
                   <div className="flex items-center gap-2">
                     <div className="font-label text-xs text-on-surface-variant">
                       chose <span className="font-bold text-on-surface">{s.choice}</span> ·{" "}
-                      {formatUnits(BigInt(s.payoutAmountUnits), REWARD_TOKEN_DECIMALS)} {profile.rewardSymbol}
+                      {formatUnits(BigInt(s.payoutAmountStroops), REWARD_TOKEN_DECIMALS)} {profile.rewardSymbol}
                     </div>
                     <RetryPayoutButton
                       submissionId={s.id}

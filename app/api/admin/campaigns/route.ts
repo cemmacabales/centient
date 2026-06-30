@@ -18,7 +18,7 @@ export async function GET() {
       id: true,
       name: true,
       defaultResponseTarget: true,
-      rewardUnits: true,
+      rewardStroops: true,
       createdAt: true,
       _count: {
         select: { tasks: true },
@@ -30,7 +30,7 @@ export async function GET() {
     id: c.id,
     name: c.name,
     defaultResponseTarget: c.defaultResponseTarget,
-    rewardUnits: c.rewardUnits.toString(),
+    rewardStroops: c.rewardStroops.toString(),
     taskCount: c._count.tasks,
     createdAt: c.createdAt.toISOString(),
   }));
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
   if (forbidden) return forbidden;
 
   const body = await req.json().catch(() => ({}));
-  const { name, defaultResponseTarget, rewardUnits: rewardUnitsRaw } = body;
+  const { name, defaultResponseTarget, rewardStroops: rewardStroopsRaw } = body;
 
   if (
     !name?.trim() ||
@@ -59,27 +59,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "missing_fields" }, { status: 400 });
   }
 
-  const { rewardInUnits } = await import("@/lib/payout");
+  const { rewardInStroops } = await import("@/lib/payout");
 
-  let rewardUnits: bigint;
-  if (typeof rewardUnitsRaw === "string" || typeof rewardUnitsRaw === "bigint") {
-    rewardUnits = BigInt(rewardUnitsRaw);
+  let rewardStroops: bigint;
+  if (typeof rewardStroopsRaw === "string" || typeof rewardStroopsRaw === "bigint") {
+    rewardStroops = BigInt(rewardStroopsRaw);
   } else {
-    rewardUnits = rewardInUnits();
+    rewardStroops = rewardInStroops();
   }
 
   const campaign = await prisma.campaign.create({
     data: {
       name: name.trim(),
       defaultResponseTarget: Number(defaultResponseTarget),
-      rewardUnits,
+      rewardStroops,
       adminUserId: session.sub,
     },
     select: {
       id: true,
       name: true,
       defaultResponseTarget: true,
-      rewardUnits: true,
+      rewardStroops: true,
       createdAt: true,
     },
   });
@@ -93,12 +93,12 @@ export async function POST(req: NextRequest) {
     metadata: {
       name: campaign.name,
       defaultResponseTarget: campaign.defaultResponseTarget,
-      rewardUnits: campaign.rewardUnits.toString(),
+      rewardStroops: campaign.rewardStroops.toString(),
     }
   });
 
   return NextResponse.json(
-    { ...campaign, rewardUnits: campaign.rewardUnits.toString(), taskCount: 0 },
+    { ...campaign, rewardStroops: campaign.rewardStroops.toString(), taskCount: 0 },
     { status: 201 }
   );
 }

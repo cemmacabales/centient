@@ -99,7 +99,7 @@ describe("GET /api/task - task assignment", () => {
         taskId: task.id,
         choice: "A",
         reason: VALID_REASON,
-        payoutAmountUnits: 1,
+        payoutAmountStroops: 1,
         payoutStatus: "sent",
       },
     });
@@ -128,13 +128,13 @@ describe("GET /api/task - response target filtering", () => {
 
     await prisma.submission.createMany({
       data: [
-        { walletAddress: u1, userId: user1.id, taskId: targetMet.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 1, payoutStatus: "sent" },
-        { walletAddress: u2, userId: user2.id, taskId: targetMet.id, choice: "B", reason: VALID_REASON, payoutAmountUnits: 1, payoutStatus: "sent", isGoldCheck: false },
+        { walletAddress: u1, userId: user1.id, taskId: targetMet.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "sent" },
+        { walletAddress: u2, userId: user2.id, taskId: targetMet.id, choice: "B", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "sent", isGoldCheck: false },
       ],
     });
 
     await prisma.submission.create({
-      data: { walletAddress: u3, userId: user3.id, taskId: targetNotMet.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 1, payoutStatus: "sent", isGoldCheck: false },
+      data: { walletAddress: u3, userId: user3.id, taskId: targetNotMet.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "sent", isGoldCheck: false },
     });
 
     const wallet = makeWallet();
@@ -155,7 +155,7 @@ describe("GET /api/task - response target filtering", () => {
     const u1 = makeWallet();
     const user1 = await createUser({ walletAddress: u1 });
     await prisma.submission.create({
-      data: { walletAddress: u1, userId: user1.id, taskId: targetMet.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 1, payoutStatus: "sent", isGoldCheck: false },
+      data: { walletAddress: u1, userId: user1.id, taskId: targetMet.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "sent", isGoldCheck: false },
     });
 
     const wallet = makeWallet();
@@ -180,8 +180,8 @@ describe("GET /api/task - response target filtering", () => {
 
     await prisma.submission.createMany({
       data: [
-        { walletAddress: u1, userId: user1.id, taskId: task1.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 1, payoutStatus: "sent", isGoldCheck: false },
-        { walletAddress: u2, userId: user2.id, taskId: task2.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 1, payoutStatus: "sent", isGoldCheck: false },
+        { walletAddress: u1, userId: user1.id, taskId: task1.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "sent", isGoldCheck: false },
+        { walletAddress: u2, userId: user2.id, taskId: task2.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "sent", isGoldCheck: false },
       ],
     });
 
@@ -205,8 +205,8 @@ describe("GET /api/task - response target filtering", () => {
 
     await prisma.submission.createMany({
       data: [
-        { walletAddress: u1, userId: user1.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 1, payoutStatus: "sent", isGoldCheck: true },
-        { walletAddress: u2, userId: user2.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 1, payoutStatus: "sent", isGoldCheck: true },
+        { walletAddress: u1, userId: user1.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "sent", isGoldCheck: true },
+        { walletAddress: u2, userId: user2.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "sent", isGoldCheck: true },
       ],
     });
 
@@ -230,8 +230,8 @@ describe("GET /api/task - response target filtering", () => {
 
     await prisma.submission.createMany({
       data: [
-        { walletAddress: u1, userId: user1.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 0, payoutStatus: "skipped", isGoldCheck: false },
-        { walletAddress: u2, userId: user2.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 0, payoutStatus: "pending", isGoldCheck: false },
+        { walletAddress: u1, userId: user1.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 0, payoutStatus: "skipped", isGoldCheck: false },
+        { walletAddress: u2, userId: user2.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 0, payoutStatus: "pending", isGoldCheck: false },
       ],
     });
 
@@ -256,8 +256,8 @@ describe("GET /api/task - response target filtering", () => {
 
     await prisma.submission.createMany({
       data: [
-        { walletAddress: u1, userId: user1.id, taskId: targetMet.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 1, payoutStatus: "confirmed", isGoldCheck: false },
-        { walletAddress: u2, userId: user2.id, taskId: targetMet.id, choice: "B", reason: VALID_REASON, payoutAmountUnits: 1, payoutStatus: "confirmed", isGoldCheck: false },
+        { walletAddress: u1, userId: user1.id, taskId: targetMet.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "confirmed", isGoldCheck: false },
+        { walletAddress: u2, userId: user2.id, taskId: targetMet.id, choice: "B", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "confirmed", isGoldCheck: false },
       ],
     });
 
@@ -283,8 +283,8 @@ describe("GET /api/task - response target filtering", () => {
 
     await prisma.submission.createMany({
       data: [
-        { walletAddress: u1, userId: user1.id, taskId: targetMet.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 1, payoutStatus: "accrued", isGoldCheck: false },
-        { walletAddress: u2, userId: user2.id, taskId: targetMet.id, choice: "B", reason: VALID_REASON, payoutAmountUnits: 1, payoutStatus: "accrued", isGoldCheck: false },
+        { walletAddress: u1, userId: user1.id, taskId: targetMet.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "accrued", isGoldCheck: false },
+        { walletAddress: u2, userId: user2.id, taskId: targetMet.id, choice: "B", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "accrued", isGoldCheck: false },
       ],
     });
 

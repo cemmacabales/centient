@@ -24,7 +24,7 @@ export async function POST(
   // txHash and cause a double payment.
   const claim = await prisma.$transaction(async (tx) => {
     const submission = await tx.$queryRaw`
-      SELECT id, "payoutStatus", "retryCount", "lastRetriedAt", "walletAddress", "payoutAmountUnits"
+      SELECT id, "payoutStatus", "retryCount", "lastRetriedAt", "walletAddress", "payoutAmountStroops"
       FROM "submissions" WHERE id = ${id} FOR UPDATE
     `;
 

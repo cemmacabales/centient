@@ -32,13 +32,13 @@ describe("recordFlaggedWithdrawal", () => {
       walletAddress: user.walletAddress,
       reason: "SHARED_WALLET",
       detail: { accountCount: 4 },
-      balanceUnits: 1000n,
+      balanceStroops: 1000n,
     });
 
     const flags = await prisma.flaggedWithdrawal.findMany({ where: { userId: user.id } });
     expect(flags).toHaveLength(1);
     expect(flags[0].status).toBe("PENDING");
-    expect(flags[0].balanceUnits).toBe(1000n);
+    expect(flags[0].balanceStroops).toBe(1000n);
   });
 
   it("refreshes an existing PENDING flag of the same reason instead of duplicating", async () => {
@@ -47,14 +47,14 @@ describe("recordFlaggedWithdrawal", () => {
       userId: user.id,
       walletAddress: user.walletAddress,
       reason: "SHARED_WALLET" as const,
-      balanceUnits: 1000n,
+      balanceStroops: 1000n,
     };
     await recordFlaggedWithdrawal({ ...params, detail: { accountCount: 4 } });
-    await recordFlaggedWithdrawal({ ...params, detail: { accountCount: 5 }, balanceUnits: 2000n });
+    await recordFlaggedWithdrawal({ ...params, detail: { accountCount: 5 }, balanceStroops: 2000n });
 
     const flags = await prisma.flaggedWithdrawal.findMany({ where: { userId: user.id } });
     expect(flags).toHaveLength(1);
-    expect(flags[0].balanceUnits).toBe(2000n);
+    expect(flags[0].balanceStroops).toBe(2000n);
     expect((flags[0].detail as Record<string, unknown>).accountCount).toBe(5);
   });
 
@@ -64,13 +64,13 @@ describe("recordFlaggedWithdrawal", () => {
       userId: user.id,
       walletAddress: user.walletAddress,
       reason: "SHARED_WALLET",
-      balanceUnits: 1000n,
+      balanceStroops: 1000n,
     });
     await recordFlaggedWithdrawal({
       userId: user.id,
       walletAddress: user.walletAddress,
       reason: "INELIGIBLE",
-      balanceUnits: 1000n,
+      balanceStroops: 1000n,
     });
 
     const flags = await prisma.flaggedWithdrawal.findMany({ where: { userId: user.id } });
@@ -83,7 +83,7 @@ describe("recordFlaggedWithdrawal", () => {
       userId: user.id,
       walletAddress: user.walletAddress,
       reason: "SHARED_WALLET",
-      balanceUnits: 1000n,
+      balanceStroops: 1000n,
     });
     await prisma.flaggedWithdrawal.updateMany({
       where: { userId: user.id },
@@ -94,7 +94,7 @@ describe("recordFlaggedWithdrawal", () => {
       userId: user.id,
       walletAddress: user.walletAddress,
       reason: "SHARED_WALLET",
-      balanceUnits: 2000n,
+      balanceStroops: 2000n,
     });
 
     const flags = await prisma.flaggedWithdrawal.findMany({
@@ -104,6 +104,6 @@ describe("recordFlaggedWithdrawal", () => {
     expect(flags).toHaveLength(2);
     expect(flags[0].status).toBe("REJECTED");
     expect(flags[1].status).toBe("PENDING");
-    expect(flags[1].balanceUnits).toBe(2000n);
+    expect(flags[1].balanceStroops).toBe(2000n);
   });
 });

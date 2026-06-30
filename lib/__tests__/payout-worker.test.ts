@@ -29,7 +29,7 @@ import { createUser, createTask, createCampaign, VALID_REASON } from "@/tests/he
 // The worker only marks a job permanently failed once its retry budget is exhausted.
 // Seeding retryCount one below MAX_RETRIES makes the next attempt terminal.
 const RETRY_BUDGET_EXHAUSTED = 2;
-const AMOUNT_UNITS = 50000000000000000n;
+const AMOUNT_STROOPS = 50000000000000000n;
 
 async function enqueuePendingPayout(opts: {
   campaignId?: string | null;
@@ -48,7 +48,7 @@ async function enqueuePendingPayout(opts: {
       taskId: task.id,
       choice: "A",
       reason: VALID_REASON,
-      payoutAmountUnits: AMOUNT_UNITS,
+      payoutAmountStroops: AMOUNT_STROOPS,
       payoutStatus: "pending",
     },
   });
@@ -68,7 +68,7 @@ beforeEach(async () => {
   vi.mocked(payReward).mockReset();
   vi.mocked(creditBalance).mockReset();
   vi.mocked(creditBalance).mockResolvedValue(0n);
-  process.env.PLATFORM_FEE_UNITS = "150000000000000000";
+  process.env.PLATFORM_FEE_STROOPS = "150000000000000000";
 });
 
 describe("payout-worker campaign balance refunds", () => {
@@ -77,7 +77,7 @@ describe("payout-worker campaign balance refunds", () => {
     const campaign = await createCampaign();
     const { submission, job, user } = await enqueuePendingPayout({ campaignId: campaign.id });
 
-    await processJob(job.id, submission.id, user.id, submission.payoutAmountUnits, "SUBMISSION_PAYOUT");
+    await processJob(job.id, submission.id, user.id, submission.payoutAmountStroops, "SUBMISSION_PAYOUT");
 
     expect(creditBalance).toHaveBeenCalledOnce();
     expect(creditBalance).toHaveBeenCalledWith(
@@ -100,7 +100,7 @@ describe("payout-worker campaign balance refunds", () => {
       retryCount: RETRY_BUDGET_EXHAUSTED,
     });
 
-    await processJob(job.id, submission.id, user.id, submission.payoutAmountUnits, "SUBMISSION_PAYOUT");
+    await processJob(job.id, submission.id, user.id, submission.payoutAmountStroops, "SUBMISSION_PAYOUT");
 
     expect(creditBalance).toHaveBeenCalledOnce();
     expect(creditBalance).toHaveBeenCalledWith(
@@ -123,7 +123,7 @@ describe("payout-worker campaign balance refunds", () => {
       retryCount: 0,
     });
 
-    await processJob(job.id, submission.id, user.id, submission.payoutAmountUnits, "SUBMISSION_PAYOUT");
+    await processJob(job.id, submission.id, user.id, submission.payoutAmountStroops, "SUBMISSION_PAYOUT");
 
     expect(creditBalance).not.toHaveBeenCalled();
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
@@ -139,7 +139,7 @@ describe("payout-worker campaign balance refunds", () => {
       retryCount: RETRY_BUDGET_EXHAUSTED,
     });
 
-    await processJob(job.id, submission.id, user.id, submission.payoutAmountUnits, "SUBMISSION_PAYOUT");
+    await processJob(job.id, submission.id, user.id, submission.payoutAmountStroops, "SUBMISSION_PAYOUT");
 
     expect(creditBalance).not.toHaveBeenCalled();
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
@@ -154,7 +154,7 @@ describe("payout-worker campaign balance refunds", () => {
       isGold: true,
     });
 
-    await processJob(job.id, submission.id, user.id, submission.payoutAmountUnits, "SUBMISSION_PAYOUT");
+    await processJob(job.id, submission.id, user.id, submission.payoutAmountStroops, "SUBMISSION_PAYOUT");
 
     expect(creditBalance).not.toHaveBeenCalled();
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
@@ -167,7 +167,7 @@ describe("payout-worker campaign balance refunds", () => {
     const campaign = await createCampaign();
     const { submission, job, user } = await enqueuePendingPayout({ campaignId: campaign.id });
 
-    await expect(processJob(job.id, submission.id, user.id, submission.payoutAmountUnits, "SUBMISSION_PAYOUT")).resolves.toBeUndefined();
+    await expect(processJob(job.id, submission.id, user.id, submission.payoutAmountStroops, "SUBMISSION_PAYOUT")).resolves.toBeUndefined();
 
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
     expect(updated?.payoutStatus).toBe("skipped");
@@ -182,7 +182,7 @@ describe("payout-worker campaign balance refunds", () => {
       retryCount: RETRY_BUDGET_EXHAUSTED,
     });
 
-    await expect(processJob(job.id, submission.id, user.id, submission.payoutAmountUnits, "SUBMISSION_PAYOUT")).resolves.toBeUndefined();
+    await expect(processJob(job.id, submission.id, user.id, submission.payoutAmountStroops, "SUBMISSION_PAYOUT")).resolves.toBeUndefined();
 
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
     expect(updated?.payoutStatus).toBe("failed");

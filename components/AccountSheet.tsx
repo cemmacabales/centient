@@ -6,9 +6,9 @@ import { type ToastKind } from "@/components/Toast";
 import { truncateAddress } from "@/lib/wallet";
 import { REWARD_TOKEN_DECIMALS } from "@/lib/constants";
 
-function formatTokenBalance(unitsStr: string): string {
+function formatTokenBalance(stroopsStr: string): string {
   try {
-    return formatUnits(BigInt(unitsStr), REWARD_TOKEN_DECIMALS);
+    return formatUnits(BigInt(stroopsStr), REWARD_TOKEN_DECIMALS);
   } catch {
     return "0";
   }
@@ -49,7 +49,7 @@ interface Submission {
 
 interface Withdrawal {
   id: string;
-  amountUnits: string;
+  amountStroops: string;
   status: string;
   txHash: string | null;
   createdAt: string;
@@ -58,8 +58,8 @@ interface Withdrawal {
 }
 
 interface WithdrawalData {
-  pendingBalanceUnits: string;
-  thresholdUnits: string;
+  pendingBalanceStroops: string;
+  thresholdStroops: string;
   canWithdraw: boolean;
   withdrawals: Withdrawal[];
 }
@@ -144,7 +144,7 @@ export default function AccountSheet({
       const res = await fetch("/api/me/withdraw", { method: "POST" });
       const data = await res.json();
       if (res.ok) {
-        showToast(`Withdrawal initiated: ${formatTokenBalance(data.amountUnits)} ${rewardSymbol}`, "success");
+        showToast(`Withdrawal initiated: ${formatTokenBalance(data.amountStroops)} ${rewardSymbol}`, "success");
         const updated = await fetch("/api/me/withdraw")
           .then((r) => (r.ok ? r.json() : Promise.reject(r)))
           .catch(() => null);
@@ -243,14 +243,14 @@ export default function AccountSheet({
           </span>
           <div className="flex items-baseline gap-1">
             <span className="font-headline text-4xl font-extrabold tracking-tighter text-on-surface">
-              {loadingWithdrawal ? "..." : withdrawalData ? formatTokenBalance(withdrawalData.pendingBalanceUnits) : "—"}
+              {loadingWithdrawal ? "..." : withdrawalData ? formatTokenBalance(withdrawalData.pendingBalanceStroops) : "—"}
             </span>
             <span className="font-headline text-xl font-bold text-secondary">
               {rewardSymbol}
             </span>
           </div>
           <span className="font-body text-xs text-on-surface-variant">
-            Min withdrawal: {loadingWithdrawal ? "..." : withdrawalData ? formatTokenBalance(withdrawalData.thresholdUnits) : "—"} {rewardSymbol}
+            Min withdrawal: {loadingWithdrawal ? "..." : withdrawalData ? formatTokenBalance(withdrawalData.thresholdStroops) : "—"} {rewardSymbol}
           </span>
           <button
             type="button"
@@ -279,7 +279,7 @@ export default function AccountSheet({
                         month: "short",
                         day: "numeric",
                       })}
-                      {" · "}+{formatTokenBalance(w.amountUnits)} {rewardSymbol}
+                      {" · "}+{formatTokenBalance(w.amountStroops)} {rewardSymbol}
                     </span>
                   </div>
                   {w.txHash && (

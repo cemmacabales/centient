@@ -22,7 +22,7 @@ export async function GET(
       id: true,
       name: true,
       defaultResponseTarget: true,
-      rewardUnits: true,
+      rewardStroops: true,
       csvFileName: true,
       createdAt: true,
       _count: { select: { tasks: true } },
@@ -35,7 +35,7 @@ export async function GET(
 
   return NextResponse.json({
     ...campaign,
-    rewardUnits: campaign.rewardUnits.toString(),
+    rewardStroops: campaign.rewardStroops.toString(),
     taskCount: campaign._count.tasks,
     createdAt: campaign.createdAt.toISOString(),
   });
@@ -75,11 +75,11 @@ export async function PATCH(
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
-  const { name, defaultResponseTarget, rewardUnits: rewardUnitsRaw, paused } = body;
+  const { name, defaultResponseTarget, rewardStroops: rewardStroopsRaw, paused } = body;
   const updateData: {
     name?: string;
     defaultResponseTarget?: number;
-    rewardUnits?: bigint;
+    rewardStroops?: bigint;
     pausedAt?: Date | null;
   } = {};
 
@@ -101,11 +101,11 @@ export async function PATCH(
     updateData.defaultResponseTarget = defaultResponseTarget;
   }
 
-  if (rewardUnitsRaw !== undefined) {
-    if (typeof rewardUnitsRaw !== "string" || !/^\d+$/.test(rewardUnitsRaw)) {
-      return NextResponse.json({ error: "invalid_reward_units" }, { status: 400 });
+  if (rewardStroopsRaw !== undefined) {
+    if (typeof rewardStroopsRaw !== "string" || !/^\d+$/.test(rewardStroopsRaw)) {
+      return NextResponse.json({ error: "invalid_reward_stroops" }, { status: 400 });
     }
-    updateData.rewardUnits = BigInt(rewardUnitsRaw);
+    updateData.rewardStroops = BigInt(rewardStroopsRaw);
   }
 
   if (paused !== undefined) {
@@ -121,7 +121,7 @@ export async function PATCH(
   }
 
   const hasAnyField =
-    name !== undefined || defaultResponseTarget !== undefined || rewardUnitsRaw !== undefined || paused !== undefined;
+    name !== undefined || defaultResponseTarget !== undefined || rewardStroopsRaw !== undefined || paused !== undefined;
   if (!hasAnyField) {
     return NextResponse.json({ error: "no_fields_to_update" }, { status: 400 });
   }
@@ -146,13 +146,13 @@ export async function PATCH(
       before: {
         name: campaign.name,
         defaultResponseTarget: campaign.defaultResponseTarget,
-        rewardUnits: campaign.rewardUnits.toString(),
+        rewardStroops: campaign.rewardStroops.toString(),
         pausedAt: campaign.pausedAt?.toISOString() ?? null,
       },
       after: {
         name: updatedCampaign.name,
         defaultResponseTarget: updatedCampaign.defaultResponseTarget,
-        rewardUnits: updatedCampaign.rewardUnits.toString(),
+        rewardStroops: updatedCampaign.rewardStroops.toString(),
         pausedAt: updatedCampaign.pausedAt?.toISOString() ?? null,
       }
     },
@@ -160,7 +160,7 @@ export async function PATCH(
 
   return NextResponse.json({
     ...updatedCampaign,
-    rewardUnits: updatedCampaign.rewardUnits.toString(),
+    rewardStroops: updatedCampaign.rewardStroops.toString(),
   }, { status: 200 });
 }
 

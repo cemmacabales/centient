@@ -9,7 +9,7 @@ interface CampaignWithProgress {
   id: string;
   name: string;
   defaultResponseTarget: number;
-  rewardUnits: string;
+  rewardStroops: string;
   taskCount: number;
   totalResponses: number;
   totalTarget: number;
@@ -59,7 +59,7 @@ export default async function AdminCampaignsPage() {
       totalResponses,
       totalTarget,
       completionPct,
-      rewardUnits: c.rewardUnits.toString(),
+      rewardStroops: c.rewardStroops.toString(),
       createdAt: c.createdAt.toISOString(),
       pausedAt: c.pausedAt?.toISOString() ?? null,
       ownerEmail: c.adminUser.companyName ?? c.adminUser.email,

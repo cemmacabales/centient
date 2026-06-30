@@ -62,19 +62,19 @@ describe("Lump-sum withdrawal handling", () => {
       data: {
         id: userId,
         walletAddress: wallet,
-        pendingBalanceUnits: 0n,
+        pendingBalanceStroops: 0n,
         email: `${crypto.randomUUID()}@test.com`,
         passwordHash: "dummy_hash",
       },
     });
     const walletAddress = wallet as `0x${string}`;
-    const amountUnits = 1000000000000000000n;
+    const amountStroops = 1000000000000000000n;
 
     const job = await prisma.payoutJob.create({
       data: {
         type: "WITHDRAWAL",
         userId: user.id,
-        amountUnits,
+        amountStroops,
         destinationAddress: walletAddress,
         status: "queued",
       },
@@ -87,14 +87,14 @@ describe("Lump-sum withdrawal handling", () => {
 
     vi.mocked(payReward).mockResolvedValueOnce("0x1234");
 
-    await processJob(job.id, null, user.id, amountUnits, "WITHDRAWAL");
+    await processJob(job.id, null, user.id, amountStroops, "WITHDRAWAL");
 
     const updatedJob = await prisma.payoutJob.findUnique({ where: { id: job.id } });
     expect(updatedJob?.status).toBe("processing");
     expect(updatedJob?.txHash).toBe("0x1234");
 
     const updatedUser = await prisma.user.findUnique({ where: { id: user.id } });
-    expect(updatedUser?.pendingBalanceUnits).toBe(0n);
+    expect(updatedUser?.pendingBalanceStroops).toBe(0n);
   });
 
   it("refunds user balance on daily cap hit", async () => {
@@ -108,24 +108,24 @@ describe("Lump-sum withdrawal handling", () => {
       data: {
         id: userId,
         walletAddress: wallet,
-        pendingBalanceUnits: 0n,
+        pendingBalanceStroops: 0n,
         email: `${crypto.randomUUID()}@test.com`,
         passwordHash: "dummy_hash",
       },
     });
     const walletAddress = wallet as `0x${string}`;
-    const amountUnits = 1000000000000000000n;
+    const amountStroops = 1000000000000000000n;
 
     await prisma.user.update({
       where: { id: user.id },
-      data: { pendingBalanceUnits: amountUnits },
+      data: { pendingBalanceStroops: amountStroops },
     });
 
     const job = await prisma.payoutJob.create({
       data: {
         type: "WITHDRAWAL",
         userId: user.id,
-        amountUnits,
+        amountStroops,
         destinationAddress: walletAddress,
         status: "queued",
       },
@@ -138,11 +138,11 @@ describe("Lump-sum withdrawal handling", () => {
 
     vi.mocked(payReward).mockRejectedValueOnce(new PayoutCapError(0n, 0n));
 
-    await processJob(job.id, null, user.id, amountUnits, "WITHDRAWAL");
+    await processJob(job.id, null, user.id, amountStroops, "WITHDRAWAL");
 
     expect(refundReversal).toHaveBeenCalledWith(
       user.id,
-      amountUnits,
+      amountStroops,
       job.id,
       expect.stringContaining("daily cap")
     );
@@ -163,19 +163,19 @@ describe("Lump-sum withdrawal handling", () => {
       data: {
         id: userId,
         walletAddress: wallet,
-        pendingBalanceUnits: 0n,
+        pendingBalanceStroops: 0n,
         email: `${crypto.randomUUID()}@test.com`,
         passwordHash: "dummy_hash",
       },
     });
     const walletAddress = wallet as `0x${string}`;
-    const amountUnits = 1000000000000000000n;
+    const amountStroops = 1000000000000000000n;
 
     const job = await prisma.payoutJob.create({
       data: {
         type: "WITHDRAWAL",
         userId: user.id,
-        amountUnits,
+        amountStroops,
         destinationAddress: walletAddress,
         status: "queued",
       },
@@ -190,7 +190,7 @@ describe("Lump-sum withdrawal handling", () => {
       .mockRejectedValueOnce(new Error("nonce too low"))
       .mockResolvedValueOnce("0x5678");
 
-    await processJob(job.id, null, user.id, amountUnits, "WITHDRAWAL");
+    await processJob(job.id, null, user.id, amountStroops, "WITHDRAWAL");
     let jobAfter = await prisma.payoutJob.findUnique({ where: { id: job.id } });
     expect(jobAfter?.status).toBe("queued");
     expect(jobAfter?.retryCount).toBe(1);
@@ -200,7 +200,7 @@ describe("Lump-sum withdrawal handling", () => {
       data: { status: "processing" },
     });
 
-    await processJob(job.id, null, user.id, amountUnits, "WITHDRAWAL");
+    await processJob(job.id, null, user.id, amountStroops, "WITHDRAWAL");
     jobAfter = await prisma.payoutJob.findUnique({ where: { id: job.id } });
     expect(jobAfter?.status).toBe("processing");
     expect(jobAfter?.txHash).toBe("0x5678");
@@ -217,24 +217,24 @@ describe("Lump-sum withdrawal handling", () => {
       data: {
         id: userId,
         walletAddress: wallet,
-        pendingBalanceUnits: 0n,
+        pendingBalanceStroops: 0n,
         email: `${crypto.randomUUID()}@test.com`,
         passwordHash: "dummy_hash",
       },
     });
     const walletAddress = wallet as `0x${string}`;
-    const amountUnits = 1000000000000000000n;
+    const amountStroops = 1000000000000000000n;
 
     await prisma.user.update({
       where: { id: user.id },
-      data: { pendingBalanceUnits: amountUnits },
+      data: { pendingBalanceStroops: amountStroops },
     });
 
     const job = await prisma.payoutJob.create({
       data: {
         type: "WITHDRAWAL",
         userId: user.id,
-        amountUnits,
+        amountStroops,
         destinationAddress: walletAddress,
         status: "queued",
         retryCount: 2,
@@ -248,11 +248,11 @@ describe("Lump-sum withdrawal handling", () => {
 
     vi.mocked(payReward).mockRejectedValueOnce(new Error("RPC timeout"));
 
-    await processJob(job.id, null, user.id, amountUnits, "WITHDRAWAL");
+    await processJob(job.id, null, user.id, amountStroops, "WITHDRAWAL");
 
     expect(refundReversal).toHaveBeenCalledWith(
       user.id,
-      amountUnits,
+      amountStroops,
       job.id,
       expect.stringContaining("Refund for failed withdrawal")
     );
@@ -275,19 +275,19 @@ describe("Reconciler confirms lump-sum receipt", () => {
       data: {
         id: userId,
         walletAddress: wallet,
-        pendingBalanceUnits: 0n,
+        pendingBalanceStroops: 0n,
         email: `${crypto.randomUUID()}@test.com`,
         passwordHash: "dummy_hash",
       },
     });
     const walletAddress = wallet as `0x${string}`;
-    const amountUnits = 1000000000000000000n;
+    const amountStroops = 1000000000000000000n;
 
     const job = await prisma.payoutJob.create({
       data: {
         type: "WITHDRAWAL",
         userId: user.id,
-        amountUnits,
+        amountStroops,
         destinationAddress: walletAddress,
         status: "processing",
         txHash: "0x1234",
@@ -300,7 +300,7 @@ describe("Reconciler confirms lump-sum receipt", () => {
     } as any);
 
     const { processWithdrawal } = await import("@/lib/reconciler");
-    await processWithdrawal(job.id, job.txHash!, job.userId!, job.amountUnits!);
+    await processWithdrawal(job.id, job.txHash!, job.userId!, job.amountStroops!);
 
     const updatedJob = await prisma.payoutJob.findUnique({ where: { id: job.id } });
     expect(updatedJob?.status).toBe("done");

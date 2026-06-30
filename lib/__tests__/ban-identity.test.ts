@@ -114,7 +114,7 @@ describe("checkSharedWallet", () => {
         prisma.user.create({
           data: {
             walletAddress: `0x00000000000000000000000000000000000000${i}`,
-            pendingBalanceUnits: 0n,
+            pendingBalanceStroops: 0n,
           },
         }),
       ),
@@ -125,7 +125,7 @@ describe("checkSharedWallet", () => {
         data: {
           type: "WITHDRAWAL",
           userId: user.id,
-          amountUnits: 1000000000000000000n,
+          amountStroops: 1000000000000000000n,
           destinationAddress: SHARED_WALLET.toLowerCase(),
           status: "done",
         },
@@ -142,7 +142,7 @@ describe("checkSharedWallet", () => {
         prisma.user.create({
           data: {
             walletAddress: `0x0000000000000000000000000000000000000${i}d`,
-            pendingBalanceUnits: 0n,
+            pendingBalanceStroops: 0n,
           },
         }),
       ),
@@ -153,7 +153,7 @@ describe("checkSharedWallet", () => {
         data: {
           type: "WITHDRAWAL",
           userId: user.id,
-          amountUnits: 1000000000000000000n,
+          amountStroops: 1000000000000000000n,
           destinationAddress: SHARED_WALLET.toLowerCase(),
           status: "done",
         },
@@ -171,7 +171,7 @@ describe("checkSharedWallet", () => {
     const currentUser = await prisma.user.create({
       data: {
         walletAddress: "0x0000000000000000000000000000000000000eEe",
-        pendingBalanceUnits: 0n,
+        pendingBalanceStroops: 0n,
       },
     });
 
@@ -180,7 +180,7 @@ describe("checkSharedWallet", () => {
         prisma.user.create({
           data: {
             walletAddress: `0x0000000000000000000000000000000000000${i}f`,
-            pendingBalanceUnits: 0n,
+            pendingBalanceStroops: 0n,
           },
         }),
       ),
@@ -191,7 +191,7 @@ describe("checkSharedWallet", () => {
         data: {
           type: "WITHDRAWAL",
           userId: user.id,
-          amountUnits: 1000000000000000000n,
+          amountStroops: 1000000000000000000n,
           destinationAddress: SHARED_WALLET.toLowerCase(),
           status: "done",
         },
@@ -209,7 +209,7 @@ describe("checkSharedWallet", () => {
         prisma.user.create({
           data: {
             walletAddress: `0x0000000000000000000000000000000000000${i}g`,
-            pendingBalanceUnits: 0n,
+            pendingBalanceStroops: 0n,
           },
         }),
       ),
@@ -220,7 +220,7 @@ describe("checkSharedWallet", () => {
         data: {
           type: "WITHDRAWAL",
           userId: user.id,
-          amountUnits: 1000000000000000000n,
+          amountStroops: 1000000000000000000n,
           destinationAddress: SHARED_WALLET.toLowerCase(),
           status: "queued",
         },

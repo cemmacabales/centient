@@ -3,7 +3,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { getLabelerSession, requireLabelerSession } from "@/lib/labeler-auth";
 import {
-  getMinWithdrawalUnits,
+  getMinWithdrawalStroops,
   getWithdrawalThresholds,
   REWARD_TOKEN_SYMBOL,
 } from "@/lib/constants";
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
       goldCorrect: true,
       goldAttempted: true,
       createdAt: true,
-      pendingBalanceUnits: true,
+      pendingBalanceStroops: true,
     },
   });
 
@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
       walletAddress: user.walletAddress,
       reason,
       detail: detail as never,
-      balanceUnits: user.pendingBalanceUnits,
+      balanceStroops: user.pendingBalanceStroops,
     }).catch((err) => {
       Sentry.captureException(err, { extra: { context: "flag-withdrawal", userId } });
     });
@@ -148,13 +148,13 @@ export async function POST(req: NextRequest) {
     const result = await enqueueWithdrawal(
       userId!,
       user.walletAddress,
-      getMinWithdrawalUnits(),
+      getMinWithdrawalStroops(),
     );
 
     return NextResponse.json({
       status: "queued",
       withdrawalId: result.payoutJobId,
-      amountUnits: result.amountUnits.toString(),
+      amountStroops: result.amountStroops.toString(),
       destinationAddress: user.walletAddress,
       token: REWARD_TOKEN_SYMBOL,
     });
@@ -163,8 +163,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error: "below_minimum",
-          minimumUnits: err.minimumUnits.toString(),
-          balanceUnits: err.balanceUnits.toString(),
+          minimumStroops: err.minimumStroops.toString(),
+          balanceStroops: err.balanceStroops.toString(),
         },
         { status: 400 },
       );

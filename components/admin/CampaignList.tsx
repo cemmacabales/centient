@@ -9,7 +9,7 @@ interface Campaign {
   id: string;
   name: string;
   defaultResponseTarget: number;
-  rewardUnits: string;
+  rewardStroops: string;
   taskCount: number;
   totalResponses: number;
   completionPct: number;
@@ -43,12 +43,12 @@ export default function CampaignList({
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
 
-  async function handleCreate(name: string, defaultResponseTarget: number, rewardUnits: string) {
+  async function handleCreate(name: string, defaultResponseTarget: number, rewardStroops: string) {
     setLoading(true);
     const res = await fetch("/api/admin/campaigns", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, defaultResponseTarget, rewardUnits }),
+      body: JSON.stringify({ name, defaultResponseTarget, rewardStroops }),
     });
     if (res.ok) {
       const newCampaign = await res.json();
@@ -282,7 +282,7 @@ function StatCard({ label, value, subline }: StatCardProps) {
 }
 
 interface NewCampaignModalProps {
-  onSubmit: (name: string, defaultResponseTarget: number, rewardUnits: string) => void;
+  onSubmit: (name: string, defaultResponseTarget: number, rewardStroops: string) => void;
   onClose: () => void;
   loading: boolean;
 }
@@ -296,15 +296,15 @@ function NewCampaignModal({ onSubmit, onClose, loading }: NewCampaignModalProps)
 
   function handleFormSubmit() {
     if (!canSubmit) return;
-    let units: string;
+    let stroops: string;
     try {
-      units = parseUnits(rewardDisplay.trim(), REWARD_TOKEN_DECIMALS).toString();
+      stroops = parseUnits(rewardDisplay.trim(), REWARD_TOKEN_DECIMALS).toString();
     } catch {
       return;
     }
     const resolvedTarget =
       defaultResponseTarget === "" ? 50 : Math.max(1, Math.min(10000, Number(defaultResponseTarget)));
-    onSubmit(name.trim(), resolvedTarget, units);
+    onSubmit(name.trim(), resolvedTarget, stroops);
   }
 
   function handleTargetChange(e: React.ChangeEvent<HTMLInputElement>) {
