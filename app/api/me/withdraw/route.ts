@@ -20,6 +20,8 @@ import {
 } from "@/lib/ban-identity";
 import { checkWithdrawalEligibility } from "@/lib/withdrawal-eligibility";
 import { recordFlaggedWithdrawal } from "@/lib/flagged-withdrawal";
+import { isValidStellarAddress } from "@/lib/stellar/signature";
+import { accountHasUsdcTrustline } from "@/lib/stellar/client";
 
 /**
  * P3a — withdrawal endpoint. Turns the labeler's whole accumulated off-chain
@@ -141,6 +143,37 @@ export async function POST(req: NextRequest) {
         actual: eligibility.actual,
       },
       { status: 403 },
+    );
+  }
+
+  // The linked destination must be a valid `G…` StrKey (case-sensitive). A legacy
+  // EVM `0x…` or any corrupted value can never receive USDC and would fail at
+  // payout with `op_no_destination` — reject it here so the labeler re-links via
+  // the Stellar wallet flow (ST-4b). Checked on the payout path (after the fraud
+  // gates) so ban/shared-wallet matching is unaffected until ST-4d retargets it.
+  if (!isValidStellarAddress(user.walletAddress)) {
+    return NextResponse.json({ error: "invalid_wallet" }, { status: 400 });
+  }
+
+  // USDC-trustline precheck before locking any balance: an untrusted `G…` would
+  // fail the on-chain payout with a non-retryable `op_no_trust`. Reject up front
+  // with guidance so funds are never locked against an unpayable destination.
+  // (ST-4e #314 will offer an in-app sponsored trustline instead of rejecting.)
+  let hasTrustline: boolean;
+  try {
+    hasTrustline = await accountHasUsdcTrustline(user.walletAddress);
+  } catch (err) {
+    Sentry.captureException(err, { extra: { context: "withdraw-trustline", userId } });
+    return NextResponse.json({ error: "trustline_check_failed" }, { status: 502 });
+  }
+  if (!hasTrustline) {
+    return NextResponse.json(
+      {
+        error: "no_trustline",
+        message:
+          "Your Stellar address has no USDC trustline yet. Add a USDC trustline in your wallet, then withdraw again.",
+      },
+      { status: 409 },
     );
   }
 

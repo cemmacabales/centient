@@ -5,6 +5,7 @@ import { formatUnits } from "viem";
 import { type ToastKind } from "@/components/Toast";
 import { truncateAddress } from "@/lib/wallet";
 import { REWARD_TOKEN_DECIMALS } from "@/lib/constants";
+import StellarWalletLink from "@/components/StellarWalletLink";
 
 function formatTokenBalance(unitsStr: string): string {
   try {
@@ -260,6 +261,18 @@ export default function AccountSheet({
           >
             {withdrawing ? "Withdrawing..." : "Withdraw"}
           </button>
+          <StellarWalletLink
+            walletAddress={walletAddress || null}
+            showToast={showToast}
+            onLinked={() => {
+              setLoadingWithdrawal(true);
+              fetch("/api/me/withdraw")
+                .then((r) => (r.ok ? r.json() : Promise.reject()))
+                .then((data) => setWithdrawalData(data))
+                .catch(() => {})
+                .finally(() => setLoadingWithdrawal(false));
+            }}
+          />
         </div>
 
         {withdrawalData && withdrawalData.withdrawals.length > 0 && (
