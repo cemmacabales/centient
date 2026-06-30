@@ -11,9 +11,10 @@ describe("payReward in simulation mode", () => {
     vi.stubEnv("PAYOUT_PRIVATE_KEY", "");
 
     const hash = await payReward(
-      "0x1234567890123456789012345678901234567890",
+      "GA7QYNF7SOWQ3GLR2BGMZEHHAVCQDZ7QF5K6X5K6X5K6X5K6X5K6X5K6",
     );
-    expect(hash).toMatch(/^0x[0-9a-f]{64}$/);
+    // Stellar tx hashes are 32-byte hex with no 0x prefix (unlike EVM).
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 
