@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     walletAddress: wallet,
-    totalEarned: user ? formatUnits(user.totalEarnedWei, REWARD_TOKEN_DECIMALS) : "0",
+    totalEarned: user ? formatUnits(user.totalEarnedStroops, REWARD_TOKEN_DECIMALS) : "0",
     rewardSymbol: REWARD_TOKEN_SYMBOL,
     submissionCount: user?.submissionCount ?? 0,
     onboardingCompleted: user?.onboardingCompleted ?? false,

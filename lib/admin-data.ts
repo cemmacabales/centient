@@ -127,7 +127,7 @@ export async function getDashboardTotals(): Promise<DashboardTotals> {
     prisma.submission.count({ where: { payoutStatus: "sent" } }),
     prisma.submission.count({ where: { payoutStatus: "failed" } }),
     prisma.submission.aggregate({
-      _sum: { payoutAmountWei: true },
+      _sum: { payoutAmountStroops: true },
       where: { payoutStatus: "sent" },
     }),
     prisma.user.count(),
@@ -135,13 +135,13 @@ export async function getDashboardTotals(): Promise<DashboardTotals> {
     hotWallet(),
   ]);
 
-  const paidWei = paidAggregate._sum.payoutAmountWei ?? 0n;
+  const paidStroops = paidAggregate._sum.payoutAmountStroops ?? 0n;
 
   return {
     totalSubmissions,
     totalPaidSubmissions,
     totalFailedSubmissions,
-    totalPaidOut: formatUnits(paidWei, REWARD_TOKEN_DECIMALS),
+    totalPaidOut: formatUnits(paidStroops, REWARD_TOKEN_DECIMALS),
     rewardSymbol: REWARD_TOKEN_SYMBOL,
     hotWalletBalance: wallet.balance,
     hotWalletAddress: wallet.address,
@@ -296,7 +296,7 @@ export async function getWalletRows(): Promise<WalletRow[]> {
     walletAddress: u.walletAddress ?? "", // legacy rows are always wallet-keyed; null only once wallet-less accounts land (later phase)
     createdAt: u.createdAt,
     submissionCount: u.submissionCount,
-    totalEarned: formatUnits(u.totalEarnedWei, REWARD_TOKEN_DECIMALS),
+    totalEarned: formatUnits(u.totalEarnedStroops, REWARD_TOKEN_DECIMALS),
     goldCorrect: u.goldCorrect,
     goldAttempted: u.goldAttempted,
     goldAccuracyPct:
@@ -336,7 +336,7 @@ export async function getUserRows(): Promise<UserRow[]> {
     walletAddress: u.walletAddress ?? "", // legacy rows are always wallet-keyed; null only once wallet-less accounts land (later phase)
     createdAt: u.createdAt,
     submissionCount: u.submissionCount,
-    totalEarned: formatUnits(u.totalEarnedWei, REWARD_TOKEN_DECIMALS),
+    totalEarned: formatUnits(u.totalEarnedStroops, REWARD_TOKEN_DECIMALS),
     goldCorrect: u.goldCorrect,
     goldAttempted: u.goldAttempted,
     goldAccuracyPct:
@@ -359,7 +359,7 @@ export interface UserProfile {
   walletAddress: string;
   createdAt: Date;
   totalEarned: string;
-  totalEarnedWei: bigint;
+  totalEarnedStroops: bigint;
   submissionCount: number;
   goldCorrect: number;
   goldAttempted: number;
@@ -389,7 +389,7 @@ export interface UserProfile {
     reason: string;
     isGoldCheck: boolean;
     goldPassed: boolean | null;
-    payoutAmountWei: bigint;
+    payoutAmountStroops: bigint;
     payoutStatus: string;
     payoutTxHash: string | null;
     createdAt: Date;
@@ -434,8 +434,8 @@ export async function getUserProfile(walletAddress: string): Promise<UserProfile
   return {
     walletAddress: wallet,
     createdAt: u.createdAt,
-    totalEarned: formatUnits(u.totalEarnedWei, REWARD_TOKEN_DECIMALS),
-    totalEarnedWei: u.totalEarnedWei,
+    totalEarned: formatUnits(u.totalEarnedStroops, REWARD_TOKEN_DECIMALS),
+    totalEarnedStroops: u.totalEarnedStroops,
     submissionCount: u.submissionCount,
     goldCorrect: u.goldCorrect,
     goldAttempted: u.goldAttempted,
@@ -460,7 +460,7 @@ export async function getUserProfile(walletAddress: string): Promise<UserProfile
       reason: s.reason,
       isGoldCheck: s.isGoldCheck,
       goldPassed: s.goldPassed,
-      payoutAmountWei: s.payoutAmountWei,
+      payoutAmountStroops: s.payoutAmountStroops,
       payoutStatus: s.payoutStatus,
       payoutTxHash: s.payoutTxHash,
       createdAt: s.createdAt,
@@ -484,9 +484,9 @@ export interface PoolHealth {
   hotWalletBalance: string;
   rewardSymbol: string;
   stuckPayoutThresholdMs: number;
-  dailyPayoutCapWei: string;
-  dailyPayoutSpentWei: string;
-  dailyPayoutRemainingWei: string;
+  dailyPayoutCapStroops: string;
+  dailyPayoutSpentStroops: string;
+  dailyPayoutRemainingStroops: string;
   dailyPayoutSpentPct: number;
 }
 
@@ -528,7 +528,7 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
     prisma.user.count({ where: { isBanned: true } }),
     hotWallet(),
     prisma.submission.aggregate({
-      _sum: { payoutAmountWei: true },
+      _sum: { payoutAmountStroops: true },
       where: {
         payoutStatus: { in: ["sent", "confirmed"] },
         createdAt: { gte: last24h },
@@ -536,12 +536,12 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
     }),
   ]);
 
-  const dailyCapRaw = process.env.DAILY_PAYOUT_CAP_WEI;
-  const dailyCapWei = dailyCapRaw ? BigInt(dailyCapRaw.trim()) : 200_000000000000000000n;
-  const dailySpentWei = dailyPayoutAgg._sum.payoutAmountWei ?? 0n;
-  const dailyRemainingWei = dailyCapWei > dailySpentWei ? dailyCapWei - dailySpentWei : 0n;
+  const dailyCapRaw = process.env.DAILY_PAYOUT_CAP_STROOPS;
+  const dailyCapStroops = dailyCapRaw ? BigInt(dailyCapRaw.trim()) : 2_000_000_000n; // 200 XLM
+  const dailySpentStroops = dailyPayoutAgg._sum.payoutAmountStroops ?? 0n;
+  const dailyRemainingStroops = dailyCapStroops > dailySpentStroops ? dailyCapStroops - dailySpentStroops : 0n;
   const dailyPayoutSpentPct =
-    dailyCapWei > 0n ? Math.round(Number((dailySpentWei * 10000n) / dailyCapWei)) / 100 : 0;
+    dailyCapStroops > 0n ? Math.round(Number((dailySpentStroops * 10000n) / dailyCapStroops)) / 100 : 0;
 
   return {
     pendingSubmissions: pending,
@@ -558,9 +558,9 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
     hotWalletBalance: wallet.balance,
     rewardSymbol: REWARD_TOKEN_SYMBOL,
     stuckPayoutThresholdMs: STUCK_PAYOUT_THRESHOLD_MS,
-    dailyPayoutCapWei: String(dailyCapWei),
-    dailyPayoutSpentWei: String(dailySpentWei),
-    dailyPayoutRemainingWei: String(dailyRemainingWei),
+    dailyPayoutCapStroops: String(dailyCapStroops),
+    dailyPayoutSpentStroops: String(dailySpentStroops),
+    dailyPayoutRemainingStroops: String(dailyRemainingStroops),
     dailyPayoutSpentPct,
   };
 }
@@ -702,7 +702,7 @@ export interface TimeSeriesPoint {
 
 export interface PayoutTimeSeriesPoint {
   hour: string;
-  amountWei: string;
+  amountStroops: string;
 }
 
 export interface GoldPassRateStats {
@@ -768,8 +768,8 @@ async function getSubmissionVolume24h(): Promise<TimeSeriesPoint[]> {
 }
 
 async function getPayoutVolume24h(): Promise<PayoutTimeSeriesPoint[]> {
-  const rows = await prisma.$queryRaw<{ hour: Date; amount_wei: bigint }[]>`
-    SELECT date_trunc('hour', "createdAt") as hour, COALESCE(SUM("payoutAmountWei"), 0) as amount_wei
+  const rows = await prisma.$queryRaw<{ hour: Date; amount_stroops: bigint }[]>`
+    SELECT date_trunc('hour', "createdAt") as hour, COALESCE(SUM("payoutAmountStroops"), 0) as amount_stroops
     FROM submissions
     WHERE "createdAt" >= NOW() - INTERVAL '24 hours' AND "payoutStatus" = 'sent'
     GROUP BY hour
@@ -777,7 +777,7 @@ async function getPayoutVolume24h(): Promise<PayoutTimeSeriesPoint[]> {
   `;
   return rows.map((r) => ({
     hour: r.hour.toISOString(),
-    amountWei: String(r.amount_wei),
+    amountStroops: String(r.amount_stroops),
   }));
 }
 

@@ -19,8 +19,8 @@ model User {
   verificationTokenExpires DateTime?
   verifiedAt           DateTime?
   createdAt            DateTime @default(now())
-  totalEarnedWei       BigInt   @default(0)
-  pendingBalanceWei    BigInt   @default(0)
+  totalEarnedStroops       BigInt   @default(0)
+  pendingBalanceStroops    BigInt   @default(0)
   submissionCount      Int      @default(0)
   goldCorrect          Int      @default(0)
   goldAttempted        Int      @default(0)
@@ -116,7 +116,7 @@ model Campaign {
   adminUserId           String
   name                  String
   defaultResponseTarget Int
-  rewardWei             BigInt
+  rewardStroops             BigInt
   csvFileName           String?
   pausedAt              DateTime?
   createdAt             DateTime @default(now())
@@ -144,7 +144,7 @@ model Task {
   createdAt      DateTime @default(now())
   campaignId     String?
   responseTarget Int?
-  rewardWei      BigInt?
+  rewardStroops      BigInt?
   majorityAnswer String?
   agreementScore Float?
   resolvedAt     DateTime?
@@ -169,7 +169,7 @@ model Submission {
   reason          String
   isGoldCheck     Boolean   @default(false)
   goldPassed      Boolean?
-  payoutAmountWei BigInt
+  payoutAmountStroops BigInt
   payoutTxHash    String?
   payoutStatus    String    @default("pending")
   retryCount      Int       @default(0)
@@ -268,7 +268,7 @@ model PayoutJob {
   // Lump-sum withdrawals reference the user + snapshot the amount and destination
   // at request time. Null for per-submission payouts (derived from the submission).
   userId             String?
-  amountWei          BigInt?
+  amountStroops          BigInt?
   destinationAddress String?
   txHash             String?
   status             PayoutJobStatus @default(queued)
@@ -333,7 +333,7 @@ model CampaignBalance {
   id         String   @id @default(uuid())
   campaignId String   @unique
   campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  balanceWei BigInt   @default(0)
+  balanceStroops BigInt   @default(0)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -345,7 +345,7 @@ model BalanceLedger {
   campaignId   String
   campaign     Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   type         LedgerType
-  amountWei    BigInt
+  amountStroops    BigInt
   submissionId String?    // no FK — intentional: ledger entries survive submission lifecycle changes
   note         String?
   createdAt    DateTime   @default(now())
@@ -361,14 +361,14 @@ enum UserLedgerType {
 }
 
 // Off-chain labeler balance ledger — mirrors BalanceLedger. Approved answers credit
-// pendingBalanceWei (CREDIT_REWARD); withdrawals debit it (WITHDRAWAL); failed/reversed
+// pendingBalanceStroops (CREDIT_REWARD); withdrawals debit it (WITHDRAWAL); failed/reversed
 // withdrawals re-credit (REVERSAL). Schema only in P0a — no writes yet.
 model UserBalanceLedger {
   id           String         @id @default(uuid())
   userId       String
   user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   type         UserLedgerType
-  amountWei    BigInt
+  amountStroops    BigInt
   submissionId String?        // no FK — intentional: ledger entries survive submission lifecycle changes
   note         String?
   createdAt    DateTime       @default(now())
@@ -402,7 +402,7 @@ model FlaggedWithdrawal {
   walletAddress    String?
   reason           FlaggedWithdrawalReason
   detail           Json?                   // trigger context: accountCount, identifierType, gate reason, required/actual
-  balanceWei       BigInt                  @default(0) // pending balance snapshot at flag time
+  balanceStroops       BigInt                  @default(0) // pending balance snapshot at flag time
   status           FlaggedWithdrawalStatus @default(PENDING)
   resolvedByAdminId String?
   resolvedAt       DateTime?

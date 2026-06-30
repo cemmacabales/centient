@@ -63,7 +63,7 @@ async function createSentSubmission(
       taskId: task.id,
       choice: overrides.choice ?? "A",
       reason: "Test reason that is long enough for validation",
-      payoutAmountWei: 1000000000000000n,
+      payoutAmountStroops: 500000n, // 0.05 XLM
       payoutStatus: "sent",
       isGoldCheck: false,
     },

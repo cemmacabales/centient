@@ -27,7 +27,7 @@ export default async function AdminFlaggedWithdrawalsPage() {
       reason: f.reason,
       severity: severityForReason(f.reason),
       detail: (f.detail ?? null) as Record<string, unknown> | null,
-      balance: formatUnits(f.balanceWei, REWARD_TOKEN_DECIMALS),
+      balance: formatUnits(f.balanceStroops, REWARD_TOKEN_DECIMALS),
       createdAt: f.createdAt.toISOString(),
       email: f.user.email,
       userWallet: f.user.walletAddress,

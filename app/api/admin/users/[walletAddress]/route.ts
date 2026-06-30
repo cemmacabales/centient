@@ -33,10 +33,10 @@ export async function GET(
     bannedAt: profile.bannedAt?.toISOString() ?? null,
     bannedUntil: profile.bannedUntil?.toISOString() ?? null,
     lastBanAt: profile.lastBanAt?.toISOString() ?? null,
-    totalEarnedWei: profile.totalEarnedWei.toString(),
+    totalEarnedStroops: profile.totalEarnedStroops.toString(),
     recentSubmissions: profile.recentSubmissions.map((s) => ({
       ...s,
-      payoutAmountWei: s.payoutAmountWei.toString(),
+      payoutAmountStroops: s.payoutAmountStroops.toString(),
       createdAt: s.createdAt.toISOString(),
     })),
   });

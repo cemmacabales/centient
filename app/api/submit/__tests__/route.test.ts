@@ -60,7 +60,7 @@ beforeEach(async () => {
   vi.mocked(checkAndDebit).mockResolvedValue(undefined);
   vi.mocked(creditBalance).mockReset();
   vi.mocked(creditBalance).mockResolvedValue(0n);
-  process.env.PLATFORM_FEE_WEI = "150000000000000000";
+  process.env.PLATFORM_FEE_STROOPS = "150000000000000000";
 });
 
 function makeReq(body: unknown): NextRequest {
@@ -207,7 +207,7 @@ describe("POST /api/submit - guards", () => {
         taskId: task.id,
         choice: "A",
         reason: VALID_REASON,
-        payoutAmountWei: 0,
+        payoutAmountStroops: 0,
         payoutStatus: "skipped",
       },
     });
@@ -484,8 +484,8 @@ describe("POST /api/submit - response target cap", () => {
 
     await prisma.submission.createMany({
       data: [
-        { walletAddress: other1, userId: user1.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "sent" },
-        { walletAddress: other2, userId: user2.id, taskId: task.id, choice: "B", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "sent" },
+        { walletAddress: other1, userId: user1.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "sent" },
+        { walletAddress: other2, userId: user2.id, taskId: task.id, choice: "B", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "sent" },
       ],
     });
 
@@ -509,7 +509,7 @@ describe("POST /api/submit - response target cap", () => {
         taskId: task.id,
         choice: "A",
         reason: VALID_REASON,
-        payoutAmountWei: 1,
+        payoutAmountStroops: 1,
         payoutStatus: "sent",
       },
     });
@@ -532,8 +532,8 @@ describe("POST /api/submit - response target cap", () => {
 
     await prisma.submission.createMany({
       data: [
-        { walletAddress: other1, userId: user1.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "confirmed", isGoldCheck: false },
-        { walletAddress: other2, userId: user2.id, taskId: task.id, choice: "B", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "confirmed", isGoldCheck: false },
+        { walletAddress: other1, userId: user1.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "confirmed", isGoldCheck: false },
+        { walletAddress: other2, userId: user2.id, taskId: task.id, choice: "B", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "confirmed", isGoldCheck: false },
       ],
     });
 
@@ -557,7 +557,7 @@ describe("POST /api/submit - response target cap", () => {
         taskId: task.id,
         choice: "A",
         reason: VALID_REASON,
-        payoutAmountWei: 1,
+        payoutAmountStroops: 1,
         payoutStatus: "sent",
       },
     });
@@ -583,9 +583,9 @@ describe("POST /api/submit - response target cap", () => {
 
     await prisma.submission.createMany({
       data: [
-        { walletAddress: u1, userId: user1.id, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "sent" },
-        { walletAddress: u2, userId: user2.id, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "sent" },
-        { walletAddress: u3, userId: user3.id, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountWei: 1, payoutStatus: "sent" },
+        { walletAddress: u1, userId: user1.id, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "sent" },
+        { walletAddress: u2, userId: user2.id, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "sent" },
+        { walletAddress: u3, userId: user3.id, taskId: gold.id, choice: "A", reason: VALID_REASON, payoutAmountStroops: 1, payoutStatus: "sent" },
       ],
     });
 
@@ -669,7 +669,7 @@ describe("POST /api/submit - campaign balance", () => {
 });
 
 describe("POST /api/submit - balance accrual", () => {
-  it("credits pendingBalanceWei and writes a CREDIT_REWARD ledger row on an approved non-gold answer", async () => {
+  it("credits pendingBalanceStroops and writes a CREDIT_REWARD ledger row on an approved non-gold answer", async () => {
     const campaign = await createCampaign();
     const task = await createTask({ campaignId: campaign.id });
     const user = await createUser();
@@ -686,13 +686,13 @@ describe("POST /api/submit - balance accrual", () => {
       where: { walletAddress: user.walletAddress, taskId: task.id },
     });
     const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(refreshed.pendingBalanceWei).toBeGreaterThan(0n);
-    expect(refreshed.pendingBalanceWei).toBe(submission.payoutAmountWei);
+    expect(refreshed.pendingBalanceStroops).toBeGreaterThan(0n);
+    expect(refreshed.pendingBalanceStroops).toBe(submission.payoutAmountStroops);
 
     const ledger = await prisma.userBalanceLedger.findMany({ where: { userId: user.id } });
     expect(ledger).toHaveLength(1);
     expect(ledger[0].type).toBe("CREDIT_REWARD");
-    expect(ledger[0].amountWei).toBe(submission.payoutAmountWei);
+    expect(ledger[0].amountStroops).toBe(submission.payoutAmountStroops);
     expect(ledger[0].submissionId).toBe(submission.id);
   });
 
@@ -735,7 +735,7 @@ describe("POST /api/submit - balance accrual", () => {
     expect(res.status).toBe(200);
 
     const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(refreshed.pendingBalanceWei).toBeGreaterThan(0n);
+    expect(refreshed.pendingBalanceStroops).toBeGreaterThan(0n);
     const ledger = await prisma.userBalanceLedger.findMany({ where: { userId: user.id } });
     expect(ledger).toHaveLength(1);
     expect(ledger[0].type).toBe("CREDIT_REWARD");
@@ -766,7 +766,7 @@ describe("POST /api/submit - balance accrual", () => {
     expect(res.status).toBe(402);
 
     const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(refreshed.pendingBalanceWei).toBe(0n);
+    expect(refreshed.pendingBalanceStroops).toBe(0n);
     expect(await prisma.userBalanceLedger.count()).toBe(0);
   });
 
@@ -785,7 +785,7 @@ describe("POST /api/submit - balance accrual", () => {
         taskId: task.id,
         choice: "A",
         reason: VALID_REASON,
-        payoutAmountWei: 1,
+        payoutAmountStroops: 1,
         payoutStatus: "accrued",
         isGoldCheck: false,
       },
@@ -837,6 +837,6 @@ describe("POST /api/submit - P5b regression: accrual is the only payout path", (
     expect(await prisma.payoutJob.count({ where: { type: "SUBMISSION_PAYOUT" } })).toBe(0);
     // All earnings accrued to the off-chain balance instead.
     const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(refreshed.pendingBalanceWei).toBeGreaterThan(0n);
+    expect(refreshed.pendingBalanceStroops).toBeGreaterThan(0n);
   });
 });

@@ -38,7 +38,7 @@ export async function createAdminUser(
 }
 
 export async function createCampaign(
-  overrides: Partial<{ id: string; adminUserId: string; name: string; defaultResponseTarget: number; rewardWei: bigint }> = {},
+  overrides: Partial<{ id: string; adminUserId: string; name: string; defaultResponseTarget: number; rewardStroops: bigint }> = {},
 ) {
   if (!overrides.adminUserId) {
     const admin = await createAdminUser();
@@ -50,19 +50,19 @@ export async function createCampaign(
       adminUserId: overrides.adminUserId,
       name: overrides.name ?? "Test Campaign",
       defaultResponseTarget: overrides.defaultResponseTarget ?? 3,
-      rewardWei: overrides.rewardWei ?? 50000000000000000n,
+      rewardStroops: overrides.rewardStroops ?? 50000000000000000n,
     },
   });
 }
 
 export async function createCampaignBalance(
   campaignId: string,
-  balanceWei: bigint = 0n,
+  balanceStroops: bigint = 0n,
 ) {
   return db.campaignBalance.upsert({
     where: { campaignId },
-    create: { campaignId, balanceWei },
-    update: { balanceWei },
+    create: { campaignId, balanceStroops },
+    update: { balanceStroops },
   });
 }
 
@@ -76,7 +76,7 @@ export async function createUser(
     lastBanAt: Date | null;
     goldCorrect: number;
     goldAttempted: number;
-    pendingBalanceWei: bigint;
+    pendingBalanceStroops: bigint;
   }> = {},
 ) {
   const walletAddress = overrides.walletAddress ?? makeWallet();
@@ -90,7 +90,7 @@ export async function createUser(
       lastBanAt: overrides.lastBanAt ?? null,
       goldCorrect: overrides.goldCorrect ?? 0,
       goldAttempted: overrides.goldAttempted ?? 0,
-      pendingBalanceWei: overrides.pendingBalanceWei ?? 0n,
+      pendingBalanceStroops: overrides.pendingBalanceStroops ?? 0n,
     },
   });
   // walletAddress is nullable on User as of P0a; factory always creates wallet-keyed
@@ -100,11 +100,11 @@ export async function createUser(
 
 export async function createUserBalance(
   userId: string,
-  pendingBalanceWei: bigint = 0n,
+  pendingBalanceStroops: bigint = 0n,
 ) {
   return db.user.update({
     where: { id: userId },
-    data: { pendingBalanceWei },
+    data: { pendingBalanceStroops },
   });
 }
 
@@ -178,7 +178,7 @@ export async function seedSubmissions(
       taskId: t.id,
       choice,
       reason,
-      payoutAmountWei: 0,
+      payoutAmountStroops: 0,
       payoutStatus: "skipped",
     })),
   });

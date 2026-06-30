@@ -46,8 +46,8 @@ function simulatedTxHash(): `0x${string}` {
   return `0x${randomBytes(32).toString("hex")}`;
 }
 
-export async function payReward(to: `0x${string}`, amountWei?: bigint): Promise<`0x${string}`> {
-  const amount = amountWei ?? rewardInWei();
+export async function payReward(to: `0x${string}`, amountStroops?: bigint): Promise<`0x${string}`> {
+  const amount = amountStroops ?? rewardInStroops();
 
   if (isSimulationMode()) {
     return simulatedTxHash();
@@ -99,15 +99,15 @@ export async function waitForTx(hash: `0x${string}`) {
   return publicClient().waitForTransactionReceipt({ hash, timeout: 30_000 });
 }
 
-export function rewardInWei(): bigint {
+export function rewardInStroops(): bigint {
   return parseUnits(REWARD_AMOUNT, REWARD_TOKEN_DECIMALS);
 }
 
-export function resolveRewardWei(
-  taskRewardWei: bigint | null,
-  campaignRewardWei: bigint | null,
+export function resolveRewardStroops(
+  taskRewardStroops: bigint | null,
+  campaignRewardStroops: bigint | null,
 ): bigint {
-  if (taskRewardWei != null && taskRewardWei > 0n) return taskRewardWei;
-  if (campaignRewardWei != null && campaignRewardWei > 0n) return campaignRewardWei;
-  return rewardInWei();
+  if (taskRewardStroops != null && taskRewardStroops > 0n) return taskRewardStroops;
+  if (campaignRewardStroops != null && campaignRewardStroops > 0n) return campaignRewardStroops;
+  return rewardInStroops();
 }
