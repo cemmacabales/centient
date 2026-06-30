@@ -1,32 +1,52 @@
-import { REWARD_AMOUNT } from "./constants";
-import { usdcToUnits } from "./stellar/config";
-import { payUsdc, getTxStatus } from "./stellar/client";
+import { createPublicClient, createWalletClient, http, parseUnits, erc20Abi, type TransactionReceipt } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
+import { Mutex } from "async-mutex";
+import {
+  REWARD_AMOUNT,
+  REWARD_TOKEN_ADDRESS,
+  REWARD_TOKEN_DECIMALS,
+  activeChain,
+  activeRpcUrl,
+} from "./constants";
 import { checkPayoutCap, maybeSendCapAlert, PayoutCapError } from "./payout-cap";
 import { randomBytes } from "node:crypto";
 import { isSimulationMode } from "./simulation";
 
 export { PayoutCapError };
 
-// Local-sim only: a syntactically valid 64-char hex Stellar tx hash, never
-// broadcast. Stellar hashes are bare 32-byte hex with no hex prefix (unlike EVM).
-function simulatedTxHash(): string {
-  return randomBytes(32).toString("hex");
+function publicClient() {
+  return createPublicClient({ chain: activeChain(), transport: http(activeRpcUrl()) });
 }
 
-/**
- * Settle a single USDC payout from the pooled platform account to `to` (a `G…`
- * StrKey destination). Returns the Stellar transaction hash.
- *
- * Locking: the sequence-number mutex lives inside `stellar/client.payUsdc` (its
- * `seqMutex`), which is the single owner that serializes account-load + submit.
- * This function deliberately takes NO lock of its own — a second mutex here would
- * risk a deadlock and serialize the cap check needlessly without adding safety.
- *
- * Non-retryable `StellarPaymentError`s (`op_no_trust` — recipient holds no USDC
- * trustline; `op_no_destination` — recipient unfunded) propagate unchanged to the
- * caller, which must mark the payout failed rather than loop.
- */
-export async function payReward(to: string, amountUnits?: bigint): Promise<string> {
+function walletClient() {
+  const key = process.env.PAYOUT_PRIVATE_KEY;
+  if (!key) {
+    throw new Error("PAYOUT_PRIVATE_KEY is not configured");
+  }
+  return createWalletClient({
+    account: privateKeyToAccount(key as `0x${string}`),
+    chain: activeChain(),
+    transport: http(activeRpcUrl()),
+  });
+}
+
+let _walletClient: ReturnType<typeof walletClient> | null = null;
+
+function getWalletClient() {
+  if (!_walletClient) {
+    _walletClient = walletClient();
+  }
+  return _walletClient;
+}
+
+const nonceMutex = new Mutex();
+
+// Local-sim only: a syntactically valid 0x + 64-hex hash, never broadcast.
+function simulatedTxHash(): `0x${string}` {
+  return `0x${randomBytes(32).toString("hex")}`;
+}
+
+export async function payReward(to: `0x${string}`, amountUnits?: bigint): Promise<`0x${string}`> {
   const amount = amountUnits ?? rewardInUnits();
 
   if (isSimulationMode()) {
@@ -35,41 +55,52 @@ export async function payReward(to: string, amountUnits?: bigint): Promise<strin
 
   await checkPayoutCap(amount);
 
-  const { hash } = await payUsdc(to, amount);
+  const txHash = await nonceMutex.runExclusive(async () => {
+    try {
+      return await getWalletClient().writeContract({
+        address: REWARD_TOKEN_ADDRESS,
+        abi: erc20Abi,
+        functionName: "transfer",
+        args: [to, amount],
+        gas: 100_000n,
+      });
+    } catch (err: any) {
+      const isNonceError =
+        err?.cause?.message?.includes("nonce too low") ||
+        err?.cause?.message?.includes("underpriced") ||
+        err?.message?.includes("nonce too low") ||
+        err?.message?.includes("underpriced") ||
+        (typeof err?.cause?.code === "string" && err.cause.code.includes("NONCE_"));
+      if (isNonceError) {
+        const address = getWalletClient().account.address;
+        const freshNonce = await publicClient().getTransactionCount({ address });
+        return await getWalletClient().writeContract({
+          address: REWARD_TOKEN_ADDRESS,
+          abi: erc20Abi,
+          functionName: "transfer",
+          args: [to, amount],
+          gas: 100_000n,
+          nonce: freshNonce,
+        });
+      }
+      throw err;
+    }
+  });
 
   maybeSendCapAlert().catch(() => {});
 
-  return hash;
+  return txHash;
 }
 
-/**
- * Resolve a payout transaction to the coarse `{ status }` shape the reconciler
- * and reconcile-cron consume. Horizon-backed replacement for the old EVM receipt
- * poll: delegates to `stellar/client.getTxStatus`.
- *
- * A not-yet-visible transaction surfaces as a timeout-shaped error (rather than a
- * non-success status) so existing callers leave the payout as `sent` and retry
- * later — preserving the prior EVM-timeout behavior. ST-3b rewires those callers
- * to consume `getTxStatus` directly; this shim keeps them green in the meantime.
- */
-export async function waitForTx(
-  hash: string,
-): Promise<{ status: "success" | "reverted"; transactionHash: string }> {
+export async function waitForTx(hash: `0x${string}`) {
   if (isSimulationMode()) {
-    return { status: "success", transactionHash: hash };
+    return { status: "success", transactionHash: hash } as unknown as TransactionReceipt;
   }
-
-  const status = await getTxStatus(hash);
-  if (status === "not_found") {
-    throw new Error(
-      `waitForTx: transaction ${hash} not yet confirmed on Horizon (timed out)`,
-    );
-  }
-  return { status: status === "confirmed" ? "success" : "reverted", transactionHash: hash };
+  return publicClient().waitForTransactionReceipt({ hash, timeout: 30_000 });
 }
 
 export function rewardInUnits(): bigint {
-  return usdcToUnits(REWARD_AMOUNT);
+  return parseUnits(REWARD_AMOUNT, REWARD_TOKEN_DECIMALS);
 }
 
 export function resolveRewardUnits(

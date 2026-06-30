@@ -83,12 +83,9 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
   if (!fresh) return;
 
   // Step 2: broadcast the on-chain transfer. payReward enforces the payout cap.
-  // txHash is now a Stellar hash (plain string) — the full payout-service port to
-  // `payUsdc`/`G…` destinations is ST-3d (#298); this widens the type to keep the
-  // build green in the meantime.
-  let txHash: string;
+  let txHash: `0x${string}`;
   try {
-    txHash = await payReward(walletAddress, amount);
+    txHash = await payReward(walletAddress as `0x${string}`, amount);
   } catch (err: any) {
     console.error(`[payout-service] reprocess failed for submission ${submissionId}:`, err);
 
