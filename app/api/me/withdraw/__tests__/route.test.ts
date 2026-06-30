@@ -22,7 +22,7 @@ function makeReq(): NextRequest {
 beforeEach(async () => {
   await truncateAll();
   vi.mocked(getLabelerSession).mockReset();
-  process.env = { ...ORIGINAL_ENV, MIN_WITHDRAWAL_STROOPS: MIN };
+  process.env = { ...ORIGINAL_ENV, MIN_WITHDRAWAL_UNITS: MIN };
 });
 
 afterEach(() => {
@@ -45,7 +45,7 @@ describe("POST /api/me/withdraw", () => {
   });
 
   it("returns 403 when the user is banned (frozen balance)", async () => {
-    const user = await createUser({ isBanned: true, pendingBalanceStroops: 5000000000000000000n });
+    const user = await createUser({ isBanned: true, pendingBalanceUnits: 5000000000000000000n });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
     const res = await POST(makeReq());
     expect(res.status).toBe(403);
@@ -54,7 +54,7 @@ describe("POST /api/me/withdraw", () => {
 
   it("returns 400 when the user has no linked wallet", async () => {
     const user = await prisma.user.create({
-      data: { walletAddress: null, pendingBalanceStroops: 5000000000000000000n },
+      data: { walletAddress: null, pendingBalanceUnits: 5000000000000000000n },
     });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
     const res = await POST(makeReq());
@@ -63,19 +63,19 @@ describe("POST /api/me/withdraw", () => {
   });
 
   it("returns 400 below_minimum when balance is under the threshold", async () => {
-    const user = await createUser({ pendingBalanceStroops: 500000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 500000000000000000n });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
     const res = await POST(makeReq());
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
       error: "below_minimum",
-      minimumStroops: MIN,
-      balanceStroops: "500000000000000000",
+      minimumUnits: MIN,
+      balanceUnits: "500000000000000000",
     });
   });
 
   it("queues a single lump-sum payout and decrements the balance on success", async () => {
-    const user = await createUser({ pendingBalanceStroops: 5000000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
 
     const res = await POST(makeReq());
@@ -83,17 +83,17 @@ describe("POST /api/me/withdraw", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.status).toBe("queued");
-    expect(body.amountStroops).toBe("5000000000000000000");
+    expect(body.amountUnits).toBe("5000000000000000000");
     expect(body.destinationAddress).toBe(user.walletAddress);
     expect(body.withdrawalId).toBeTruthy();
 
     const jobs = await prisma.payoutJob.findMany({ where: { userId: user.id } });
     expect(jobs).toHaveLength(1);
     expect(jobs[0].type).toBe("WITHDRAWAL");
-    expect(jobs[0].amountStroops).toBe(5000000000000000000n);
+    expect(jobs[0].amountUnits).toBe(5000000000000000000n);
 
     const updated = await prisma.user.findUnique({ where: { id: user.id } });
-    expect(updated?.pendingBalanceStroops).toBe(0n);
+    expect(updated?.pendingBalanceUnits).toBe(0n);
 
     const ledger = await prisma.userBalanceLedger.findMany({
       where: { userId: user.id, type: "WITHDRAWAL" },
@@ -110,7 +110,7 @@ describe("POST /api/me/withdraw", () => {
       return prisma.user.create({
         data: {
           walletAddress: makeWallet(),
-          pendingBalanceStroops: ENOUGH,
+          pendingBalanceUnits: ENOUGH,
           submissionCount: 100,
           goldCorrect: 9,
           goldAttempted: 10,
@@ -129,7 +129,7 @@ describe("POST /api/me/withdraw", () => {
       const user = await prisma.user.create({
         data: {
           walletAddress: makeWallet(),
-          pendingBalanceStroops: ENOUGH,
+          pendingBalanceUnits: ENOUGH,
           submissionCount: 10,
           goldCorrect: 9,
           goldAttempted: 10,
@@ -147,14 +147,14 @@ describe("POST /api/me/withdraw", () => {
       });
       expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(0);
       const after = await prisma.user.findUnique({ where: { id: user.id } });
-      expect(after?.pendingBalanceStroops).toBe(ENOUGH);
+      expect(after?.pendingBalanceUnits).toBe(ENOUGH);
     });
 
     it("blocks withdrawal with a low gold pass rate", async () => {
       const user = await prisma.user.create({
         data: {
           walletAddress: makeWallet(),
-          pendingBalanceStroops: ENOUGH,
+          pendingBalanceUnits: ENOUGH,
           submissionCount: 100,
           goldCorrect: 5,
           goldAttempted: 10, // 0.5 < 0.7
@@ -177,7 +177,7 @@ describe("POST /api/me/withdraw", () => {
       const user = await prisma.user.create({
         data: {
           walletAddress: makeWallet(),
-          pendingBalanceStroops: ENOUGH,
+          pendingBalanceUnits: ENOUGH,
           submissionCount: 100,
           goldCorrect: 9,
           goldAttempted: 10,
@@ -209,12 +209,12 @@ describe("POST /api/me/withdraw", () => {
   });
 
   it("returns 409 when a withdrawal is already in flight", async () => {
-    const user = await createUser({ pendingBalanceStroops: 5000000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
     await prisma.payoutJob.create({
       data: {
         type: "WITHDRAWAL",
         userId: user.id,
-        amountStroops: 5000000000000000000n,
+        amountUnits: 5000000000000000000n,
         destinationAddress: user.walletAddress,
         status: "queued",
       },
@@ -228,12 +228,12 @@ describe("POST /api/me/withdraw", () => {
 
     // Balance untouched; still exactly one (the pre-existing) job.
     const updated = await prisma.user.findUnique({ where: { id: user.id } });
-    expect(updated?.pendingBalanceStroops).toBe(5000000000000000000n);
+    expect(updated?.pendingBalanceUnits).toBe(5000000000000000000n);
     expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(1);
   });
 
   it("returns 403 when the user's email is banned", async () => {
-    const user = await createUser({ pendingBalanceStroops: 5000000000000000000n, email: "banned@example.com" });
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, email: "banned@example.com" });
     await prisma.bannedIdentity.create({
       data: {
         identifierType: "EMAIL",
@@ -254,7 +254,7 @@ describe("POST /api/me/withdraw", () => {
   });
 
   it("returns 403 when the user's wallet is banned", async () => {
-    const user = await createUser({ pendingBalanceStroops: 5000000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
     await prisma.bannedIdentity.create({
       data: {
         identifierType: "WALLET",
@@ -274,7 +274,7 @@ describe("POST /api/me/withdraw", () => {
   });
 
   it("returns 403 when the userId is banned", async () => {
-    const user = await createUser({ pendingBalanceStroops: 5000000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
     await prisma.bannedIdentity.create({
       data: {
         identifierType: "USER_ID",
@@ -294,7 +294,7 @@ describe("POST /api/me/withdraw", () => {
   });
 
   it("allows withdrawal when banned identity has expired", async () => {
-    const user = await createUser({ pendingBalanceStroops: 5000000000000000000n, email: "expired@example.com" });
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, email: "expired@example.com" });
     await prisma.bannedIdentity.create({
       data: {
         identifierType: "EMAIL",
@@ -315,7 +315,7 @@ describe("POST /api/me/withdraw", () => {
       Array.from({ length: 3 }, (_, i) =>
         createUser({
           walletAddress: `0x00000000000000000000000000000000000000${i.toString().padStart(2, "0")}`,
-          pendingBalanceStroops: 5000000000000000000n,
+          pendingBalanceUnits: 5000000000000000000n,
         }),
       ),
     );
@@ -325,7 +325,7 @@ describe("POST /api/me/withdraw", () => {
         data: {
           type: "WITHDRAWAL",
           userId: user.id,
-          amountStroops: 1000000000000000000n,
+          amountUnits: 1000000000000000000n,
           destinationAddress: sharedWallet.toLowerCase(),
           status: "done",
         },
@@ -334,7 +334,7 @@ describe("POST /api/me/withdraw", () => {
 
     const abuser = await createUser({
       walletAddress: sharedWallet,
-      pendingBalanceStroops: 5000000000000000000n,
+      pendingBalanceUnits: 5000000000000000000n,
     });
     vi.mocked(getLabelerSession).mockResolvedValue(abuser.id);
 
@@ -353,7 +353,7 @@ describe("POST /api/me/withdraw", () => {
       Array.from({ length: 2 }, (_, i) =>
         createUser({
           walletAddress: `0x0000000000000000000000000000000000000${i}b`,
-          pendingBalanceStroops: 5000000000000000000n,
+          pendingBalanceUnits: 5000000000000000000n,
         }),
       ),
     );
@@ -363,7 +363,7 @@ describe("POST /api/me/withdraw", () => {
         data: {
           type: "WITHDRAWAL",
           userId: user.id,
-          amountStroops: 1000000000000000000n,
+          amountUnits: 1000000000000000000n,
           destinationAddress: sharedWallet.toLowerCase(),
           status: "done",
         },
@@ -372,7 +372,7 @@ describe("POST /api/me/withdraw", () => {
 
     const newUser = await createUser({
       walletAddress: sharedWallet,
-      pendingBalanceStroops: 5000000000000000000n,
+      pendingBalanceUnits: 5000000000000000000n,
     });
     vi.mocked(getLabelerSession).mockResolvedValue(newUser.id);
 
@@ -384,7 +384,7 @@ describe("POST /api/me/withdraw", () => {
   describe("P4c flagged-withdrawal recording", () => {
     it("records a BANNED_IDENTITY flag when a blocked withdrawal is rejected", async () => {
       const user = await createUser({
-        pendingBalanceStroops: 5000000000000000000n,
+        pendingBalanceUnits: 5000000000000000000n,
         email: "banned@example.com",
       });
       await prisma.bannedIdentity.create({
@@ -399,7 +399,7 @@ describe("POST /api/me/withdraw", () => {
       expect(flags).toHaveLength(1);
       expect(flags[0].reason).toBe("BANNED_IDENTITY");
       expect(flags[0].status).toBe("PENDING");
-      expect(flags[0].balanceStroops).toBe(5000000000000000000n);
+      expect(flags[0].balanceUnits).toBe(5000000000000000000n);
       expect((flags[0].detail as Record<string, unknown>).identifierValue).toBe("banned@example.com");
     });
 
@@ -409,7 +409,7 @@ describe("POST /api/me/withdraw", () => {
         Array.from({ length: 3 }, (_, i) =>
           createUser({
             walletAddress: `0x0000000000000000000000000000000000000${i}c`,
-            pendingBalanceStroops: 5000000000000000000n,
+            pendingBalanceUnits: 5000000000000000000n,
           }),
         ),
       );
@@ -418,7 +418,7 @@ describe("POST /api/me/withdraw", () => {
           data: {
             type: "WITHDRAWAL",
             userId: u.id,
-            amountStroops: 1000000000000000000n,
+            amountUnits: 1000000000000000000n,
             destinationAddress: sharedWallet.toLowerCase(),
             status: "done",
           },
@@ -426,7 +426,7 @@ describe("POST /api/me/withdraw", () => {
       }
       const abuser = await createUser({
         walletAddress: sharedWallet,
-        pendingBalanceStroops: 5000000000000000000n,
+        pendingBalanceUnits: 5000000000000000000n,
       });
       vi.mocked(getLabelerSession).mockResolvedValue(abuser.id);
 
@@ -446,7 +446,7 @@ describe("POST /api/me/withdraw", () => {
       const user = await prisma.user.create({
         data: {
           walletAddress: makeWallet(),
-          pendingBalanceStroops: 5000000000000000000n,
+          pendingBalanceUnits: 5000000000000000000n,
           submissionCount: 1,
           goldCorrect: 9,
           goldAttempted: 10,
@@ -466,7 +466,7 @@ describe("POST /api/me/withdraw", () => {
 
     it("does not duplicate a PENDING flag when the same block repeats", async () => {
       const user = await createUser({
-        pendingBalanceStroops: 5000000000000000000n,
+        pendingBalanceUnits: 5000000000000000000n,
         email: "repeat@example.com",
       });
       await prisma.bannedIdentity.create({
@@ -482,7 +482,7 @@ describe("POST /api/me/withdraw", () => {
     });
 
     it("does not record a flag on a successful withdrawal", async () => {
-      const user = await createUser({ pendingBalanceStroops: 5000000000000000000n });
+      const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
       vi.mocked(getLabelerSession).mockResolvedValue(user.id);
 
       const res = await POST(makeReq());

@@ -61,7 +61,7 @@ interface BalanceLedgerEntry {
   id: string;
   type: string;
   amount: string;
-  amountStroops: string;
+  amountUnits: string;
   submissionId: string | null;
   note: string | null;
   createdAt: string;

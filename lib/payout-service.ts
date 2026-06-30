@@ -40,7 +40,7 @@ async function creditUserTotals(walletAddress: string, amount: bigint): Promise<
   // so no first-send guard is needed here.
   const user = await prisma.user.findUnique({
     where: { walletAddress },
-    select: { submissionCount: true, totalEarnedStroops: true },
+    select: { submissionCount: true, totalEarnedUnits: true },
   });
   if (!user) return;
 
@@ -48,7 +48,7 @@ async function creditUserTotals(walletAddress: string, amount: bigint): Promise<
     where: { walletAddress },
     data: {
       submissionCount: user.submissionCount + 1,
-      totalEarnedStroops: user.totalEarnedStroops + amount,
+      totalEarnedUnits: user.totalEarnedUnits + amount,
     },
   });
 }
@@ -73,7 +73,7 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
   if (isTerminalStatus(submission.payoutStatus)) return;
 
   const walletAddress = submission.walletAddress;
-  const amount = submission.payoutAmountStroops;
+  const amount = submission.payoutAmountUnits;
 
   // Step 1: claim the submission under a per-wallet advisory lock. If another
   // worker already advanced it to a terminal state, bail out without sending.

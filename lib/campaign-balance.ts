@@ -2,18 +2,18 @@ import prisma from "@/lib/prisma";
 
 export class InsufficientBalanceError extends Error {
   constructor(
-    public readonly balanceStroops: bigint,
-    public readonly requiredStroops: bigint,
+    public readonly balanceUnits: bigint,
+    public readonly requiredUnits: bigint,
   ) {
-    super(`Campaign balance insufficient: have ${balanceStroops}, need ${requiredStroops}`);
+    super(`Campaign balance insufficient: have ${balanceUnits}, need ${requiredUnits}`);
     this.name = "InsufficientBalanceError";
   }
 }
 
-export function getPlatformFeeStroops(): bigint {
-  const raw = process.env.PLATFORM_FEE_STROOPS;
+export function getPlatformFeeUnits(): bigint {
+  const raw = process.env.PLATFORM_FEE_UNITS;
   if (!raw || !/^\d+$/.test(raw)) {
-    throw new Error("PLATFORM_FEE_STROOPS env var is required and must be a non-negative integer string");
+    throw new Error("PLATFORM_FEE_UNITS env var is required and must be a non-negative integer string");
   }
   return BigInt(raw);
 }
@@ -21,30 +21,30 @@ export function getPlatformFeeStroops(): bigint {
 // Single source of truth for the per-submission debit/refund amount so the
 // labeler reward + platform fee is never computed inconsistently across the
 // debit site (checkAndDebit) and the refund sites in the submit route.
-export function totalDebitStroops(labelerRewardStroops: bigint): bigint {
-  return labelerRewardStroops + getPlatformFeeStroops();
+export function totalDebitUnits(labelerRewardUnits: bigint): bigint {
+  return labelerRewardUnits + getPlatformFeeUnits();
 }
 
 export async function checkAndDebit(
   campaignId: string,
-  labelerRewardStroops: bigint,
+  labelerRewardUnits: bigint,
   submissionId: string,
 ): Promise<void> {
-  const platformFeeStroops = getPlatformFeeStroops();
-  const required = totalDebitStroops(labelerRewardStroops);
+  const platformFeeUnits = getPlatformFeeUnits();
+  const required = totalDebitUnits(labelerRewardUnits);
 
   await prisma.$transaction(async (tx) => {
     // Acquire a row-level lock on the campaign balance for the duration of the
     // transaction. Under READ COMMITTED two concurrent submissions for the same
     // campaign could otherwise both read the same balance, both pass the check,
     // and both debit (TOCTOU / overselling). FOR UPDATE serializes them.
-    const locked = await tx.$queryRaw<{ balanceStroops: bigint }[]>`
-      SELECT "balanceStroops" FROM "campaign_balances"
+    const locked = await tx.$queryRaw<{ balanceUnits: bigint }[]>`
+      SELECT "balanceUnits" FROM "campaign_balances"
       WHERE "campaignId" = ${campaignId}
       FOR UPDATE
     `;
 
-    const currentBalance = locked[0]?.balanceStroops ?? 0n;
+    const currentBalance = locked[0]?.balanceUnits ?? 0n;
 
     if (currentBalance < required) {
       throw new InsufficientBalanceError(currentBalance, required);
@@ -52,13 +52,13 @@ export async function checkAndDebit(
 
     await tx.campaignBalance.update({
       where: { campaignId },
-      data: { balanceStroops: { decrement: required } },
+      data: { balanceUnits: { decrement: required } },
     });
 
     await tx.balanceLedger.createMany({
       data: [
-        { campaignId, type: "DEBIT_REWARD", amountStroops: labelerRewardStroops, submissionId },
-        { campaignId, type: "DEBIT_FEE", amountStroops: platformFeeStroops, submissionId },
+        { campaignId, type: "DEBIT_REWARD", amountUnits: labelerRewardUnits, submissionId },
+        { campaignId, type: "DEBIT_FEE", amountUnits: platformFeeUnits, submissionId },
       ],
     });
   });
@@ -66,28 +66,28 @@ export async function checkAndDebit(
 
 export async function creditBalance(
   campaignId: string,
-  amountStroops: bigint,
+  amountUnits: bigint,
   note?: string,
   type: "DEPOSIT" | "REFUND" = "DEPOSIT",
 ): Promise<bigint> {
   const result = await prisma.$transaction(async (tx) => {
     await tx.campaignBalance.upsert({
       where: { campaignId },
-      create: { campaignId, balanceStroops: amountStroops },
-      update: { balanceStroops: { increment: amountStroops } },
+      create: { campaignId, balanceUnits: amountUnits },
+      update: { balanceUnits: { increment: amountUnits } },
     });
 
     // Query the updated row explicitly — upsert may return the pre-increment value in some Prisma versions
     const updated = await tx.campaignBalance.findUnique({
       where: { campaignId },
-      select: { balanceStroops: true },
+      select: { balanceUnits: true },
     });
 
     await tx.balanceLedger.create({
-      data: { campaignId, type, amountStroops, note: note ?? null },
+      data: { campaignId, type, amountUnits, note: note ?? null },
     });
 
-    return updated!.balanceStroops;
+    return updated!.balanceUnits;
   });
 
   return result;
@@ -95,25 +95,25 @@ export async function creditBalance(
 
 export async function getBalanceSummary(
   campaignId: string,
-  campaignRewardStroops: bigint,
-): Promise<{ balanceStroops: bigint; estimatedSubmissionsRemaining: number | null }> {
+  campaignRewardUnits: bigint,
+): Promise<{ balanceUnits: bigint; estimatedSubmissionsRemaining: number | null }> {
   const balance = await prisma.campaignBalance.findUnique({
     where: { campaignId },
-    select: { balanceStroops: true },
+    select: { balanceUnits: true },
   });
 
-  const balanceStroops = balance?.balanceStroops ?? 0n;
+  const balanceUnits = balance?.balanceUnits ?? 0n;
 
   let estimatedSubmissionsRemaining: number | null = null;
   try {
-    const platformFeeStroops = getPlatformFeeStroops();
-    const costPerSubmission = campaignRewardStroops + platformFeeStroops;
+    const platformFeeUnits = getPlatformFeeUnits();
+    const costPerSubmission = campaignRewardUnits + platformFeeUnits;
     if (costPerSubmission > 0n) {
-      estimatedSubmissionsRemaining = Number(balanceStroops / costPerSubmission);
+      estimatedSubmissionsRemaining = Number(balanceUnits / costPerSubmission);
     }
   } catch {
-    // PLATFORM_FEE_STROOPS not configured — estimate unavailable
+    // PLATFORM_FEE_UNITS not configured — estimate unavailable
   }
 
-  return { balanceStroops, estimatedSubmissionsRemaining };
+  return { balanceUnits, estimatedSubmissionsRemaining };
 }

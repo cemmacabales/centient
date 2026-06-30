@@ -21,13 +21,13 @@ export async function GET(
 
   const campaign = await prisma.campaign.findFirst({
     where,
-    select: { id: true, rewardStroops: true },
+    select: { id: true, rewardUnits: true },
   });
   if (!campaign) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
 
-  const summary = await getBalanceSummary(campaignId, campaign.rewardStroops);
+  const summary = await getBalanceSummary(campaignId, campaign.rewardUnits);
 
   const recentLedger = await prisma.balanceLedger.findMany({
     where: { campaignId },
@@ -35,7 +35,7 @@ export async function GET(
     take: 10,
     select: {
       type: true,
-      amountStroops: true,
+      amountUnits: true,
       note: true,
       submissionId: true,
       createdAt: true,
@@ -43,11 +43,11 @@ export async function GET(
   });
 
   return NextResponse.json({
-    balanceStroops: summary.balanceStroops.toString(),
+    balanceUnits: summary.balanceUnits.toString(),
     estimatedSubmissionsRemaining: summary.estimatedSubmissionsRemaining,
     recentLedger: recentLedger.map((entry) => ({
       type: entry.type,
-      amountStroops: entry.amountStroops.toString(),
+      amountUnits: entry.amountUnits.toString(),
       note: entry.note,
       submissionId: entry.submissionId,
       createdAt: entry.createdAt.toISOString(),
