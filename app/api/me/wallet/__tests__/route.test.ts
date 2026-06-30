@@ -10,6 +10,7 @@ const {
   mockNonceCreate,
   mockUserUpdate,
   mockHasTrustline,
+  mockCheckWalletRateLimit,
 } = vi.hoisted(() => ({
   mockGetSession: vi.fn(),
   mockNonceFindFirst: vi.fn(),
@@ -17,6 +18,7 @@ const {
   mockNonceCreate: vi.fn(),
   mockUserUpdate: vi.fn(),
   mockHasTrustline: vi.fn(),
+  mockCheckWalletRateLimit: vi.fn(),
 }));
 
 vi.mock("@/lib/labeler-auth", async (importOriginal) => {
@@ -28,6 +30,8 @@ vi.mock("@/lib/stellar/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/stellar/client")>();
   return { ...actual, accountHasUsdcTrustline: mockHasTrustline };
 });
+
+vi.mock("@/lib/rate-limit", () => ({ checkWalletRateLimit: mockCheckWalletRateLimit }));
 
 vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
 
@@ -78,6 +82,7 @@ beforeEach(() => {
   mockUserUpdate.mockResolvedValue({});
   mockHasTrustline.mockResolvedValue(true);
   mockNonceFindFirst.mockResolvedValue({ nonce: NONCE, walletAddress: G });
+  mockCheckWalletRateLimit.mockResolvedValue(false);
 });
 
 describe("GET /api/me/wallet (challenge)", () => {
@@ -102,6 +107,15 @@ describe("GET /api/me/wallet (challenge)", () => {
     expect(mockNonceCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ walletAddress: G }) }),
     );
+  });
+
+  it("429s and issues no nonce when the per-address rate limit trips", async () => {
+    mockCheckWalletRateLimit.mockResolvedValueOnce(true);
+    const res = await GET(getReq(G));
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toBe("rate_limited");
+    expect(mockCheckWalletRateLimit).toHaveBeenCalledWith(G);
+    expect(mockNonceCreate).not.toHaveBeenCalled();
   });
 });
 

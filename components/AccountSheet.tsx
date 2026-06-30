@@ -267,9 +267,11 @@ export default function AccountSheet({
             onLinked={() => {
               setLoadingWithdrawal(true);
               fetch("/api/me/withdraw")
-                .then((r) => (r.ok ? r.json() : Promise.reject()))
+                .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`withdraw refresh failed: ${r.status}`))))
                 .then((data) => setWithdrawalData(data))
-                .catch(() => {})
+                .catch((err) =>
+                  console.error("Failed to refresh withdrawal data after wallet link", err),
+                )
                 .finally(() => setLoadingWithdrawal(false));
             }}
           />

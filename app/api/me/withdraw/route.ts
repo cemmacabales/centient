@@ -239,3 +239,85 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "server_error" }, { status: 500 });
   }
 }
+
+/**
+ * GET — withdrawal summary for the labeler's own account: pending balance, the
+ * minimum-withdrawal threshold, whether a withdrawal can be attempted right now,
+ * and recent lump-sum withdrawals. This is the read the withdrawal card loads on
+ * open and re-fetches after a successful wallet link (ST-4b) or withdrawal, so a
+ * freshly-linked `G…` payout address is reflected immediately.
+ *
+ * `canWithdraw` mirrors POST's cheap gates only — not banned, a valid Stellar
+ * destination, eligibility, and balance ≥ minimum. The network USDC-trustline
+ * precheck deliberately stays on POST so this read never blocks on Horizon; an
+ * untrusted address is surfaced there as `no_trustline` with guidance.
+ */
+export async function GET(req: NextRequest) {
+  const userId = await getLabelerSession(req);
+  const unauthorized = requireLabelerSession(userId);
+  if (unauthorized) return unauthorized;
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId! },
+    select: {
+      walletAddress: true,
+      isBanned: true,
+      submissionCount: true,
+      goldCorrect: true,
+      goldAttempted: true,
+      createdAt: true,
+      pendingBalanceUnits: true,
+    },
+  });
+  if (!user) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  const minUnits = getMinWithdrawalUnits();
+  const eligibility = checkWithdrawalEligibility(
+    {
+      submissionCount: user.submissionCount,
+      goldCorrect: user.goldCorrect,
+      goldAttempted: user.goldAttempted,
+      createdAt: user.createdAt,
+    },
+    getWithdrawalThresholds(),
+  );
+
+  const canWithdraw =
+    !user.isBanned &&
+    !!user.walletAddress &&
+    isValidStellarAddress(user.walletAddress) &&
+    eligibility.eligible &&
+    user.pendingBalanceUnits >= minUnits;
+
+  const jobs = await prisma.payoutJob.findMany({
+    where: { userId: userId!, type: "WITHDRAWAL" },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: {
+      id: true,
+      amountUnits: true,
+      status: true,
+      txHash: true,
+      createdAt: true,
+      completedAt: true,
+      lastError: true,
+    },
+  });
+
+  return NextResponse.json({
+    pendingBalanceUnits: user.pendingBalanceUnits.toString(),
+    thresholdUnits: minUnits.toString(),
+    canWithdraw,
+    withdrawals: jobs.map((j) => ({
+      id: j.id,
+      amountUnits: (j.amountUnits ?? 0n).toString(),
+      status: j.status,
+      txHash: j.txHash,
+      createdAt: j.createdAt.toISOString(),
+      completedAt: j.completedAt ? j.completedAt.toISOString() : null,
+      error: j.lastError,
+    })),
+  });
+}

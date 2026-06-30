@@ -5,6 +5,7 @@ import prisma from "@/lib/prisma";
 import { getLabelerSession, requireLabelerSession } from "@/lib/labeler-auth";
 import { isValidStellarAddress, verify } from "@/lib/stellar/signature";
 import { accountHasUsdcTrustline } from "@/lib/stellar/client";
+import { checkWalletRateLimit } from "@/lib/rate-limit";
 
 /**
  * ST-4b (#300) — link + prove a Stellar `G…` payout address.
@@ -45,6 +46,13 @@ export async function GET(req: NextRequest) {
   // (invalid) key and must be rejected, not silently mangled.
   if (!address || !isValidStellarAddress(address)) {
     return NextResponse.json({ error: "invalid_address" }, { status: 400 });
+  }
+
+  // Throttle challenge issuance per candidate address: each GET prunes the prior
+  // nonce and writes a new one, so an unthrottled loop would churn Prisma
+  // transactions. Same per-wallet limiter the submit path uses.
+  if (await checkWalletRateLimit(address)) {
+    return NextResponse.json({ error: "rate_limited" }, { status: 429 });
   }
 
   const nonce = randomUUID().replace(/-/g, "");

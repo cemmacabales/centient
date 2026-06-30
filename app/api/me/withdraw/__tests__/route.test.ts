@@ -14,7 +14,7 @@ vi.mock("@/lib/stellar/client", async (importOriginal) => {
   return { ...actual, accountHasUsdcTrustline: vi.fn() };
 });
 
-import { POST } from "@/app/api/me/withdraw/route";
+import { GET, POST } from "@/app/api/me/withdraw/route";
 import { getLabelerSession } from "@/lib/labeler-auth";
 import { accountHasUsdcTrustline } from "@/lib/stellar/client";
 import { prisma, truncateAll } from "@/tests/helpers/db";
@@ -30,6 +30,10 @@ const G_WALLET = "GCKIPQX2TEZWBQSUPPNMKGJBODL246B374Y52SPD2OGJ2AAQ6SHYUR6E";
 
 function makeReq(): NextRequest {
   return new NextRequest("http://localhost/api/me/withdraw", { method: "POST" });
+}
+
+function makeGetReq(): NextRequest {
+  return new NextRequest("http://localhost/api/me/withdraw", { method: "GET" });
 }
 
 beforeEach(async () => {
@@ -537,6 +541,82 @@ describe("POST /api/me/withdraw", () => {
       expect(res.status).toBe(200);
 
       expect(await prisma.flaggedWithdrawal.count({ where: { userId: user.id } })).toBe(0);
+    });
+  });
+});
+
+describe("GET /api/me/withdraw (summary)", () => {
+  it("returns 401 when there is no session", async () => {
+    vi.mocked(getLabelerSession).mockResolvedValue(null);
+    const res = await GET(makeGetReq());
+    expect(res.status).toBe(401);
+  });
+
+  it("returns the balance, threshold, empty history, and canWithdraw=false with no linked wallet", async () => {
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+    const res = await GET(makeGetReq());
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      pendingBalanceUnits: "5000000000000000000",
+      thresholdUnits: MIN,
+      canWithdraw: false,
+      withdrawals: [],
+    });
+  });
+
+  it("reports canWithdraw=false when the balance is below the minimum", async () => {
+    const user = await createUser({ pendingBalanceUnits: 1n, walletAddress: G_WALLET });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+    const body = await (await GET(makeGetReq())).json();
+    expect(body.canWithdraw).toBe(false);
+  });
+
+  it("reports canWithdraw=false for a legacy 0x wallet (must re-link a G… address)", async () => {
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: makeWallet() });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+    const body = await (await GET(makeGetReq())).json();
+    expect(body.canWithdraw).toBe(false);
+  });
+
+  it("reports canWithdraw=true for an eligible user with a G… wallet and enough balance", async () => {
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: G_WALLET });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+    const body = await (await GET(makeGetReq())).json();
+    expect(body.canWithdraw).toBe(true);
+  });
+
+  it("lists the user's lump-sum withdrawals (newest first) and ignores other users' jobs", async () => {
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: G_WALLET });
+    const other = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: makeWallet() });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+    await prisma.payoutJob.create({
+      data: {
+        type: "WITHDRAWAL",
+        userId: user.id,
+        amountUnits: 2000000000000000000n,
+        destinationAddress: G_WALLET,
+        status: "done",
+        txHash: "txhash-abc",
+      },
+    });
+    await prisma.payoutJob.create({
+      data: { type: "WITHDRAWAL", userId: other.id, amountUnits: 9n, status: "queued" },
+    });
+
+    const body = await (await GET(makeGetReq())).json();
+    expect(body.withdrawals).toHaveLength(1);
+    expect(body.withdrawals[0]).toMatchObject({
+      amountUnits: "2000000000000000000",
+      status: "done",
+      txHash: "txhash-abc",
+      completedAt: null,
+      error: null,
     });
   });
 });
