@@ -19,26 +19,26 @@ beforeEach(async () => {
 });
 
 describe("creditReward", () => {
-  it("increments pendingBalanceStroops and creates CREDIT_REWARD ledger entry", async () => {
-    const user = await createUser({ pendingBalanceStroops: 0n });
+  it("increments pendingBalanceUnits and creates CREDIT_REWARD ledger entry", async () => {
+    const user = await createUser({ pendingBalanceUnits: 0n });
 
     const newBalance = await creditReward(user.id, 1000000000000000000n, "sub-001", "first reward");
 
     expect(newBalance).toBe(1000000000000000000n);
 
     const updated = await prisma.user.findUnique({ where: { id: user.id } });
-    expect(updated?.pendingBalanceStroops).toBe(1000000000000000000n);
+    expect(updated?.pendingBalanceUnits).toBe(1000000000000000000n);
 
     const ledger = await prisma.userBalanceLedger.findMany({ where: { userId: user.id } });
     expect(ledger).toHaveLength(1);
     expect(ledger[0].type).toBe("CREDIT_REWARD");
-    expect(ledger[0].amountStroops).toBe(1000000000000000000n);
+    expect(ledger[0].amountUnits).toBe(1000000000000000000n);
     expect(ledger[0].submissionId).toBe("sub-001");
     expect(ledger[0].note).toBe("first reward");
   });
 
   it("accumulates on subsequent credits", async () => {
-    const user = await createUser({ pendingBalanceStroops: 500000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 500000000000000000n });
 
     const newBalance = await creditReward(user.id, 500000000000000000n);
 
@@ -56,7 +56,7 @@ describe("creditReward", () => {
   });
 
   it("works on user with no prior balance record", async () => {
-    const user = await createUser({ pendingBalanceStroops: 0n });
+    const user = await createUser({ pendingBalanceUnits: 0n });
 
     const newBalance = await creditReward(user.id, 250000000000000000n);
 
@@ -65,26 +65,26 @@ describe("creditReward", () => {
 });
 
 describe("debitForWithdrawal", () => {
-  it("decrements pendingBalanceStroops and creates WITHDRAWAL ledger entry", async () => {
-    const user = await createUser({ pendingBalanceStroops: 1000000000000000000n });
+  it("decrements pendingBalanceUnits and creates WITHDRAWAL ledger entry", async () => {
+    const user = await createUser({ pendingBalanceUnits: 1000000000000000000n });
 
     const newBalance = await debitForWithdrawal(user.id, 300000000000000000n, "payout-001", "withdrawal");
 
     expect(newBalance).toBe(700000000000000000n);
 
     const updated = await prisma.user.findUnique({ where: { id: user.id } });
-    expect(updated?.pendingBalanceStroops).toBe(700000000000000000n);
+    expect(updated?.pendingBalanceUnits).toBe(700000000000000000n);
 
     const ledger = await prisma.userBalanceLedger.findMany({ where: { userId: user.id } });
     expect(ledger).toHaveLength(1);
     expect(ledger[0].type).toBe("WITHDRAWAL");
-    expect(ledger[0].amountStroops).toBe(300000000000000000n);
+    expect(ledger[0].amountUnits).toBe(300000000000000000n);
     expect(ledger[0].submissionId).toBe("payout-001");
     expect(ledger[0].note).toBe("withdrawal");
   });
 
   it("throws InsufficientUserBalanceError when balance is too low", async () => {
-    const user = await createUser({ pendingBalanceStroops: 100000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 100000000000000000n });
 
     await expect(
       debitForWithdrawal(user.id, 500000000000000000n, "payout-002")
@@ -92,7 +92,7 @@ describe("debitForWithdrawal", () => {
   });
 
   it("throws InsufficientUserBalanceError when user has no pending balance", async () => {
-    const user = await createUser({ pendingBalanceStroops: 0n });
+    const user = await createUser({ pendingBalanceUnits: 0n });
 
     await expect(
       debitForWithdrawal(user.id, 100000000000000000n, "payout-003")
@@ -100,18 +100,18 @@ describe("debitForWithdrawal", () => {
   });
 
   it("succeeds when balance exactly equals withdrawal amount", async () => {
-    const user = await createUser({ pendingBalanceStroops: 500000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 500000000000000000n });
 
     await expect(
       debitForWithdrawal(user.id, 500000000000000000n, "payout-004")
     ).resolves.toBe(0n);
 
     const updated = await prisma.user.findUnique({ where: { id: user.id } });
-    expect(updated?.pendingBalanceStroops).toBe(0n);
+    expect(updated?.pendingBalanceUnits).toBe(0n);
   });
 
   it("creates ledger entry without payoutJobId when omitted", async () => {
-    const user = await createUser({ pendingBalanceStroops: 1000000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 1000000000000000000n });
 
     await debitForWithdrawal(user.id, 100000000000000000n);
 
@@ -122,26 +122,26 @@ describe("debitForWithdrawal", () => {
 });
 
 describe("refundReversal", () => {
-  it("increments pendingBalanceStroops and creates REVERSAL ledger entry", async () => {
-    const user = await createUser({ pendingBalanceStroops: 500000000000000000n });
+  it("increments pendingBalanceUnits and creates REVERSAL ledger entry", async () => {
+    const user = await createUser({ pendingBalanceUnits: 500000000000000000n });
 
     const newBalance = await refundReversal(user.id, 300000000000000000n, "payout-001", "failed payout");
 
     expect(newBalance).toBe(800000000000000000n);
 
     const updated = await prisma.user.findUnique({ where: { id: user.id } });
-    expect(updated?.pendingBalanceStroops).toBe(800000000000000000n);
+    expect(updated?.pendingBalanceUnits).toBe(800000000000000000n);
 
     const ledger = await prisma.userBalanceLedger.findMany({ where: { userId: user.id } });
     expect(ledger).toHaveLength(1);
     expect(ledger[0].type).toBe("REVERSAL");
-    expect(ledger[0].amountStroops).toBe(300000000000000000n);
+    expect(ledger[0].amountUnits).toBe(300000000000000000n);
     expect(ledger[0].submissionId).toBe("payout-001");
     expect(ledger[0].note).toBe("failed payout");
   });
 
   it("accumulates on multiple reversals", async () => {
-    const user = await createUser({ pendingBalanceStroops: 500000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 500000000000000000n });
 
     await refundReversal(user.id, 100000000000000000n, "payout-001");
     const newBalance = await refundReversal(user.id, 100000000000000000n, "payout-002");
@@ -161,8 +161,8 @@ describe("refundReversal", () => {
 });
 
 describe("getUserPendingBalance", () => {
-  it("returns pendingBalanceStroops for user", async () => {
-    const user = await createUser({ pendingBalanceStroops: 750000000000000000n });
+  it("returns pendingBalanceUnits for user", async () => {
+    const user = await createUser({ pendingBalanceUnits: 750000000000000000n });
 
     const balance = await getUserPendingBalance(user.id);
 
@@ -178,7 +178,7 @@ describe("getUserPendingBalance", () => {
 
 describe("ledger completeness", () => {
   it("balance and ledger always reconcile after credit + debit", async () => {
-    const user = await createUser({ pendingBalanceStroops: 1000000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 1000000000000000000n });
 
     await creditReward(user.id, 500000000000000000n, "sub-001");
     await debitForWithdrawal(user.id, 300000000000000000n, "payout-001");
@@ -189,9 +189,9 @@ describe("ledger completeness", () => {
 
     const netChange = ledger.reduce((sum, entry) => {
       if (entry.type === "CREDIT_REWARD" || entry.type === "REVERSAL") {
-        return sum + entry.amountStroops;
+        return sum + entry.amountUnits;
       }
-      return sum - entry.amountStroops;
+      return sum - entry.amountUnits;
     }, 0n);
 
     const initialBalance = 1000000000000000000n;
@@ -200,7 +200,7 @@ describe("ledger completeness", () => {
   });
 
   it("all mutations produce matching ledger rows", async () => {
-    const user = await createUser({ pendingBalanceStroops: 0n });
+    const user = await createUser({ pendingBalanceUnits: 0n });
 
     await creditReward(user.id, 500000000000000000n, "sub-001");
     await debitForWithdrawal(user.id, 200000000000000000n, "payout-001");
@@ -209,7 +209,7 @@ describe("ledger completeness", () => {
     const ledger = await prisma.userBalanceLedger.findMany({ where: { userId: user.id } });
 
     expect(ledger).toHaveLength(3);
-    expect(ledger.every(l => l.amountStroops > 0n)).toBe(true);
+    expect(ledger.every(l => l.amountUnits > 0n)).toBe(true);
     expect(ledger.map(l => l.type).sort()).toEqual(["CREDIT_REWARD", "REVERSAL", "WITHDRAWAL"]);
   });
 });
@@ -219,12 +219,12 @@ describe("enqueueWithdrawal", () => {
   const MIN = 1000000000000000000n; // 1 token
 
   it("creates a single WITHDRAWAL PayoutJob for the full balance and zeroes it", async () => {
-    const user = await createUser({ pendingBalanceStroops: 5000000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
 
     const result = await enqueueWithdrawal(user.id, DEST, MIN);
 
-    expect(result.amountStroops).toBe(5000000000000000000n);
-    expect(result.newBalanceStroops).toBe(0n);
+    expect(result.amountUnits).toBe(5000000000000000000n);
+    expect(result.newBalanceUnits).toBe(0n);
     expect(result.payoutJobId).toBeTruthy();
 
     const jobs = await prisma.payoutJob.findMany({ where: { userId: user.id } });
@@ -232,33 +232,33 @@ describe("enqueueWithdrawal", () => {
     expect(jobs[0].type).toBe("WITHDRAWAL");
     expect(jobs[0].status).toBe("queued");
     expect(jobs[0].submissionId).toBeNull();
-    expect(jobs[0].amountStroops).toBe(5000000000000000000n);
+    expect(jobs[0].amountUnits).toBe(5000000000000000000n);
     expect(jobs[0].destinationAddress).toBe(DEST);
 
     const updated = await prisma.user.findUnique({ where: { id: user.id } });
-    expect(updated?.pendingBalanceStroops).toBe(0n);
+    expect(updated?.pendingBalanceUnits).toBe(0n);
 
     const ledger = await prisma.userBalanceLedger.findMany({ where: { userId: user.id } });
     const withdrawals = ledger.filter((l) => l.type === "WITHDRAWAL");
     expect(withdrawals).toHaveLength(1);
-    expect(withdrawals[0].amountStroops).toBe(5000000000000000000n);
+    expect(withdrawals[0].amountUnits).toBe(5000000000000000000n);
   });
 
   it("throws BelowMinimumWithdrawalError and changes nothing when balance < minimum", async () => {
-    const user = await createUser({ pendingBalanceStroops: 500000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 500000000000000000n });
 
     await expect(enqueueWithdrawal(user.id, DEST, MIN)).rejects.toThrow(
       BelowMinimumWithdrawalError,
     );
 
     const updated = await prisma.user.findUnique({ where: { id: user.id } });
-    expect(updated?.pendingBalanceStroops).toBe(500000000000000000n);
+    expect(updated?.pendingBalanceUnits).toBe(500000000000000000n);
     expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(0);
     expect(await prisma.userBalanceLedger.count({ where: { userId: user.id } })).toBe(0);
   });
 
   it("throws BelowMinimumWithdrawalError when the balance is zero", async () => {
-    const user = await createUser({ pendingBalanceStroops: 0n });
+    const user = await createUser({ pendingBalanceUnits: 0n });
 
     await expect(enqueueWithdrawal(user.id, DEST, MIN)).rejects.toThrow(
       BelowMinimumWithdrawalError,
@@ -266,16 +266,16 @@ describe("enqueueWithdrawal", () => {
   });
 
   it("succeeds when balance exactly equals the minimum", async () => {
-    const user = await createUser({ pendingBalanceStroops: MIN });
+    const user = await createUser({ pendingBalanceUnits: MIN });
 
     const result = await enqueueWithdrawal(user.id, DEST, MIN);
 
-    expect(result.amountStroops).toBe(MIN);
-    expect(result.newBalanceStroops).toBe(0n);
+    expect(result.amountUnits).toBe(MIN);
+    expect(result.newBalanceUnits).toBe(0n);
   });
 
   it("throws WithdrawalInFlightError when a withdrawal is already queued", async () => {
-    const user = await createUser({ pendingBalanceStroops: 5000000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
     await enqueueWithdrawal(user.id, DEST, MIN);
 
     // Top the balance back up so the second request passes the minimum check and
@@ -288,12 +288,12 @@ describe("enqueueWithdrawal", () => {
 
     // The rolled-back second attempt must not touch the balance.
     const updated = await prisma.user.findUnique({ where: { id: user.id } });
-    expect(updated?.pendingBalanceStroops).toBe(5000000000000000000n);
+    expect(updated?.pendingBalanceUnits).toBe(5000000000000000000n);
     expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(1);
   });
 
   it("serializes concurrent withdrawals into exactly one job (no double-spend)", async () => {
-    const user = await createUser({ pendingBalanceStroops: 5000000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
 
     const results = await Promise.allSettled([
       enqueueWithdrawal(user.id, DEST, MIN),
@@ -305,10 +305,10 @@ describe("enqueueWithdrawal", () => {
 
     const jobs = await prisma.payoutJob.findMany({ where: { userId: user.id } });
     expect(jobs).toHaveLength(1);
-    expect(jobs[0].amountStroops).toBe(5000000000000000000n);
+    expect(jobs[0].amountUnits).toBe(5000000000000000000n);
 
     const updated = await prisma.user.findUnique({ where: { id: user.id } });
-    expect(updated?.pendingBalanceStroops).toBe(0n);
+    expect(updated?.pendingBalanceUnits).toBe(0n);
 
     const withdrawals = await prisma.userBalanceLedger.findMany({
       where: { userId: user.id, type: "WITHDRAWAL" },
@@ -319,7 +319,7 @@ describe("enqueueWithdrawal", () => {
 
 describe("concurrency safety", () => {
   it("concurrent credits are applied atomically without lost updates", async () => {
-    const user = await createUser({ pendingBalanceStroops: 0n });
+    const user = await createUser({ pendingBalanceUnits: 0n });
 
     const creditAmount = 100000000000000000n;
     const concurrentCredits = 10;
@@ -338,7 +338,7 @@ describe("concurrency safety", () => {
   });
 
   it("concurrent withdrawals are serialized and second one throws InsufficientUserBalanceError", async () => {
-    const user = await createUser({ pendingBalanceStroops: 1000000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 1000000000000000000n });
 
     const withdrawalAmount = 600000000000000000n;
 
@@ -358,7 +358,7 @@ describe("concurrency safety", () => {
     const withdrawals = ledger.filter(l => l.type === "WITHDRAWAL");
 
     expect(withdrawals).toHaveLength(1);
-    expect(withdrawals[0].amountStroops).toBe(withdrawalAmount);
+    expect(withdrawals[0].amountUnits).toBe(withdrawalAmount);
 
     const balance = await getUserPendingBalance(user.id);
     expect(balance).toBe(1000000000000000000n - withdrawalAmount);

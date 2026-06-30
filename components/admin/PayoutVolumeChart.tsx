@@ -13,7 +13,7 @@ import { formatUnits } from "viem";
 
 interface PayoutTimeSeriesPoint {
   hour: string;
-  amountStroops: string;
+  amountUnits: string;
 }
 
 function formatHourLabel(iso: string): string {
@@ -32,7 +32,7 @@ export default function PayoutVolumeChart({
 }) {
   const chartData = data.map((d) => ({
     hour: formatHourLabel(d.hour),
-    amount: Number(Number(formatUnits(BigInt(d.amountStroops), decimals)).toFixed(4)),
+    amount: Number(Number(formatUnits(BigInt(d.amountUnits), decimals)).toFixed(4)),
   }));
 
   return (

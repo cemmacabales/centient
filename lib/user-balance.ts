@@ -3,20 +3,20 @@ import { Prisma } from "@/app/generated/prisma/client";
 
 export class InsufficientUserBalanceError extends Error {
   constructor(
-    public readonly balanceStroops: bigint,
-    public readonly requiredStroops: bigint,
+    public readonly balanceUnits: bigint,
+    public readonly requiredUnits: bigint,
   ) {
-    super(`User pending balance insufficient: have ${balanceStroops}, need ${requiredStroops}`);
+    super(`User pending balance insufficient: have ${balanceUnits}, need ${requiredUnits}`);
     this.name = "InsufficientUserBalanceError";
   }
 }
 
 export class BelowMinimumWithdrawalError extends Error {
   constructor(
-    public readonly balanceStroops: bigint,
-    public readonly minimumStroops: bigint,
+    public readonly balanceUnits: bigint,
+    public readonly minimumUnits: bigint,
   ) {
-    super(`Withdrawal below minimum: balance ${balanceStroops}, minimum ${minimumStroops}`);
+    super(`Withdrawal below minimum: balance ${balanceUnits}, minimum ${minimumUnits}`);
     this.name = "BelowMinimumWithdrawalError";
   }
 }
@@ -30,38 +30,38 @@ export class WithdrawalInFlightError extends Error {
 
 export interface WithdrawalResult {
   payoutJobId: string;
-  amountStroops: bigint;
-  newBalanceStroops: bigint;
+  amountUnits: bigint;
+  newBalanceUnits: bigint;
 }
 
 export async function creditReward(
   userId: string,
-  amountStroops: bigint,
+  amountUnits: bigint,
   submissionId?: string,
   note?: string,
 ): Promise<bigint> {
   const result = await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { id: userId },
-      data: { pendingBalanceStroops: { increment: amountStroops } },
+      data: { pendingBalanceUnits: { increment: amountUnits } },
     });
 
     const updated = await tx.user.findUnique({
       where: { id: userId },
-      select: { pendingBalanceStroops: true },
+      select: { pendingBalanceUnits: true },
     });
 
     await tx.userBalanceLedger.create({
       data: {
         userId,
         type: "CREDIT_REWARD",
-        amountStroops,
+        amountUnits,
         submissionId: submissionId ?? null,
         note: note ?? null,
       },
     });
 
-    return updated!.pendingBalanceStroops;
+    return updated!.pendingBalanceUnits;
   });
 
   return result;
@@ -69,44 +69,44 @@ export async function creditReward(
 
 export async function debitForWithdrawal(
   userId: string,
-  amountStroops: bigint,
+  amountUnits: bigint,
   payoutJobId?: string,
   note?: string,
 ): Promise<bigint> {
   const result = await prisma.$transaction(async (tx) => {
-    const locked = await tx.$queryRaw<{ pendingBalanceStroops: bigint }[]>`
-      SELECT "pendingBalanceStroops" FROM "users"
+    const locked = await tx.$queryRaw<{ pendingBalanceUnits: bigint }[]>`
+      SELECT "pendingBalanceUnits" FROM "users"
       WHERE "id" = ${userId}
       FOR UPDATE
     `;
 
-    const currentBalance = locked[0]?.pendingBalanceStroops ?? 0n;
+    const currentBalance = locked[0]?.pendingBalanceUnits ?? 0n;
 
-    if (currentBalance < amountStroops) {
-      throw new InsufficientUserBalanceError(currentBalance, amountStroops);
+    if (currentBalance < amountUnits) {
+      throw new InsufficientUserBalanceError(currentBalance, amountUnits);
     }
 
     await tx.user.update({
       where: { id: userId },
-      data: { pendingBalanceStroops: { decrement: amountStroops } },
+      data: { pendingBalanceUnits: { decrement: amountUnits } },
     });
 
     const updated = await tx.user.findUnique({
       where: { id: userId },
-      select: { pendingBalanceStroops: true },
+      select: { pendingBalanceUnits: true },
     });
 
     await tx.userBalanceLedger.create({
       data: {
         userId,
         type: "WITHDRAWAL",
-        amountStroops,
+        amountUnits,
         submissionId: payoutJobId ?? null,
         note: note ?? null,
       },
     });
 
-    return updated!.pendingBalanceStroops;
+    return updated!.pendingBalanceUnits;
   });
 
   return result;
@@ -114,32 +114,32 @@ export async function debitForWithdrawal(
 
 export async function refundReversal(
   userId: string,
-  amountStroops: bigint,
+  amountUnits: bigint,
   payoutJobId?: string,
   note?: string,
 ): Promise<bigint> {
   const result = await prisma.$transaction(async (tx) => {
     await tx.user.update({
       where: { id: userId },
-      data: { pendingBalanceStroops: { increment: amountStroops } },
+      data: { pendingBalanceUnits: { increment: amountUnits } },
     });
 
     const updated = await tx.user.findUnique({
       where: { id: userId },
-      select: { pendingBalanceStroops: true },
+      select: { pendingBalanceUnits: true },
     });
 
     await tx.userBalanceLedger.create({
       data: {
         userId,
         type: "REVERSAL",
-        amountStroops,
+        amountUnits,
         submissionId: payoutJobId ?? null,
         note: note ?? null,
       },
     });
 
-    return updated!.pendingBalanceStroops;
+    return updated!.pendingBalanceUnits;
   });
 
   return result;
@@ -150,7 +150,7 @@ export async function refundReversal(
  * lump-sum `PayoutJob` (the "one payout" of the withdrawal flow).
  *
  * The whole thing runs in one transaction: the user row is locked `FOR UPDATE`,
- * the balance is checked against `minimumStroops`, decremented, a `WITHDRAWAL` ledger
+ * the balance is checked against `minimumUnits`, decremented, a `WITHDRAWAL` ledger
  * row is written, and the `PayoutJob` is created. Because it is one transaction,
  * a failure at any step (including the one-in-flight unique index) rolls back the
  * decrement, so funds can never be debited without a job to pay them out.
@@ -160,41 +160,41 @@ export async function refundReversal(
  * guarantees at most one queued/processing withdrawal per user — together these
  * make double-spend impossible.
  *
- * @throws {BelowMinimumWithdrawalError} balance is below `minimumStroops` (or zero).
+ * @throws {BelowMinimumWithdrawalError} balance is below `minimumUnits` (or zero).
  * @throws {WithdrawalInFlightError} the user already has a withdrawal in flight.
  */
 export async function enqueueWithdrawal(
   userId: string,
   destinationAddress: string,
-  minimumStroops: bigint,
+  minimumUnits: bigint,
 ): Promise<WithdrawalResult> {
   try {
     return await prisma.$transaction(async (tx) => {
-      const locked = await tx.$queryRaw<{ pendingBalanceStroops: bigint }[]>`
-        SELECT "pendingBalanceStroops" FROM "users"
+      const locked = await tx.$queryRaw<{ pendingBalanceUnits: bigint }[]>`
+        SELECT "pendingBalanceUnits" FROM "users"
         WHERE "id" = ${userId}
         FOR UPDATE
       `;
 
-      const balance = locked[0]?.pendingBalanceStroops ?? 0n;
+      const balance = locked[0]?.pendingBalanceUnits ?? 0n;
 
-      if (balance <= 0n || balance < minimumStroops) {
-        throw new BelowMinimumWithdrawalError(balance, minimumStroops);
+      if (balance <= 0n || balance < minimumUnits) {
+        throw new BelowMinimumWithdrawalError(balance, minimumUnits);
       }
 
       // Withdraw the entire accumulated balance as one lump sum.
-      const amountStroops = balance;
+      const amountUnits = balance;
 
       await tx.user.update({
         where: { id: userId },
-        data: { pendingBalanceStroops: { decrement: amountStroops } },
+        data: { pendingBalanceUnits: { decrement: amountUnits } },
       });
 
       const job = await tx.payoutJob.create({
         data: {
           type: "WITHDRAWAL",
           userId,
-          amountStroops,
+          amountUnits,
           destinationAddress,
           status: "queued",
         },
@@ -204,7 +204,7 @@ export async function enqueueWithdrawal(
         data: {
           userId,
           type: "WITHDRAWAL",
-          amountStroops,
+          amountUnits,
           // `submissionId` is a reference to a Submission, not a PayoutJob, so it
           // stays null for withdrawals. The created job is identified by `type`
           // + `note` here and returned to the caller as `WithdrawalResult.payoutJobId`.
@@ -213,7 +213,7 @@ export async function enqueueWithdrawal(
         },
       });
 
-      return { payoutJobId: job.id, amountStroops, newBalanceStroops: balance - amountStroops };
+      return { payoutJobId: job.id, amountUnits, newBalanceUnits: balance - amountUnits };
     });
   } catch (err) {
     // The partial unique index on (userId) WHERE type='WITHDRAWAL' AND status in
@@ -229,7 +229,7 @@ export async function enqueueWithdrawal(
 export async function getUserPendingBalance(userId: string): Promise<bigint> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { pendingBalanceStroops: true },
+    select: { pendingBalanceUnits: true },
   });
-  return user?.pendingBalanceStroops ?? 0n;
+  return user?.pendingBalanceUnits ?? 0n;
 }

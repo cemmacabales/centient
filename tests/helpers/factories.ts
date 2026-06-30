@@ -38,7 +38,7 @@ export async function createAdminUser(
 }
 
 export async function createCampaign(
-  overrides: Partial<{ id: string; adminUserId: string; name: string; defaultResponseTarget: number; rewardStroops: bigint }> = {},
+  overrides: Partial<{ id: string; adminUserId: string; name: string; defaultResponseTarget: number; rewardUnits: bigint }> = {},
 ) {
   if (!overrides.adminUserId) {
     const admin = await createAdminUser();
@@ -50,19 +50,19 @@ export async function createCampaign(
       adminUserId: overrides.adminUserId,
       name: overrides.name ?? "Test Campaign",
       defaultResponseTarget: overrides.defaultResponseTarget ?? 3,
-      rewardStroops: overrides.rewardStroops ?? 50000000000000000n,
+      rewardUnits: overrides.rewardUnits ?? 50000000000000000n,
     },
   });
 }
 
 export async function createCampaignBalance(
   campaignId: string,
-  balanceStroops: bigint = 0n,
+  balanceUnits: bigint = 0n,
 ) {
   return db.campaignBalance.upsert({
     where: { campaignId },
-    create: { campaignId, balanceStroops },
-    update: { balanceStroops },
+    create: { campaignId, balanceUnits },
+    update: { balanceUnits },
   });
 }
 
@@ -76,7 +76,7 @@ export async function createUser(
     lastBanAt: Date | null;
     goldCorrect: number;
     goldAttempted: number;
-    pendingBalanceStroops: bigint;
+    pendingBalanceUnits: bigint;
   }> = {},
 ) {
   const walletAddress = overrides.walletAddress ?? makeWallet();
@@ -90,7 +90,7 @@ export async function createUser(
       lastBanAt: overrides.lastBanAt ?? null,
       goldCorrect: overrides.goldCorrect ?? 0,
       goldAttempted: overrides.goldAttempted ?? 0,
-      pendingBalanceStroops: overrides.pendingBalanceStroops ?? 0n,
+      pendingBalanceUnits: overrides.pendingBalanceUnits ?? 0n,
     },
   });
   // walletAddress is nullable on User as of P0a; factory always creates wallet-keyed
@@ -100,11 +100,11 @@ export async function createUser(
 
 export async function createUserBalance(
   userId: string,
-  pendingBalanceStroops: bigint = 0n,
+  pendingBalanceUnits: bigint = 0n,
 ) {
   return db.user.update({
     where: { id: userId },
-    data: { pendingBalanceStroops },
+    data: { pendingBalanceUnits },
   });
 }
 
@@ -178,7 +178,7 @@ export async function seedSubmissions(
       taskId: t.id,
       choice,
       reason,
-      payoutAmountStroops: 0,
+      payoutAmountUnits: 0,
       payoutStatus: "skipped",
     })),
   });

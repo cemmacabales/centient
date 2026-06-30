@@ -2,7 +2,7 @@ import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "./prisma";
 import { payReward, PayoutCapError } from "./payout";
-import { creditBalance, totalDebitStroops } from "./campaign-balance";
+import { creditBalance, totalDebitUnits } from "./campaign-balance";
 import { checkAndAlert } from "./celo-balance";
 import { computeIAA } from "./quality";
 import { REWARDED_STATUSES } from "./constants";
@@ -24,7 +24,7 @@ export async function claimNextJob(): Promise<{
   id: string;
   submissionId: string | null;
   userId: string;
-  amountStroops: bigint;
+  amountUnits: bigint;
   type: string;
 } | null> {
   const staleBefore = new Date(Date.now() - STALE_PROCESSING_MS);
@@ -34,7 +34,7 @@ export async function claimNextJob(): Promise<{
       id: string;
       submissionId: string | null;
       userId: string;
-      amountStroops: bigint;
+      amountUnits: bigint;
       type: string;
     }[]
   >`
@@ -52,7 +52,7 @@ export async function claimNextJob(): Promise<{
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )
-    RETURNING "id", "submissionId", "userId", "amountStroops", "type"
+    RETURNING "id", "submissionId", "userId", "amountUnits", "type"
   `;
 
   if (claimed.length === 0) return null;
@@ -62,13 +62,13 @@ export async function claimNextJob(): Promise<{
 async function refundCampaignBalance(
   task: { isGold: boolean; campaignId: string | null },
   submissionId: string,
-  amountStroops: bigint,
+  amountUnits: bigint,
   reason: string,
 ): Promise<void> {
   if (task.isGold || !task.campaignId) return;
   await creditBalance(
     task.campaignId,
-    totalDebitStroops(amountStroops),
+    totalDebitUnits(amountUnits),
     `${reason} for submission ${submissionId}`,
     "REFUND",
   ).catch(() => {});
@@ -77,7 +77,7 @@ async function refundCampaignBalance(
 async function processWithdrawalJob(
   jobId: string,
   userId: string,
-  amountStroops: bigint,
+  amountUnits: bigint,
 ): Promise<void> {
   const job = await prisma.payoutJob.findUnique({
     where: { id: jobId },
@@ -103,7 +103,7 @@ async function processWithdrawalJob(
         where: { id: jobId },
         data: { status: "failed", completedAt: new Date(), lastError: "no destination address" },
       });
-      await refundReversal(userId, amountStroops, jobId, "Refund for missing destination").catch(() => {});
+      await refundReversal(userId, amountUnits, jobId, "Refund for missing destination").catch(() => {});
       return;
     }
     destination = user.walletAddress;
@@ -116,7 +116,7 @@ async function processWithdrawalJob(
   }, HEARTBEAT_REFRESH_MS);
 
   try {
-    const txHash = await payReward(destination as `0x${string}`, amountStroops);
+    const txHash = await payReward(destination as `0x${string}`, amountUnits);
 
     await prisma.payoutJob.update({
       where: { id: jobId },
@@ -126,7 +126,7 @@ async function processWithdrawalJob(
       },
     });
 
-    console.log(`[payout-worker] withdrawal job ${jobId} broadcast: paid ${amountStroops} to ${destination} (${txHash})`);
+    console.log(`[payout-worker] withdrawal job ${jobId} broadcast: paid ${amountUnits} to ${destination} (${txHash})`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
 
@@ -142,7 +142,7 @@ async function processWithdrawalJob(
           },
         }),
       ]);
-      await refundReversal(userId, amountStroops, jobId, "Refund for daily cap hit").catch(() => {});
+      await refundReversal(userId, amountUnits, jobId, "Refund for daily cap hit").catch(() => {});
       console.warn(`[payout-worker] withdrawal job ${jobId} failed: daily cap reached`);
       Sentry.captureMessage(`[payout-worker] withdrawal job ${jobId} daily cap hit: ${message}`, { level: "warning" });
       return;
@@ -163,7 +163,7 @@ async function processWithdrawalJob(
           },
         }),
       ]);
-      await refundReversal(userId, amountStroops, jobId, `Refund for failed withdrawal: ${message}`).catch(() => {});
+      await refundReversal(userId, amountUnits, jobId, `Refund for failed withdrawal: ${message}`).catch(() => {});
       console.error(`[payout-worker] withdrawal job ${jobId} failed permanently after ${MAX_RETRIES} retries: ${message}`);
       Sentry.captureMessage(`[payout-worker] withdrawal job ${jobId} permanently failed: ${message}`, { level: "error" });
     } else {
@@ -192,7 +192,7 @@ async function processSubmissionPayout(
     include: {
       task: {
         include: {
-          campaign: { select: { defaultResponseTarget: true, rewardStroops: true } },
+          campaign: { select: { defaultResponseTarget: true, rewardUnits: true } },
         },
       },
     },
@@ -217,7 +217,7 @@ async function processSubmissionPayout(
   }
 
   const walletAddress = submission.walletAddress as `0x${string}`;
-  const amount = submission.payoutAmountStroops;
+  const amount = submission.payoutAmountUnits;
 
   const heartbeat = setInterval(() => {
     prisma.payoutJob
@@ -238,8 +238,8 @@ async function processSubmissionPayout(
         where: { walletAddress: submission.walletAddress },
         data: {
           submissionCount: { increment: 1 },
-          totalEarnedStroops: { increment: amount },
-          pendingBalanceStroops: { increment: amount },
+          totalEarnedUnits: { increment: amount },
+          pendingBalanceUnits: { increment: amount },
           lastSubmissionAt: new Date(),
         },
       });
@@ -257,7 +257,7 @@ async function processSubmissionPayout(
         data: {
           userId: user.id,
           type: "CREDIT_REWARD",
-          amountStroops: amount,
+          amountUnits: amount,
           submissionId: submissionId,
           note: `Reward for submission ${submissionId}`,
         },
@@ -382,7 +382,7 @@ export async function processJob(
   jobId: string,
   submissionId: string | null,
   userId: string,
-  amountStroops: bigint,
+  amountUnits: bigint,
   type: string,
 ): Promise<void> {
   currentJobId = jobId;
@@ -390,7 +390,7 @@ export async function processJob(
   if (type === "SUBMISSION_PAYOUT" && submissionId) {
     await processSubmissionPayout(jobId, submissionId);
   } else if (type === "WITHDRAWAL" && !submissionId) {
-    await processWithdrawalJob(jobId, userId, amountStroops);
+    await processWithdrawalJob(jobId, userId, amountUnits);
   } else {
     console.error(`[payout-worker] job ${jobId} has invalid type/fields: type=${type}, submissionId=${submissionId}`);
     await prisma.payoutJob.update({
@@ -413,7 +413,7 @@ export async function runWorkerLoop(): Promise<void> {
         await sleep(POLL_IDLE_MS);
         continue;
       }
-      await processJob(claimed.id, claimed.submissionId, claimed.userId, claimed.amountStroops, claimed.type);
+      await processJob(claimed.id, claimed.submissionId, claimed.userId, claimed.amountUnits, claimed.type);
     } catch (err) {
       console.error("[payout-worker] loop error:", err);
       Sentry.captureException(err, { extra: { context: "payout-worker-loop" } });

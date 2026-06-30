@@ -5,7 +5,7 @@
 //
 // Payouts settle in **USDC**, a Stellar *issued* asset (code + issuer account),
 // not the native XLM. Every Stellar asset — USDC included — uses integer
-// **stroops** at exactly 7 decimal places (1 USDC = 10^7 stroops). The SDK's
+// **units** at exactly 7 decimal places (1 USDC = 10^7 units). The SDK's
 // `Operation.payment` `amount`, however, takes a *decimal string*. The helpers
 // below own that boundary and use only string/BigInt arithmetic — never floating
 // point — so large values and dust never lose precision (ST-0 #290 finding;
@@ -23,8 +23,8 @@ const HORIZON_PUBLIC = "https://horizon.stellar.org";
 const EXPLORER_TESTNET = "https://stellar.expert/explorer/testnet";
 const EXPLORER_PUBLIC = "https://stellar.expert/explorer/public";
 
-/** 1 USDC = 10^7 stroops (7 decimal places — true for every Stellar asset). */
-export const STROOPS_PER_USDC = 10_000_000n;
+/** 1 USDC = 10^7 units (7 decimal places — true for every Stellar asset). */
+export const UNITS_PER_USDC = 10_000_000n;
 const USDC_DECIMALS = 7;
 
 /** Default asset code when `STELLAR_USDC_CODE` is unset. */
@@ -101,31 +101,31 @@ export function usdcAsset(): Asset {
 }
 
 /**
- * Parse a decimal USDC string into integer stroops. Accepts a non-negative
+ * Parse a decimal USDC string into integer units. Accepts a non-negative
  * decimal with at most 7 fractional digits; rejects anything else (negatives,
  * non-numeric, or >7 decimal places — which would silently truncate on-chain).
  */
-export function usdcToStroops(usdc: string): bigint {
+export function usdcToUnits(usdc: string): bigint {
   const match = /^(\d+)(?:\.(\d{1,7}))?$/.exec(usdc.trim());
   if (!match) {
     throw new Error(
-      `usdcToStroops: invalid USDC amount "${usdc}" — expected a non-negative decimal with at most ${USDC_DECIMALS} decimal places`,
+      `usdcToUnits: invalid USDC amount "${usdc}" — expected a non-negative decimal with at most ${USDC_DECIMALS} decimal places`,
     );
   }
   const whole = BigInt(match[1]);
   const frac = BigInt((match[2] ?? "").padEnd(USDC_DECIMALS, "0"));
-  return whole * STROOPS_PER_USDC + frac;
+  return whole * UNITS_PER_USDC + frac;
 }
 
 /**
- * Render integer stroops as a fixed 7-decimal USDC string suitable for the SDK's
- * `Operation.payment` `amount`. Round-trips with {@link usdcToStroops}.
+ * Render integer units as a fixed 7-decimal USDC string suitable for the SDK's
+ * `Operation.payment` `amount`. Round-trips with {@link usdcToUnits}.
  */
-export function stroopsToUsdcString(stroops: bigint): string {
-  if (stroops < 0n) {
-    throw new Error(`stroopsToUsdcString: stroops must be non-negative, got ${stroops}`);
+export function unitsToUsdcString(units: bigint): string {
+  if (units < 0n) {
+    throw new Error(`unitsToUsdcString: units must be non-negative, got ${units}`);
   }
-  const whole = stroops / STROOPS_PER_USDC;
-  const frac = (stroops % STROOPS_PER_USDC).toString().padStart(USDC_DECIMALS, "0");
+  const whole = units / UNITS_PER_USDC;
+  const frac = (units % UNITS_PER_USDC).toString().padStart(USDC_DECIMALS, "0");
   return `${whole}.${frac}`;
 }

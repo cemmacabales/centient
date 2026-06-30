@@ -36,12 +36,12 @@ describe("GET /api/me/balance", () => {
   });
 
   it("returns the pending balance and recent ledger entries (most recent first)", async () => {
-    const user = await createUser({ pendingBalanceStroops: 1500000n });
+    const user = await createUser({ pendingBalanceUnits: 1500000n });
     await prisma.userBalanceLedger.create({
-      data: { userId: user.id, type: "CREDIT_REWARD", amountStroops: 500000n, submissionId: "sub-1" },
+      data: { userId: user.id, type: "CREDIT_REWARD", amountUnits: 500000n, submissionId: "sub-1" },
     });
     await prisma.userBalanceLedger.create({
-      data: { userId: user.id, type: "CREDIT_REWARD", amountStroops: 1000000n, submissionId: "sub-2" },
+      data: { userId: user.id, type: "CREDIT_REWARD", amountUnits: 1000000n, submissionId: "sub-2" },
     });
 
     const token = await signLabelerJWT(user.id);
@@ -49,14 +49,14 @@ describe("GET /api/me/balance", () => {
     expect(res.status).toBe(200);
 
     const body = await res.json();
-    expect(body.pendingBalanceStroops).toBe("1500000");
+    expect(body.pendingBalanceUnits).toBe("1500000");
     expect(body.pendingBalance).toBe("0.15");
-    expect(body.rewardSymbol).toBe("XLM");
+    expect(body.rewardSymbol).toBe("USDC");
 
     expect(body.ledger).toHaveLength(2);
     expect(body.ledger[0].submissionId).toBe("sub-2");
     expect(body.ledger[0].type).toBe("CREDIT_REWARD");
-    expect(body.ledger[0].amountStroops).toBe("1000000");
+    expect(body.ledger[0].amountUnits).toBe("1000000");
     expect(body.ledger[0].amount).toBe("0.1");
     expect(typeof body.ledger[0].createdAt).toBe("string");
   });
@@ -68,25 +68,25 @@ describe("GET /api/me/balance", () => {
     expect(res.status).toBe(200);
 
     const body = await res.json();
-    expect(body.pendingBalanceStroops).toBe("0");
+    expect(body.pendingBalanceUnits).toBe("0");
     expect(body.pendingBalance).toBe("0");
     expect(body.ledger).toEqual([]);
   });
 
   it("only returns the session user's own ledger entries", async () => {
-    const me = await createUser({ pendingBalanceStroops: 500000n });
-    const other = await createUser({ pendingBalanceStroops: 9990000n });
+    const me = await createUser({ pendingBalanceUnits: 500000n });
+    const other = await createUser({ pendingBalanceUnits: 9990000n });
     await prisma.userBalanceLedger.create({
-      data: { userId: me.id, type: "CREDIT_REWARD", amountStroops: 500000n, submissionId: "mine" },
+      data: { userId: me.id, type: "CREDIT_REWARD", amountUnits: 500000n, submissionId: "mine" },
     });
     await prisma.userBalanceLedger.create({
-      data: { userId: other.id, type: "CREDIT_REWARD", amountStroops: 9990000n, submissionId: "theirs" },
+      data: { userId: other.id, type: "CREDIT_REWARD", amountUnits: 9990000n, submissionId: "theirs" },
     });
 
     const token = await signLabelerJWT(me.id);
     const res = await GET(makeReq(token));
     const body = await res.json();
-    expect(body.pendingBalanceStroops).toBe("500000");
+    expect(body.pendingBalanceUnits).toBe("500000");
     expect(body.ledger).toHaveLength(1);
     expect(body.ledger[0].submissionId).toBe("mine");
   });

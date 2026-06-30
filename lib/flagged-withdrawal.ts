@@ -40,7 +40,7 @@ export interface RecordFlaggedWithdrawalParams {
   walletAddress: string | null;
   reason: FlaggedWithdrawalReason;
   detail?: Prisma.InputJsonValue;
-  balanceStroops: bigint;
+  balanceUnits: bigint;
 }
 
 /**
@@ -53,7 +53,7 @@ export interface RecordFlaggedWithdrawalParams {
 export async function recordFlaggedWithdrawal(
   params: RecordFlaggedWithdrawalParams,
 ): Promise<void> {
-  const { userId, walletAddress, reason, detail, balanceStroops } = params;
+  const { userId, walletAddress, reason, detail, balanceUnits } = params;
 
   // The partial unique index flagged_withdrawals_userId_reason_pending_uniq
   // guarantees atomicity: two concurrent blocked withdrawals for the same
@@ -64,17 +64,17 @@ export async function recordFlaggedWithdrawal(
   // client-side default, so supplying it explicitly works on both schemas.
   await prisma.$executeRaw`
     INSERT INTO "flagged_withdrawals" (
-      "id", "userId", "walletAddress", "reason", "detail", "balanceStroops", "createdAt", "updatedAt"
+      "id", "userId", "walletAddress", "reason", "detail", "balanceUnits", "createdAt", "updatedAt"
     )
     VALUES (
       ${randomUUID()}, ${userId}, ${walletAddress}, ${reason},
-      ${detail ?? Prisma.JsonNull}, ${balanceStroops}, now(), now()
+      ${detail ?? Prisma.JsonNull}, ${balanceUnits}, now(), now()
     )
     ON CONFLICT ("userId", "reason") WHERE "status" = 'PENDING'
     DO UPDATE SET
       "walletAddress" = EXCLUDED."walletAddress",
       "detail"        = EXCLUDED."detail",
-      "balanceStroops"    = EXCLUDED."balanceStroops",
+      "balanceUnits"    = EXCLUDED."balanceUnits",
       "updatedAt"     = now();
   `;
 }

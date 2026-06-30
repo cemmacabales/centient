@@ -8,7 +8,7 @@ import {
   REWARD_TOKEN_SYMBOL,
   REWARDED_STATUSES,
 } from "@/lib/constants";
-import { resolveRewardStroops } from "@/lib/payout";
+import { resolveRewardUnits } from "@/lib/payout";
 import {
   isInCooldown,
   isInRetest,
@@ -58,8 +58,8 @@ export async function GET(req: NextRequest) {
     responseB: string;
     isGold: boolean;
     responseTarget: number | null;
-    rewardStroops: bigint | null;
-    campaign: { defaultResponseTarget: number; rewardStroops: bigint } | null;
+    rewardUnits: bigint | null;
+    campaign: { defaultResponseTarget: number; rewardUnits: bigint } | null;
     _count: { submissions: number };
   } | null = null;
 
@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
         id: { notIn: doneIds },
       },
       include: {
-        campaign: { select: { defaultResponseTarget: true, rewardStroops: true } },
+        campaign: { select: { defaultResponseTarget: true, rewardUnits: true } },
         _count: { select: { submissions: { where: { payoutStatus: { in: [...REWARDED_STATUSES] }, isGoldCheck: false } } } },
       },
       orderBy: { createdAt: "asc" },
@@ -119,7 +119,7 @@ export async function GET(req: NextRequest) {
       task = await prisma.task.findFirst({
         where: { id: available[0].id },
         include: {
-          campaign: { select: { defaultResponseTarget: true, rewardStroops: true } },
+          campaign: { select: { defaultResponseTarget: true, rewardUnits: true } },
           _count: { select: { submissions: { where: { payoutStatus: { in: [...REWARDED_STATUSES] }, isGoldCheck: false } } } },
         },
       });
@@ -132,8 +132,8 @@ export async function GET(req: NextRequest) {
 
   const target = computeResponseTarget(task.responseTarget, task.campaign?.defaultResponseTarget ?? null);
   const submissionsRemaining = target !== null ? Math.max(0, target - task._count.submissions) : null;
-  const resolvedStroops = resolveRewardStroops(task.rewardStroops, task.campaign?.rewardStroops ?? null);
-  const rewardDisplay = formatUnits(resolvedStroops, REWARD_TOKEN_DECIMALS);
+  const resolvedUnits = resolveRewardUnits(task.rewardUnits, task.campaign?.rewardUnits ?? null);
+  const rewardDisplay = formatUnits(resolvedUnits, REWARD_TOKEN_DECIMALS);
 
   return NextResponse.json({
     task: {
@@ -142,7 +142,7 @@ export async function GET(req: NextRequest) {
       responseA: task.responseA,
       responseB: task.responseB,
       submissionsRemaining,
-      rewardStroops: resolvedStroops.toString(),
+      rewardUnits: resolvedUnits.toString(),
       rewardDisplay,
       rewardSymbol: REWARD_TOKEN_SYMBOL,
     },

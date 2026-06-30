@@ -30,11 +30,11 @@ const server = new Horizon.Server(HORIZON_URL);
 const log = (...a) => console.log(...a);
 
 // --- conversion boundary (mirrors what lib/stellar/config.ts owns in ST-1a) ---
-const STROOPS_PER_XLM = 10_000_000n; // 1 XLM = 10^7 stroops
-const xlmToStroops = (xlm) => BigInt(Math.round(Number(xlm) * 1e7)).toString();
-const stroopsToXlmString = (stroops) => {
-  const s = BigInt(stroops);
-  return `${s / STROOPS_PER_XLM}.${(s % STROOPS_PER_XLM).toString().padStart(7, "0")}`;
+const UNITS_PER_XLM = 10_000_000n; // 1 XLM = 10^7 units
+const xlmToUnits = (xlm) => BigInt(Math.round(Number(xlm) * 1e7)).toString();
+const unitsToXlmString = (units) => {
+  const s = BigInt(units);
+  return `${s / UNITS_PER_XLM}.${(s % UNITS_PER_XLM).toString().padStart(7, "0")}`;
 };
 
 async function accountExists(pub) {
@@ -107,10 +107,10 @@ function buildPayment(srcKp, srcAccount, destPub, amountXlm) {
   log("dest   balance:", await nativeBalance(dest.publicKey()), "XLM");
 
   // stroop-math boundary
-  const amountStroops = "15000000"; // 1.5 XLM
-  const amountXlm = stroopsToXlmString(amountStroops);
-  log("\n[stroop math]", amountStroops, "stroops -> SDK amount", amountXlm, "XLM");
-  log("[stroop math] xlmToStroops('1.5') =", xlmToStroops("1.5"));
+  const amountUnits = "15000000"; // 1.5 XLM
+  const amountXlm = unitsToXlmString(amountUnits);
+  log("\n[stroop math]", amountUnits, "units -> SDK amount", amountXlm, "XLM");
+  log("[stroop math] xlmToUnits('1.5') =", xlmToUnits("1.5"));
 
   // 4/5. submit funded payment + confirm + finality timing
   log("\n[payment] source -> dest", amountXlm, "XLM");
