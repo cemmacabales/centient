@@ -1,4 +1,19 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { StellarPaymentError } from "../stellar/client";
+
+// Stellar `G…` StrKey destinations (case-sensitive base32) and bare-hex tx
+// hashes — the rail returns plain `string` hashes, not EVM `0x…` (ST-3d #298).
+const G_A = "GCKIPQX2TEZWBQSUPPNMKGJBODL246B374Y52SPD2OGJ2AAQ6SHYUR6E";
+const G_B = "GDPOQHA3CVVJD3IJTCRHQ2KYVZA6LH5KY6NHHZWDF6A5L4IJXZSWCOZI";
+const G_C = "GAMKKZ27XVGL4TTGPUWZGI6TUBLDUH4T5JCWDCXK3KSSPTWQI47TLAQL";
+const G_D = "GDYHJM2WZTBWJFLJM6VKPF35I7Y4527UIWDOS3U77NGH3EJHKGXCFNKC";
+const G_E = "GBVWPA44JNPUEO4IJSNZ5SQASS6E3Q6JNFH2NCOS4KVS4GJQHADCYHBE";
+const G_F = "GCFQ7O5PHNN27T7GY7U6ANYITDTCZZGBZMGZNBBKNG6HW33FU3RWJJ6Q";
+
+const TX_1 = "78fb091c63b85385bde46501fcea135bfd7b540deeecd524d7b63408fcb16173";
+const TX_2 = "c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00";
+const TX_3 = "abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abcd";
+const TX_OTHER = "0000111122223333444455556666777788889999aaaabbbbccccddddeeeeffff";
 
 const {
   mockPayReward,
@@ -62,10 +77,32 @@ describe("reprocessPayoutWithNonceSafety", () => {
     );
   });
 
+  it("marks failed (no send) when the destination is not a valid StrKey", async () => {
+    mockFindUnique.mockResolvedValueOnce({
+      id: "sub-bad-addr",
+      // legacy EVM `0x…` address — invalid on Stellar, can never be paid.
+      walletAddress: "0xnot-a-strkey",
+      payoutStatus: "failed",
+      payoutAmountUnits: 100n,
+    });
+
+    await expect(
+      reprocessPayoutWithNonceSafety("sub-bad-addr"),
+    ).rejects.toThrow(/invalid Stellar address/);
+
+    expect(mockPayReward).not.toHaveBeenCalled();
+    expect(mockSubmissionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "sub-bad-addr" },
+        data: expect.objectContaining({ payoutStatus: "failed" }),
+      }),
+    );
+  });
+
   it("throws when submission vanishes between initial check and claim transaction", async () => {
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-vanish",
-      walletAddress: "0xvvv",
+      walletAddress: G_A,
       payoutStatus: "failed",
       payoutAmountUnits: 100n,
     });
@@ -80,7 +117,7 @@ describe("reprocessPayoutWithNonceSafety", () => {
   it("no-ops for confirmed status", async () => {
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-1",
-      walletAddress: "0xaaa",
+      walletAddress: G_A,
       payoutStatus: "confirmed",
       payoutAmountUnits: 100n,
     });
@@ -92,7 +129,7 @@ describe("reprocessPayoutWithNonceSafety", () => {
   it("no-ops for sent status", async () => {
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-2",
-      walletAddress: "0xbbb",
+      walletAddress: G_A,
       payoutStatus: "sent",
       payoutAmountUnits: 200n,
     });
@@ -104,7 +141,7 @@ describe("reprocessPayoutWithNonceSafety", () => {
   it("no-ops for skipped status", async () => {
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-3",
-      walletAddress: "0xccc",
+      walletAddress: G_A,
       payoutStatus: "skipped",
       payoutAmountUnits: 0n,
     });
@@ -116,21 +153,21 @@ describe("reprocessPayoutWithNonceSafety", () => {
   it("reprocesses failed submission successfully and credits user", async () => {
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-4",
-      walletAddress: "0xddd",
+      walletAddress: G_B,
       payoutStatus: "failed",
       payoutAmountUnits: 500n,
     });
 
     mockTxFindUnique.mockResolvedValueOnce({
       id: "sub-4",
-      walletAddress: "0xddd",
+      walletAddress: G_B,
       payoutStatus: "failed",
       payoutAmountUnits: 500n,
       payoutTxHash: null,
       retryCount: 2,
     });
 
-    mockPayReward.mockResolvedValueOnce("0xdeadbeef");
+    mockPayReward.mockResolvedValueOnce(TX_1);
 
     mockUserFindUnique.mockResolvedValueOnce({
       submissionCount: 5,
@@ -140,19 +177,19 @@ describe("reprocessPayoutWithNonceSafety", () => {
     await reprocessPayoutWithNonceSafety("sub-4");
 
     expect(mockTxExecuteRaw).toHaveBeenCalled();
-    expect(mockPayReward).toHaveBeenCalledWith("0xddd", 500n);
+    expect(mockPayReward).toHaveBeenCalledWith(G_B, 500n);
     expect(mockSubmissionUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "sub-4" },
         data: expect.objectContaining({
           payoutStatus: "sent",
-          payoutTxHash: "0xdeadbeef",
+          payoutTxHash: TX_1,
         }),
       }),
     );
     expect(mockUserUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { walletAddress: "0xddd" },
+        where: { walletAddress: G_B },
         data: { submissionCount: 6, totalEarnedUnits: 1500n },
       }),
     );
@@ -161,21 +198,21 @@ describe("reprocessPayoutWithNonceSafety", () => {
   it("updates user totals for pending submissions on success", async () => {
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-5",
-      walletAddress: "0xeee",
+      walletAddress: G_C,
       payoutStatus: "pending",
       payoutAmountUnits: 700n,
     });
 
     mockTxFindUnique.mockResolvedValueOnce({
       id: "sub-5",
-      walletAddress: "0xeee",
+      walletAddress: G_C,
       payoutStatus: "pending",
       payoutAmountUnits: 700n,
       payoutTxHash: null,
       retryCount: 0,
     });
 
-    mockPayReward.mockResolvedValueOnce("0xcafe");
+    mockPayReward.mockResolvedValueOnce(TX_2);
 
     mockUserFindUnique.mockResolvedValueOnce({
       submissionCount: 10,
@@ -186,7 +223,7 @@ describe("reprocessPayoutWithNonceSafety", () => {
 
     expect(mockUserUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { walletAddress: "0xeee" },
+        where: { walletAddress: G_C },
         data: { submissionCount: 11, totalEarnedUnits: 5700n },
       }),
     );
@@ -197,17 +234,17 @@ describe("reprocessPayoutWithNonceSafety", () => {
     // back to "failed" while leaving payoutTxHash set — claimForRetry must bail.
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-4b",
-      walletAddress: "0xd2d",
+      walletAddress: G_D,
       payoutStatus: "failed",
       payoutAmountUnits: 500n,
     });
 
     mockTxFindUnique.mockResolvedValueOnce({
       id: "sub-4b",
-      walletAddress: "0xd2d",
+      walletAddress: G_D,
       payoutStatus: "failed",
       payoutAmountUnits: 500n,
-      payoutTxHash: "0xprevious",
+      payoutTxHash: TX_OTHER,
       retryCount: 1,
     });
 
@@ -220,24 +257,24 @@ describe("reprocessPayoutWithNonceSafety", () => {
   it("marks as failed and increments retryCount on payout error", async () => {
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-6",
-      walletAddress: "0xfff",
+      walletAddress: G_E,
       payoutStatus: "failed",
       payoutAmountUnits: 300n,
     });
 
     mockTxFindUnique.mockResolvedValueOnce({
       id: "sub-6",
-      walletAddress: "0xfff",
+      walletAddress: G_E,
       payoutStatus: "failed",
       payoutAmountUnits: 300n,
       payoutTxHash: null,
       retryCount: 1,
     });
 
-    mockPayReward.mockRejectedValueOnce(new Error("RPC error"));
+    mockPayReward.mockRejectedValueOnce(new Error("Horizon error"));
 
     await expect(reprocessPayoutWithNonceSafety("sub-6")).rejects.toThrow(
-      "RPC error",
+      "Horizon error",
     );
 
     expect(mockSubmissionUpdate).toHaveBeenCalledWith(
@@ -251,10 +288,47 @@ describe("reprocessPayoutWithNonceSafety", () => {
     );
   });
 
+  it("surfaces a non-retryable op_no_trust as a payout failure", async () => {
+    mockFindUnique.mockResolvedValueOnce({
+      id: "sub-trust",
+      walletAddress: G_F,
+      payoutStatus: "failed",
+      payoutAmountUnits: 300n,
+    });
+
+    mockTxFindUnique.mockResolvedValueOnce({
+      id: "sub-trust",
+      walletAddress: G_F,
+      payoutStatus: "failed",
+      payoutAmountUnits: 300n,
+      payoutTxHash: null,
+      retryCount: 0,
+    });
+
+    mockPayReward.mockRejectedValueOnce(
+      new StellarPaymentError(
+        `payUsdc: destination ${G_F} has no USDC trustline (op_no_trust)`,
+        "op_no_trust",
+        false,
+      ),
+    );
+
+    await expect(reprocessPayoutWithNonceSafety("sub-trust")).rejects.toThrow(
+      /op_no_trust/,
+    );
+
+    expect(mockSubmissionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "sub-trust" },
+        data: expect.objectContaining({ payoutStatus: "failed" }),
+      }),
+    );
+  });
+
   it("double-checks status under the advisory lock to prevent double-payment", async () => {
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-7",
-      walletAddress: "0x111",
+      walletAddress: G_A,
       payoutStatus: "failed",
       payoutAmountUnits: 400n,
     });
@@ -262,10 +336,10 @@ describe("reprocessPayoutWithNonceSafety", () => {
     // Another worker already advanced it to "sent" by the time we hold the lock.
     mockTxFindUnique.mockResolvedValueOnce({
       id: "sub-7",
-      walletAddress: "0x111",
+      walletAddress: G_A,
       payoutStatus: "sent",
       payoutAmountUnits: 400n,
-      payoutTxHash: "0xother",
+      payoutTxHash: TX_OTHER,
       retryCount: 0,
     });
 
@@ -278,21 +352,21 @@ describe("reprocessPayoutWithNonceSafety", () => {
   it("acquires advisory lock on wallet address", async () => {
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-8",
-      walletAddress: "0x222",
+      walletAddress: G_F,
       payoutStatus: "failed",
       payoutAmountUnits: 600n,
     });
 
     mockTxFindUnique.mockResolvedValueOnce({
       id: "sub-8",
-      walletAddress: "0x222",
+      walletAddress: G_F,
       payoutStatus: "failed",
       payoutAmountUnits: 600n,
       payoutTxHash: null,
       retryCount: 3,
     });
 
-    mockPayReward.mockResolvedValueOnce("0x333");
+    mockPayReward.mockResolvedValueOnce(TX_3);
 
     await reprocessPayoutWithNonceSafety("sub-8");
 
@@ -306,7 +380,7 @@ describe("reprocessPayoutWithNonceSafety", () => {
 
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-order",
-      walletAddress: "0x999",
+      walletAddress: G_B,
       payoutStatus: "failed",
       payoutAmountUnits: 100n,
     });
@@ -317,7 +391,7 @@ describe("reprocessPayoutWithNonceSafety", () => {
       callOrder.push("recheck");
       return {
         id: "sub-order",
-        walletAddress: "0x999",
+        walletAddress: G_B,
         payoutStatus: "failed",
         payoutAmountUnits: 100n,
         payoutTxHash: null,
@@ -326,7 +400,7 @@ describe("reprocessPayoutWithNonceSafety", () => {
     });
     mockPayReward.mockImplementationOnce(async () => {
       callOrder.push("payReward");
-      return "0xabc";
+      return TX_1;
     });
 
     await reprocessPayoutWithNonceSafety("sub-order");
@@ -337,14 +411,14 @@ describe("reprocessPayoutWithNonceSafety", () => {
   it("does not burn retryCount on PayoutCapError", async () => {
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-9",
-      walletAddress: "0x444",
+      walletAddress: G_C,
       payoutStatus: "failed",
       payoutAmountUnits: 100n,
     });
 
     mockTxFindUnique.mockResolvedValueOnce({
       id: "sub-9",
-      walletAddress: "0x444",
+      walletAddress: G_C,
       payoutStatus: "failed",
       payoutAmountUnits: 100n,
       payoutTxHash: null,

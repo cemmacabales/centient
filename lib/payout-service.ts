@@ -1,5 +1,7 @@
 import prisma from "@/lib/prisma";
 import { payReward, PayoutCapError } from "./payout";
+import { StellarPaymentError } from "./stellar/client";
+import { isValidStellarAddress } from "./stellar/signature";
 
 const TERMINAL_STATUSES = ["confirmed", "sent", "skipped"];
 
@@ -75,6 +77,20 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
   const walletAddress = submission.walletAddress;
   const amount = submission.payoutAmountUnits;
 
+  // Step 0: StrKey-validate the `G…` destination before doing any work. A
+  // malformed/non-StrKey address can never be paid (the rail would fail with
+  // `op_no_destination`), so mark it failed permanently rather than burning the
+  // retry budget on a payout that is guaranteed to fail.
+  if (!isValidStellarAddress(walletAddress)) {
+    await prisma.submission.update({
+      where: { id: submissionId },
+      data: { payoutStatus: "failed", lastRetriedAt: new Date() },
+    });
+    throw new Error(
+      `[payout-service] submission ${submissionId} has an invalid Stellar address: ${walletAddress}`,
+    );
+  }
+
   // Step 1: claim the submission under a per-wallet advisory lock. If another
   // worker already advanced it to a terminal state, bail out without sending.
   const fresh = await prisma.$transaction((tx) =>
@@ -99,6 +115,16 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
         data: { payoutStatus: "pending" },
       });
       return;
+    }
+
+    // Non-retryable rail errors (`op_no_trust` — recipient holds no USDC
+    // trustline; `op_no_destination` — recipient unfunded) can never succeed on
+    // a blind retry. Surface the reason explicitly; the submission is marked
+    // failed below and the cron retry job (ST-3b) must not auto-retry it.
+    if (err instanceof StellarPaymentError && !err.retryable) {
+      console.error(
+        `[payout-service] submission ${submissionId} permanently failed (${err.code}): ${err.message}`,
+      );
     }
 
     await prisma.submission.update({
