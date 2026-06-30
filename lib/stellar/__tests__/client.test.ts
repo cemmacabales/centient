@@ -6,16 +6,19 @@ import { Account, Keypair } from "@stellar/stellar-sdk";
 const platformKp = Keypair.random();
 const destPub = Keypair.random().publicKey();
 process.env.STELLAR_PLATFORM_SECRET = platformKp.secret();
+// USDC is an issued asset: the client builds a real payment against this issuer.
+process.env.STELLAR_USDC_ISSUER = Keypair.random().publicKey();
 
-// Mock only `server()`; keep the real config helpers (passphrase, conversions)
-// so payXlm builds a genuine, signed transaction against a fake Horizon.
+// Mock only `server()`; keep the real config helpers (passphrase, asset,
+// conversions) so payUsdc builds a genuine, signed transaction against a fake
+// Horizon.
 vi.mock("../config", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config")>();
   return { ...actual, server: vi.fn() };
 });
 
 import { server } from "../config";
-import { payXlm, getTxStatus, StellarPaymentError } from "../client";
+import { payUsdc, getTxStatus, StellarPaymentError } from "../client";
 
 const mockedServer = vi.mocked(server);
 
@@ -27,6 +30,8 @@ function horizonError(result_codes: { transaction?: string; operations?: string[
 const badSeqError = () => horizonError({ transaction: "tx_bad_seq" });
 const opNoDestError = () =>
   horizonError({ transaction: "tx_failed", operations: ["op_no_destination"] });
+const opNoTrustError = () =>
+  horizonError({ transaction: "tx_failed", operations: ["op_no_trust"] });
 
 type FakeServer = {
   loadAccount: ReturnType<typeof vi.fn>;
@@ -53,12 +58,12 @@ beforeEach(() => {
   mockedServer.mockReset();
 });
 
-describe("payXlm", () => {
+describe("payUsdc", () => {
   it("builds, signs, submits and returns the tx hash on success", async () => {
     const submit = vi.fn(async () => ({ hash: "HASH_OK" }));
     mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
 
-    const res = await payXlm(destPub, 15_000_000n);
+    const res = await payUsdc(destPub, 15_000_000n);
 
     expect(res).toEqual({ hash: "HASH_OK" });
     expect(submit).toHaveBeenCalledTimes(1);
@@ -72,7 +77,7 @@ describe("payXlm", () => {
     const srv = makeServer({ submitTransaction: submit });
     mockedServer.mockReturnValue(srv as never);
 
-    const res = await payXlm(destPub, 1n);
+    const res = await payUsdc(destPub, 1n);
 
     expect(res.hash).toBe("HASH_RETRY");
     expect(submit).toHaveBeenCalledTimes(2);
@@ -83,7 +88,7 @@ describe("payXlm", () => {
     const submit = vi.fn().mockRejectedValue(badSeqError());
     mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
 
-    await expect(payXlm(destPub, 1n)).rejects.toMatchObject(
+    await expect(payUsdc(destPub, 1n)).rejects.toMatchObject(
       horizonError({ transaction: "tx_bad_seq" }),
     );
     expect(submit).toHaveBeenCalledTimes(2); // initial + one retry, then give up
@@ -93,9 +98,21 @@ describe("payXlm", () => {
     const submit = vi.fn().mockRejectedValue(opNoDestError());
     mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
 
-    await expect(payXlm(destPub, 1n)).rejects.toMatchObject({
+    await expect(payUsdc(destPub, 1n)).rejects.toMatchObject({
       name: "StellarPaymentError",
       code: "op_no_destination",
+      retryable: false,
+    });
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws a non-retryable StellarPaymentError on op_no_trust (no USDC trustline) and never retries", async () => {
+    const submit = vi.fn().mockRejectedValue(opNoTrustError());
+    mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
+
+    await expect(payUsdc(destPub, 1n)).rejects.toMatchObject({
+      name: "StellarPaymentError",
+      code: "op_no_trust",
       retryable: false,
     });
     expect(submit).toHaveBeenCalledTimes(1);
@@ -105,8 +122,8 @@ describe("payXlm", () => {
     const submit = vi.fn();
     mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
 
-    await expect(payXlm(destPub, 0n)).rejects.toBeInstanceOf(StellarPaymentError);
-    await expect(payXlm(destPub, -5n)).rejects.toBeInstanceOf(StellarPaymentError);
+    await expect(payUsdc(destPub, 0n)).rejects.toBeInstanceOf(StellarPaymentError);
+    await expect(payUsdc(destPub, -5n)).rejects.toBeInstanceOf(StellarPaymentError);
     expect(submit).not.toHaveBeenCalled();
   });
 
@@ -122,7 +139,7 @@ describe("payXlm", () => {
     });
     mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
 
-    await Promise.all(Array.from({ length: 8 }, () => payXlm(destPub, 1n)));
+    await Promise.all(Array.from({ length: 8 }, () => payUsdc(destPub, 1n)));
 
     expect(maxActive).toBe(1);
     expect(submit).toHaveBeenCalledTimes(8);
