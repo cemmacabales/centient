@@ -17,7 +17,7 @@ export async function PATCH(
 
   const campaign = await prisma.campaign.findFirst({
     where,
-    select: { id: true, defaultResponseTarget: true, rewardStroops: true },
+    select: { id: true, defaultResponseTarget: true, rewardUnits: true },
   });
 
   if (!campaign) {
@@ -25,7 +25,7 @@ export async function PATCH(
   }
 
   const body = await req.json();
-  const { prompt, responseTarget, rewardStroops } = body;
+  const { prompt, responseTarget, rewardUnits } = body;
 
   if (prompt !== undefined && (typeof prompt !== "string" || prompt.trim().length === 0)) {
     return NextResponse.json({ error: "invalid_prompt" }, { status: 400 });
@@ -37,9 +37,9 @@ export async function PATCH(
     }
   }
 
-  if (rewardStroops !== undefined) {
-    if (rewardStroops !== null && (typeof rewardStroops !== "string" || !/^\d+$/.test(rewardStroops))) {
-      return NextResponse.json({ error: "invalid_reward_stroops" }, { status: 400 });
+  if (rewardUnits !== undefined) {
+    if (rewardUnits !== null && (typeof rewardUnits !== "string" || !/^\d+$/.test(rewardUnits))) {
+      return NextResponse.json({ error: "invalid_reward_units" }, { status: 400 });
     }
   }
 
@@ -56,17 +56,17 @@ export async function PATCH(
     data: {
       ...(prompt !== undefined ? { prompt: prompt.trim() } : {}),
       ...(responseTarget !== undefined ? { responseTarget } : {}),
-      ...(rewardStroops !== undefined ? { rewardStroops: rewardStroops !== null ? BigInt(rewardStroops) : null } : {}),
+      ...(rewardUnits !== undefined ? { rewardUnits: rewardUnits !== null ? BigInt(rewardUnits) : null } : {}),
     },
   });
 
-  const resolvedRewardStroops = updated.rewardStroops ?? campaign.rewardStroops;
+  const resolvedRewardUnits = updated.rewardUnits ?? campaign.rewardUnits;
 
   return NextResponse.json({
     taskId: updated.id,
     prompt: updated.prompt,
     responseTarget: updated.responseTarget ?? campaign.defaultResponseTarget,
-    rewardStroops: resolvedRewardStroops.toString(),
+    rewardUnits: resolvedRewardUnits.toString(),
   });
 }
 

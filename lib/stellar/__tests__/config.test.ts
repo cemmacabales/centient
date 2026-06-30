@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
-  STROOPS_PER_USDC,
+  UNITS_PER_USDC,
   stellarNetwork,
   horizonUrl,
   networkPassphrase,
   explorerUrl,
   server,
-  usdcToStroops,
-  stroopsToUsdcString,
+  usdcToUnits,
+  unitsToUsdcString,
   usdcAsset,
 } from "@/lib/stellar/config";
 import { Keypair, Networks } from "@stellar/stellar-sdk";
@@ -107,58 +107,58 @@ describe("usdcAsset", () => {
   });
 });
 
-describe("usdcToStroops", () => {
+describe("usdcToUnits", () => {
   it("converts whole USDC", () => {
-    expect(usdcToStroops("1")).toBe(STROOPS_PER_USDC);
-    expect(usdcToStroops("10")).toBe(100_000_000n);
+    expect(usdcToUnits("1")).toBe(UNITS_PER_USDC);
+    expect(usdcToUnits("10")).toBe(100_000_000n);
   });
 
   it("converts fractional USDC at full 7-dp precision", () => {
-    expect(usdcToStroops("1.5")).toBe(15_000_000n);
-    expect(usdcToStroops("0.0000001")).toBe(1n); // one stroop (dust)
-    expect(usdcToStroops("0.1234567")).toBe(1_234_567n);
+    expect(usdcToUnits("1.5")).toBe(15_000_000n);
+    expect(usdcToUnits("0.0000001")).toBe(1n); // one stroop (dust)
+    expect(usdcToUnits("0.1234567")).toBe(1_234_567n);
   });
 
   it("handles zero", () => {
-    expect(usdcToStroops("0")).toBe(0n);
-    expect(usdcToStroops("0.0000000")).toBe(0n);
+    expect(usdcToUnits("0")).toBe(0n);
+    expect(usdcToUnits("0.0000000")).toBe(0n);
   });
 
   it("keeps precision on large amounts (no float math)", () => {
-    // 100,000,000 USDC — well past Number's safe-integer range once in stroops.
-    expect(usdcToStroops("100000000.1234567")).toBe(1_000_000_001_234_567n);
+    // 100,000,000 USDC — well past Number's safe-integer range once in units.
+    expect(usdcToUnits("100000000.1234567")).toBe(1_000_000_001_234_567n);
   });
 
   it("rejects more than 7 decimal places", () => {
-    expect(() => usdcToStroops("0.12345678")).toThrow("usdcToStroops");
+    expect(() => usdcToUnits("0.12345678")).toThrow("usdcToUnits");
   });
 
   it("rejects negative and non-numeric input", () => {
-    expect(() => usdcToStroops("-1")).toThrow("usdcToStroops");
-    expect(() => usdcToStroops("abc")).toThrow("usdcToStroops");
-    expect(() => usdcToStroops("")).toThrow("usdcToStroops");
-    expect(() => usdcToStroops("1.2.3")).toThrow("usdcToStroops");
+    expect(() => usdcToUnits("-1")).toThrow("usdcToUnits");
+    expect(() => usdcToUnits("abc")).toThrow("usdcToUnits");
+    expect(() => usdcToUnits("")).toThrow("usdcToUnits");
+    expect(() => usdcToUnits("1.2.3")).toThrow("usdcToUnits");
   });
 });
 
-describe("stroopsToUsdcString", () => {
+describe("unitsToUsdcString", () => {
   it("renders a fixed 7-decimal string", () => {
-    expect(stroopsToUsdcString(15_000_000n)).toBe("1.5000000");
-    expect(stroopsToUsdcString(1n)).toBe("0.0000001");
-    expect(stroopsToUsdcString(0n)).toBe("0.0000000");
-    expect(stroopsToUsdcString(100_000_000n)).toBe("10.0000000");
+    expect(unitsToUsdcString(15_000_000n)).toBe("1.5000000");
+    expect(unitsToUsdcString(1n)).toBe("0.0000001");
+    expect(unitsToUsdcString(0n)).toBe("0.0000000");
+    expect(unitsToUsdcString(100_000_000n)).toBe("10.0000000");
   });
 
-  it("rejects negative stroops", () => {
-    expect(() => stroopsToUsdcString(-1n)).toThrow("stroopsToUsdcString");
+  it("rejects negative units", () => {
+    expect(() => unitsToUsdcString(-1n)).toThrow("unitsToUsdcString");
   });
 });
 
 describe("round-trip", () => {
-  it("usdcToStroops ∘ stroopsToUsdcString is identity over stroops", () => {
+  it("usdcToUnits ∘ unitsToUsdcString is identity over units", () => {
     const cases = [0n, 1n, 15_000_000n, 1_234_567n, 1_000_000_001_234_567n];
     for (const s of cases) {
-      expect(usdcToStroops(stroopsToUsdcString(s))).toBe(s);
+      expect(usdcToUnits(unitsToUsdcString(s))).toBe(s);
     }
   });
 });

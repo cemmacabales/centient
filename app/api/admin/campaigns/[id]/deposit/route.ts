@@ -20,7 +20,7 @@ export async function POST(
 
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
-    select: { id: true, rewardStroops: true },
+    select: { id: true, rewardUnits: true },
   });
   if (!campaign) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
@@ -33,21 +33,21 @@ export async function POST(
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
 
-  const { amountStroops: amountStroopsRaw, note } = (body ?? {}) as {
-    amountStroops?: unknown;
+  const { amountUnits: amountUnitsRaw, note } = (body ?? {}) as {
+    amountUnits?: unknown;
     note?: unknown;
   };
 
-  if (typeof amountStroopsRaw !== "string" || !/^[1-9]\d*$/.test(amountStroopsRaw)) {
-    return NextResponse.json({ error: "invalid_amount_stroops" }, { status: 400 });
+  if (typeof amountUnitsRaw !== "string" || !/^[1-9]\d*$/.test(amountUnitsRaw)) {
+    return NextResponse.json({ error: "invalid_amount_units" }, { status: 400 });
   }
   if (note !== undefined && (typeof note !== "string" || note.length > 500)) {
     return NextResponse.json({ error: "invalid_note" }, { status: 400 });
   }
 
-  const amountStroops = BigInt(amountStroopsRaw);
-  const newBalanceStroops = await creditBalance(campaignId, amountStroops, note as string | undefined);
-  const summary = await getBalanceSummary(campaignId, campaign.rewardStroops);
+  const amountUnits = BigInt(amountUnitsRaw);
+  const newBalanceUnits = await creditBalance(campaignId, amountUnits, note as string | undefined);
+  const summary = await getBalanceSummary(campaignId, campaign.rewardUnits);
 
   await auditLog({
     adminUserId: session.sub,
@@ -56,14 +56,14 @@ export async function POST(
     targetId: campaignId,
     req,
     metadata: {
-      amountStroops: amountStroopsRaw,
+      amountUnits: amountUnitsRaw,
       note: note ?? null,
-      newBalanceStroops: newBalanceStroops.toString(),
+      newBalanceUnits: newBalanceUnits.toString(),
     },
   });
 
   return NextResponse.json({
-    balanceStroops: summary.balanceStroops.toString(),
+    balanceUnits: summary.balanceUnits.toString(),
     estimatedSubmissionsRemaining: summary.estimatedSubmissionsRemaining,
   });
 }

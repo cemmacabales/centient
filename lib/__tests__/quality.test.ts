@@ -118,7 +118,7 @@ async function seedReasons(wallet: string, reasons: string[]) {
       taskId: t.id,
       choice: "A",
       reason: reasons[i],
-      payoutAmountStroops: 0,       // number (not string)
+      payoutAmountUnits: 0,       // number (not string)
       payoutStatus: "skipped",
     })),
   });
