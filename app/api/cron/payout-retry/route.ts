@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { reprocessPayoutWithNonceSafety } from "@/lib/payout-service";
+import { StellarPaymentError } from "@/lib/stellar/client";
 import { authenticateCron } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
@@ -71,6 +72,22 @@ export async function POST(req: NextRequest) {
             await reprocessPayoutWithNonceSafety(job.id);
             results.retried++;
           } catch (err: any) {
+            // Non-retryable rail errors (`op_no_trust` — recipient holds no USDC
+            // trustline; `op_no_destination` — recipient unfunded) can never
+            // succeed on a blind retry. Record the reason and exhaust the retry
+            // budget so the abandon sweep below finalizes it: it stays failed
+            // until the recipient adds a trustline and re-withdraws.
+            if (err instanceof StellarPaymentError && !err.retryable) {
+              await prisma.submission
+                .update({
+                  where: { id: job.id },
+                  data: {
+                    payoutError: `non-retryable (${err.code})`,
+                    retryCount: MAX_RETRIES,
+                  },
+                })
+                .catch(() => {});
+            }
             console.error(
               `[cron/payout-retry] retry failed for submission ${job.id}:`,
               err instanceof Error ? err.message : err,

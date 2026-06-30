@@ -1,7 +1,7 @@
 import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "./prisma";
-import { waitForTx } from "./payout";
+import { getTxStatus } from "./stellar/client";
 import { checkAndAlert } from "./stellar/balance";
 import { refundReversal } from "./user-balance";
 
@@ -41,29 +41,34 @@ async function claimNextSubmission(): Promise<{ id: string; payoutTxHash: string
   return { id: first.id, payoutTxHash: first.payoutTxHash! };
 }
 
-async function processSubmission(id: string, txHash: string): Promise<void> {
+export async function processSubmission(id: string, txHash: string): Promise<void> {
   currentId = id;
 
   try {
-    const receipt = await waitForTx(txHash as `0x${string}`);
+    // Horizon lookup (ST-1b) maps to three states: confirmed (successful tx),
+    // failed (tx included but op failed), or not_found (404 — not yet visible).
+    const status = await getTxStatus(txHash);
 
-    if (receipt.status === "success") {
+    if (status === "confirmed") {
       await prisma.submission.update({
         where: { id },
         data: { payoutStatus: "confirmed", lastRetriedAt: new Date() },
       });
       console.log(`[reconciler] confirmed submission ${id}`);
+    } else if (status === "failed") {
+      await handleSubmissionRetry(id, "transaction failed on Horizon");
     } else {
-      await handleSubmissionRetry(id, `reverted: status=${receipt.status}`);
+      // not_found: still pending. A submitted Stellar tx is only assigned a hash
+      // once included in a ledger (≈5s finality), so a 404 here is Horizon
+      // read-lag, not a drop. Leave the payout `sent` and re-check next pass —
+      // claimNextSubmission already refreshed lastRetriedAt — without burning a
+      // retry.
+      console.log(`[reconciler] submission ${id} not yet visible on Horizon — leaving sent`);
     }
   } catch (err: any) {
-    const message = err?.message ?? String(err);
-    const isTimeout = message.includes("timed out") || message.includes("timeout") || message.includes("request");
-    if (isTimeout) {
-      await handleSubmissionRetry(id, `timeout after ${STALE_PROCESSING_MS / 1000}s`);
-    } else {
-      await handleSubmissionRetry(id, message);
-    }
+    // A Horizon read error (network / 5xx) is transient — soft-retry so a flaky
+    // Horizon can't strand a real payout as failed.
+    await handleSubmissionRetry(id, err?.message ?? String(err));
   } finally {
     currentId = null;
   }
@@ -127,24 +132,22 @@ async function claimNextWithdrawal(): Promise<{ id: string; txHash: string; user
 export async function processWithdrawal(id: string, txHash: string, userId: string, amountUnits: bigint): Promise<void> {
   currentId = id;
   try {
-    const receipt = await waitForTx(txHash as `0x${string}`);
-    if (receipt.status === "success") {
+    const status = await getTxStatus(txHash);
+    if (status === "confirmed") {
       await prisma.payoutJob.update({
         where: { id },
         data: { status: "done", completedAt: new Date() },
       });
       console.log(`[reconciler] confirmed withdrawal ${id}`);
+    } else if (status === "failed") {
+      await handleWithdrawalRetry(id, userId, amountUnits, "transaction failed on Horizon");
     } else {
-      await handleWithdrawalRetry(id, userId, amountUnits, `reverted: status=${receipt.status}`);
+      // not_found: still pending on Horizon — leave `processing` and re-poll.
+      console.log(`[reconciler] withdrawal ${id} not yet visible on Horizon — leaving processing`);
     }
   } catch (err: any) {
-    const message = err?.message ?? String(err);
-    const isTimeout = message.includes("timed out") || message.includes("timeout") || message.includes("request");
-    if (isTimeout) {
-      await handleWithdrawalRetry(id, userId, amountUnits, `timeout after ${STALE_PROCESSING_MS / 1000}s`);
-    } else {
-      await handleWithdrawalRetry(id, userId, amountUnits, message);
-    }
+    // Transient Horizon read error — soft-retry rather than refund a live payout.
+    await handleWithdrawalRetry(id, userId, amountUnits, err?.message ?? String(err));
   } finally {
     currentId = null;
   }

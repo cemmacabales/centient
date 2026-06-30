@@ -1,6 +1,7 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { processJob } from "@/lib/payout-worker";
-import { payReward, PayoutCapError, waitForTx } from "@/lib/payout";
+import { payReward, PayoutCapError } from "@/lib/payout";
+import { getTxStatus } from "@/lib/stellar/client";
 import { refundReversal } from "@/lib/user-balance";
 import { prisma } from "@/tests/helpers/db";
 import crypto from "crypto";
@@ -38,7 +39,16 @@ vi.mock("@/lib/payout", async (importOriginal) => {
   return {
     ...actual,
     payReward: vi.fn(),
-    waitForTx: vi.fn(),
+  };
+});
+
+// The reconciler now reads tx finality via Horizon `getTxStatus` (ST-3b), not the
+// EVM-shaped `waitForTx`. Override just that primitive; keep StellarPaymentError real.
+vi.mock("@/lib/stellar/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/stellar/client")>();
+  return {
+    ...actual,
+    getTxStatus: vi.fn(),
   };
 });
 
@@ -294,10 +304,7 @@ describe("Reconciler confirms lump-sum receipt", () => {
       },
     });
 
-    const waitForTxMock = vi.mocked(waitForTx).mockResolvedValueOnce({
-      status: "success",
-      transactionHash: "0x1234",
-    } as any);
+    const getTxStatusMock = vi.mocked(getTxStatus).mockResolvedValueOnce("confirmed");
 
     const { processWithdrawal } = await import("@/lib/reconciler");
     await processWithdrawal(job.id, job.txHash!, job.userId!, job.amountUnits!);
@@ -306,6 +313,6 @@ describe("Reconciler confirms lump-sum receipt", () => {
     expect(updatedJob?.status).toBe("done");
     expect(updatedJob?.completedAt).not.toBeNull();
 
-    waitForTxMock.mockRestore();
+    getTxStatusMock.mockReset();
   });
 });
