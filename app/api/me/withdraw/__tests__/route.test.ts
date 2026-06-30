@@ -6,14 +6,27 @@ vi.mock("@/lib/labeler-auth", async (importOriginal) => {
   return { ...actual, getLabelerSession: vi.fn() };
 });
 
+// ST-4b: the withdraw route prechecks the destination's USDC trustline via
+// Horizon. Override just that read; default it to "has trustline" so the
+// existing happy-path tests stay green.
+vi.mock("@/lib/stellar/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/stellar/client")>();
+  return { ...actual, accountHasUsdcTrustline: vi.fn() };
+});
+
 import { POST } from "@/app/api/me/withdraw/route";
 import { getLabelerSession } from "@/lib/labeler-auth";
+import { accountHasUsdcTrustline } from "@/lib/stellar/client";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 import { createUser, makeWallet } from "@/tests/helpers/factories";
 
 const ORIGINAL_ENV = { ...process.env };
 const MIN = "1000000000000000000"; // 1 token
 const SOME_SESSION = "11111111-1111-1111-1111-111111111111";
+// A valid Stellar `G…` StrKey for users that reach the payout path (StrKey +
+// trustline gates). The shared `makeWallet()` factory still emits `0x…` (its
+// global swap is ST-6b) — it's used here only where an invalid address is wanted.
+const G_WALLET = "GCKIPQX2TEZWBQSUPPNMKGJBODL246B374Y52SPD2OGJ2AAQ6SHYUR6E";
 
 function makeReq(): NextRequest {
   return new NextRequest("http://localhost/api/me/withdraw", { method: "POST" });
@@ -22,6 +35,8 @@ function makeReq(): NextRequest {
 beforeEach(async () => {
   await truncateAll();
   vi.mocked(getLabelerSession).mockReset();
+  vi.mocked(accountHasUsdcTrustline).mockReset();
+  vi.mocked(accountHasUsdcTrustline).mockResolvedValue(true);
   process.env = { ...ORIGINAL_ENV, MIN_WITHDRAWAL_UNITS: MIN };
 });
 
@@ -63,7 +78,7 @@ describe("POST /api/me/withdraw", () => {
   });
 
   it("returns 400 below_minimum when balance is under the threshold", async () => {
-    const user = await createUser({ pendingBalanceUnits: 500000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 500000000000000000n, walletAddress: G_WALLET });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
     const res = await POST(makeReq());
     expect(res.status).toBe(400);
@@ -75,7 +90,7 @@ describe("POST /api/me/withdraw", () => {
   });
 
   it("queues a single lump-sum payout and decrements the balance on success", async () => {
-    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: G_WALLET });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
 
     const res = await POST(makeReq());
@@ -101,6 +116,36 @@ describe("POST /api/me/withdraw", () => {
     expect(ledger).toHaveLength(1);
   });
 
+  it("returns 400 invalid_wallet when the linked address is not a valid StrKey", async () => {
+    // Default factory wallet is a legacy EVM `0x…` — not a Stellar `G…`.
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+    const res = await POST(makeReq());
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_wallet" });
+    // No funds touched, no job enqueued.
+    expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(0);
+    const after = await prisma.user.findUnique({ where: { id: user.id } });
+    expect(after?.pendingBalanceUnits).toBe(5000000000000000000n);
+  });
+
+  it("returns 409 no_trustline when the destination holds no USDC trustline", async () => {
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: G_WALLET });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+    vi.mocked(accountHasUsdcTrustline).mockResolvedValue(false);
+
+    const res = await POST(makeReq());
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("no_trustline");
+    // Funds stay locked to the user; nothing enqueued against an unpayable address.
+    expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(0);
+    const after = await prisma.user.findUnique({ where: { id: user.id } });
+    expect(after?.pendingBalanceUnits).toBe(5000000000000000000n);
+  });
+
   describe("P4a eligibility gates", () => {
     const ENOUGH = 5000000000000000000n; // above MIN, so below_minimum never fires first
     const HOUR_MS = 60 * 60 * 1000;
@@ -109,7 +154,7 @@ describe("POST /api/me/withdraw", () => {
     async function eligibleUser() {
       return prisma.user.create({
         data: {
-          walletAddress: makeWallet(),
+          walletAddress: G_WALLET,
           pendingBalanceUnits: ENOUGH,
           submissionCount: 100,
           goldCorrect: 9,
@@ -209,7 +254,7 @@ describe("POST /api/me/withdraw", () => {
   });
 
   it("returns 409 when a withdrawal is already in flight", async () => {
-    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: G_WALLET });
     await prisma.payoutJob.create({
       data: {
         type: "WITHDRAWAL",
@@ -294,7 +339,7 @@ describe("POST /api/me/withdraw", () => {
   });
 
   it("allows withdrawal when banned identity has expired", async () => {
-    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, email: "expired@example.com" });
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, email: "expired@example.com", walletAddress: G_WALLET });
     await prisma.bannedIdentity.create({
       data: {
         identifierType: "EMAIL",
@@ -370,8 +415,11 @@ describe("POST /api/me/withdraw", () => {
       });
     }
 
+    // The new user links a valid Stellar `G…` (so it clears the StrKey + trustline
+    // gates); the seeded 0x shared-wallet jobs are below the threshold, so the
+    // shared-wallet gate passes and the withdrawal proceeds.
     const newUser = await createUser({
-      walletAddress: sharedWallet,
+      walletAddress: G_WALLET,
       pendingBalanceUnits: 5000000000000000000n,
     });
     vi.mocked(getLabelerSession).mockResolvedValue(newUser.id);
@@ -482,7 +530,7 @@ describe("POST /api/me/withdraw", () => {
     });
 
     it("does not record a flag on a successful withdrawal", async () => {
-      const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
+      const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: G_WALLET });
       vi.mocked(getLabelerSession).mockResolvedValue(user.id);
 
       const res = await POST(makeReq());
