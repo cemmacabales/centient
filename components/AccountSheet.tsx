@@ -5,6 +5,7 @@ import { formatUnits } from "viem";
 import { type ToastKind } from "@/components/Toast";
 import { truncateAddress } from "@/lib/wallet";
 import { REWARD_TOKEN_DECIMALS } from "@/lib/constants";
+import StellarWalletLink from "@/components/StellarWalletLink";
 
 function formatTokenBalance(unitsStr: string): string {
   try {
@@ -60,6 +61,7 @@ interface Withdrawal {
 interface WithdrawalData {
   pendingBalanceUnits: string;
   thresholdUnits: string;
+  walletLinked: boolean;
   canWithdraw: boolean;
   withdrawals: Withdrawal[];
 }
@@ -260,6 +262,20 @@ export default function AccountSheet({
           >
             {withdrawing ? "Withdrawing..." : "Withdraw"}
           </button>
+          <StellarWalletLink
+            isLinked={!!withdrawalData?.walletLinked}
+            showToast={showToast}
+            onLinked={() => {
+              setLoadingWithdrawal(true);
+              fetch("/api/me/withdraw")
+                .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`withdraw refresh failed: ${r.status}`))))
+                .then((data) => setWithdrawalData(data))
+                .catch((err) =>
+                  console.error("Failed to refresh withdrawal data after wallet link", err),
+                )
+                .finally(() => setLoadingWithdrawal(false));
+            }}
+          />
         </div>
 
         {withdrawalData && withdrawalData.withdrawals.length > 0 && (
