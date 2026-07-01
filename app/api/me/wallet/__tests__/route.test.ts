@@ -50,6 +50,7 @@ vi.mock("@/lib/prisma", () => ({
 
 import { GET, POST, buildWalletLinkMessage } from "../route";
 import { sep53Digest } from "@/lib/stellar/signature";
+import { Prisma } from "@/app/generated/prisma/client";
 
 const KP = Keypair.random();
 const G = KP.publicKey();
@@ -169,5 +170,19 @@ describe("POST /api/me/wallet (link + prove)", () => {
         data: { walletAddress: G },
       }),
     );
+  });
+
+  it("409 address_already_linked when the address is claimed by another account (P2002)", async () => {
+    mockUserUpdate.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "test",
+      }),
+    );
+    const res = await POST(postReq({ stellarAddress: G, signature: sign(buildWalletLinkMessage(G, NONCE)) }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("address_already_linked");
+    // Trustline precheck passed and the nonce was consumed before the collision.
+    expect(mockNonceDeleteMany).toHaveBeenCalled();
   });
 });

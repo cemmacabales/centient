@@ -61,6 +61,7 @@ interface Withdrawal {
 interface WithdrawalData {
   pendingBalanceUnits: string;
   thresholdUnits: string;
+  walletLinked: boolean;
   canWithdraw: boolean;
   withdrawals: Withdrawal[];
 }
@@ -262,7 +263,7 @@ export default function AccountSheet({
             {withdrawing ? "Withdrawing..." : "Withdraw"}
           </button>
           <StellarWalletLink
-            walletAddress={walletAddress || null}
+            isLinked={!!withdrawalData?.walletLinked}
             showToast={showToast}
             onLinked={() => {
               setLoadingWithdrawal(true);

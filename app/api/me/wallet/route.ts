@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@/app/generated/prisma/client";
 import { getLabelerSession, requireLabelerSession } from "@/lib/labeler-auth";
 import { isValidStellarAddress, verify } from "@/lib/stellar/signature";
 import { accountHasUsdcTrustline } from "@/lib/stellar/client";
@@ -126,10 +127,21 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  await prisma.user.update({
-    where: { id: userId! },
-    data: { walletAddress: stellarAddress },
-  });
+  // `User.walletAddress` is `@unique`. If this `G…` is already the payout
+  // destination of a *different* account (a second/sybil account, a shared
+  // wallet, or a re-registration), the update throws P2002. Return a clean 409
+  // instead of a raw 500 — same pattern as enqueueWithdrawal's unique-index handling.
+  try {
+    await prisma.user.update({
+      where: { id: userId! },
+      data: { walletAddress: stellarAddress },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      return NextResponse.json({ error: "address_already_linked" }, { status: 409 });
+    }
+    throw err;
+  }
 
   return NextResponse.json({ linked: true, walletAddress: stellarAddress });
 }

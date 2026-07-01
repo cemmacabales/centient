@@ -561,6 +561,7 @@ describe("GET /api/me/withdraw (summary)", () => {
     expect(await res.json()).toMatchObject({
       pendingBalanceUnits: "5000000000000000000",
       thresholdUnits: MIN,
+      walletLinked: false,
       canWithdraw: false,
       withdrawals: [],
     });
@@ -574,20 +575,41 @@ describe("GET /api/me/withdraw (summary)", () => {
     expect(body.canWithdraw).toBe(false);
   });
 
-  it("reports canWithdraw=false for a legacy 0x wallet (must re-link a G… address)", async () => {
+  it("reports walletLinked=false and canWithdraw=false for a legacy 0x wallet (must re-link a G… address)", async () => {
     const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: makeWallet() });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
 
     const body = await (await GET(makeGetReq())).json();
+    expect(body.walletLinked).toBe(false);
     expect(body.canWithdraw).toBe(false);
   });
 
-  it("reports canWithdraw=true for an eligible user with a G… wallet and enough balance", async () => {
+  it("reports walletLinked=true and canWithdraw=true for an eligible user with a G… wallet and enough balance", async () => {
     const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: G_WALLET });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
 
     const body = await (await GET(makeGetReq())).json();
+    expect(body.walletLinked).toBe(true);
     expect(body.canWithdraw).toBe(true);
+  });
+
+  it("reports canWithdraw=false (but walletLinked=true) when a withdrawal is already in flight", async () => {
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: G_WALLET });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+    await prisma.payoutJob.create({
+      data: {
+        type: "WITHDRAWAL",
+        userId: user.id,
+        amountUnits: 2000000000000000000n,
+        destinationAddress: G_WALLET,
+        status: "queued",
+      },
+    });
+
+    const body = await (await GET(makeGetReq())).json();
+    expect(body.walletLinked).toBe(true);
+    expect(body.canWithdraw).toBe(false);
   });
 
   it("lists the user's lump-sum withdrawals (newest first) and ignores other users' jobs", async () => {

@@ -4,8 +4,13 @@ import { useState } from "react";
 import { connect, signOwnership } from "@/lib/stellar/wallet";
 
 interface StellarWalletLinkProps {
-  /** The currently-linked `G…` payout address, if any. */
-  walletAddress: string | null;
+  /**
+   * Whether a valid `G…` Stellar payout address is already linked. Driven by the
+   * server's `walletLinked` flag (a StrKey check), NOT the raw `walletAddress`
+   * column — that may still hold a legacy EVM `0x…` from a prior connection, which
+   * would wrongly read as "linked".
+   */
+  isLinked: boolean;
   /** Called after a successful link so the parent can refresh withdrawal state. */
   onLinked: () => void;
   showToast: (message: string, type: "success" | "error") => void;
@@ -21,7 +26,7 @@ interface StellarWalletLinkProps {
  * (ST-4e #314 will turn that into an in-app sponsored-trustline flow).
  */
 export default function StellarWalletLink({
-  walletAddress,
+  isLinked,
   onLinked,
   showToast,
 }: StellarWalletLinkProps) {
@@ -70,6 +75,14 @@ export default function StellarWalletLink({
         return;
       }
 
+      if (linkRes.status === 409 && result.error === "address_already_linked") {
+        showToast(
+          "This Stellar address is already linked to another account.",
+          "error",
+        );
+        return;
+      }
+
       showToast(result.error ?? "Wallet linking failed", "error");
     } catch (err) {
       // connect()/signOwnership() throw on rejection, no extension, or a non-SEP-53
@@ -89,7 +102,7 @@ export default function StellarWalletLink({
     >
       {linking
         ? "Linking..."
-        : walletAddress
+        : isLinked
           ? "Change payout wallet"
           : "Link payout wallet"}
     </button>

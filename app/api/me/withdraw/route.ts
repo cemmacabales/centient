@@ -248,9 +248,10 @@ export async function POST(req: NextRequest) {
  * freshly-linked `G…` payout address is reflected immediately.
  *
  * `canWithdraw` mirrors POST's cheap gates only — not banned, a valid Stellar
- * destination, eligibility, and balance ≥ minimum. The network USDC-trustline
- * precheck deliberately stays on POST so this read never blocks on Horizon; an
- * untrusted address is surfaced there as `no_trustline` with guidance.
+ * destination, eligibility, balance ≥ minimum, and no withdrawal already in
+ * flight. The network USDC-trustline precheck deliberately stays on POST so this
+ * read never blocks on Horizon; an untrusted address is surfaced there as
+ * `no_trustline` with guidance.
  */
 export async function GET(req: NextRequest) {
   const userId = await getLabelerSession(req);
@@ -284,13 +285,6 @@ export async function GET(req: NextRequest) {
     getWithdrawalThresholds(),
   );
 
-  const canWithdraw =
-    !user.isBanned &&
-    !!user.walletAddress &&
-    isValidStellarAddress(user.walletAddress) &&
-    eligibility.eligible &&
-    user.pendingBalanceUnits >= minUnits;
-
   const jobs = await prisma.payoutJob.findMany({
     where: { userId: userId!, type: "WITHDRAWAL" },
     orderBy: { createdAt: "desc" },
@@ -306,9 +300,30 @@ export async function GET(req: NextRequest) {
     },
   });
 
+  // A withdrawal already `queued`/`processing` would make POST return 409
+  // `withdrawal_in_flight` (the `payout_jobs_user_inflight_withdrawal_key` partial
+  // unique index allows at most one). Reflect that here so the card disables the
+  // button proactively instead of surfacing the 409 only after a click.
+  const hasInFlightWithdrawal = jobs.some(
+    (j) => j.status === "queued" || j.status === "processing",
+  );
+
+  // A valid `G…` StrKey is linked. Distinct from a legacy EVM `0x…` still sitting
+  // in `walletAddress` — the client uses this (not mere truthiness of the address)
+  // to decide the link-button label.
+  const walletLinked = !!user.walletAddress && isValidStellarAddress(user.walletAddress);
+
+  const canWithdraw =
+    !user.isBanned &&
+    walletLinked &&
+    eligibility.eligible &&
+    user.pendingBalanceUnits >= minUnits &&
+    !hasInFlightWithdrawal;
+
   return NextResponse.json({
     pendingBalanceUnits: user.pendingBalanceUnits.toString(),
     thresholdUnits: minUnits.toString(),
+    walletLinked,
     canWithdraw,
     withdrawals: jobs.map((j) => ({
       id: j.id,
