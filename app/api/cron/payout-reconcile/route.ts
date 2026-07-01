@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { waitForTx } from "@/lib/payout";
+import { getTxStatus } from "@/lib/stellar/client";
 import { authenticateCron } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
@@ -20,49 +20,32 @@ export async function POST(req: NextRequest) {
 
     for (const sub of unconfirmed) {
       try {
-        const receipt = await waitForTx(sub.payoutTxHash as `0x${string}`);
-        await prisma.submission.update({
-          where: { id: sub.id },
-          data: {
-            payoutStatus: receipt.status === "success" ? "confirmed" : "failed",
-            ...(receipt.status !== "success" ? { retryCount: { increment: 1 } } : {}),
-          },
-        });
-        if (receipt.status === "success") {
+        // Horizon (ST-1b): confirmed | failed | not_found.
+        const status = await getTxStatus(sub.payoutTxHash as string);
+
+        if (status === "confirmed") {
+          await prisma.submission.update({
+            where: { id: sub.id },
+            data: { payoutStatus: "confirmed" },
+          });
           results.confirmed++;
-        } else {
+        } else if (status === "failed") {
+          await prisma.submission.update({
+            where: { id: sub.id },
+            data: { payoutStatus: "failed", retryCount: { increment: 1 } },
+          });
           results.failed++;
         }
+        // not_found: still pending on Horizon (read-lag, not a drop — a Stellar
+        // tx only gets a hash once ledger-included). Leave it `sent` for the next
+        // cycle without burning a retry.
       } catch (err: any) {
-        const isTimeout =
-          err?.name === "WaitForTransactionReceiptTimeoutError" ||
-          err?.message?.includes("timed out");
-
-        if (isTimeout) {
-          continue;
-        }
-
-        const isDropped =
-          err?.name === "TransactionReceiptNotFoundError" ||
-          err?.message?.includes("transaction receipt not found");
-
-        if (!isDropped) {
-          console.error(
-            `[cron/payout-reconcile] receipt check failed for submission ${sub.id}:`,
-            err instanceof Error ? err.message : err,
-          );
-          continue;
-        }
-
+        // Transient Horizon read error — skip; next cycle retries.
         console.error(
-          `[cron/payout-reconcile] transaction dropped for submission ${sub.id}:`,
+          `[cron/payout-reconcile] Horizon status check failed for submission ${sub.id}:`,
           err instanceof Error ? err.message : err,
         );
-        await prisma.submission.update({
-          where: { id: sub.id },
-          data: { payoutStatus: "failed", retryCount: { increment: 1 } },
-        });
-        results.failed++;
+        continue;
       }
     }
 

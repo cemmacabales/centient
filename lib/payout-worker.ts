@@ -2,6 +2,7 @@ import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "./prisma";
 import { payReward, PayoutCapError } from "./payout";
+import { StellarPaymentError } from "./stellar/client";
 import { creditBalance, totalDebitUnits } from "./campaign-balance";
 import { checkAndAlert } from "./stellar/balance";
 import { computeIAA } from "./quality";
@@ -10,8 +11,8 @@ import { refundReversal } from "./user-balance";
 
 const STALE_PROCESSING_MS = 60_000;
 // Refresh the in-flight job's heartbeat well within STALE_PROCESSING_MS so a slow
-// payout (waitForTransactionReceipt alone can take up to 30s) is not mistaken for a
-// stale job and reclaimed — and double-paid — by a second worker.
+// payout (a Horizon submit can take several seconds for ledger inclusion) is not
+// mistaken for a stale job and reclaimed — and double-paid — by a second worker.
 const HEARTBEAT_REFRESH_MS = 20_000;
 const POLL_IDLE_MS = 5_000;
 const MAX_RETRIES = 3;
@@ -19,6 +20,27 @@ const BATCH_SIZE = 20;
 
 let shouldStop = false;
 let currentJobId: string | null = null;
+
+// A refund is the last step that returns the user's locked balance after a payout
+// is abandoned. If it throws (DB constraint, ledger error), the funds are stranded
+// with the job already marked failed/completed — no retry path. Swallowing the error
+// silently loses money without a trace, so surface it loudly to Sentry + logs.
+async function safeRefund(
+  userId: string,
+  amountUnits: bigint,
+  jobId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    await refundReversal(userId, amountUnits, jobId, reason);
+  } catch (refundErr) {
+    console.error(`[payout-worker] CRITICAL: refund failed for job ${jobId} (${reason}):`, refundErr);
+    Sentry.captureException(refundErr, {
+      level: "error",
+      extra: { context: "payout-refund-failure", jobId, userId, amountUnits: amountUnits.toString(), reason },
+    });
+  }
+}
 
 export async function claimNextJob(): Promise<{
   id: string;
@@ -103,7 +125,7 @@ async function processWithdrawalJob(
         where: { id: jobId },
         data: { status: "failed", completedAt: new Date(), lastError: "no destination address" },
       });
-      await refundReversal(userId, amountUnits, jobId, "Refund for missing destination").catch(() => {});
+      await safeRefund(userId, amountUnits, jobId, "Refund for missing destination");
       return;
     }
     destination = user.walletAddress;
@@ -116,7 +138,7 @@ async function processWithdrawalJob(
   }, HEARTBEAT_REFRESH_MS);
 
   try {
-    const txHash = await payReward(destination as `0x${string}`, amountUnits);
+    const txHash = await payReward(destination, amountUnits);
 
     await prisma.payoutJob.update({
       where: { id: jobId },
@@ -142,9 +164,31 @@ async function processWithdrawalJob(
           },
         }),
       ]);
-      await refundReversal(userId, amountUnits, jobId, "Refund for daily cap hit").catch(() => {});
+      await safeRefund(userId, amountUnits, jobId, "Refund for daily cap hit");
       console.warn(`[payout-worker] withdrawal job ${jobId} failed: daily cap reached`);
       Sentry.captureMessage(`[payout-worker] withdrawal job ${jobId} daily cap hit: ${message}`, { level: "warning" });
+      return;
+    }
+
+    // Non-retryable rail errors (`op_no_trust` — recipient `G…` holds no USDC
+    // trustline; `op_no_destination` — recipient unfunded) can never succeed on a
+    // blind retry. Fail the job immediately and refund the user's balance so they
+    // can re-withdraw once they establish a trustline (ST-4b/ST-4e). Re-queueing
+    // here would loop until MAX_RETRIES and waste cap/Horizon calls. `tx_bad_seq`
+    // is already retried once inside `payUsdc`, so it never reaches here.
+    if (err instanceof StellarPaymentError && !err.retryable) {
+      await prisma.payoutJob.update({
+        where: { id: jobId },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          lastError: `non-retryable (${err.code}): ${message}`,
+          retryCount: MAX_RETRIES,
+        },
+      });
+      await safeRefund(userId, amountUnits, jobId, `Refund for non-retryable payout (${err.code})`);
+      console.warn(`[payout-worker] withdrawal job ${jobId} failed non-retryably (${err.code}): ${message}`);
+      Sentry.captureMessage(`[payout-worker] withdrawal job ${jobId} non-retryable (${err.code}): ${message}`, { level: "warning" });
       return;
     }
 
@@ -163,7 +207,7 @@ async function processWithdrawalJob(
           },
         }),
       ]);
-      await refundReversal(userId, amountUnits, jobId, `Refund for failed withdrawal: ${message}`).catch(() => {});
+      await safeRefund(userId, amountUnits, jobId, `Refund for failed withdrawal: ${message}`);
       console.error(`[payout-worker] withdrawal job ${jobId} failed permanently after ${MAX_RETRIES} retries: ${message}`);
       Sentry.captureMessage(`[payout-worker] withdrawal job ${jobId} permanently failed: ${message}`, { level: "error" });
     } else {
@@ -216,7 +260,7 @@ async function processSubmissionPayout(
     return;
   }
 
-  const walletAddress = submission.walletAddress as `0x${string}`;
+  const walletAddress = submission.walletAddress;
   const amount = submission.payoutAmountUnits;
 
   const heartbeat = setInterval(() => {
@@ -313,39 +357,25 @@ async function processSubmissionPayout(
       return;
     }
 
-    const isNonceError =
-      message.includes("nonce too low") ||
-      message.includes("underpriced") ||
-      message.includes("NONCE_");
-
-    if (isNonceError) {
-      // Nonce errors are usually transient, but a persistently nonce-erroring job
-      // must still consume the retry budget — otherwise it requeues forever, never
-      // marks the submission failed, and never alerts or triggers a refund.
-      const job = await prisma.payoutJob.findUnique({ where: { id: jobId } });
-      const newRetryCount = (job?.retryCount ?? 0) + 1;
-
-      if (newRetryCount >= MAX_RETRIES) {
-        await prisma.$transaction([
-          prisma.submission.update({
-            where: { id: submissionId },
-            data: { payoutStatus: "failed" },
-          }),
-          prisma.payoutJob.update({
-            where: { id: jobId },
-            data: { status: "failed", completedAt: new Date(), lastError: `nonce error: ${message}`, retryCount: newRetryCount },
-          }),
-        ]);
-        await refundCampaignBalance(submission.task, submissionId, amount, "refund: payout failed");
-        console.error(`[payout-worker] submission job ${jobId} failed permanently after ${MAX_RETRIES} nonce-error retries: ${message}`);
-        Sentry.captureMessage(`[payout-worker] submission job ${jobId} failed permanently (nonce): ${message}`, { level: "error" });
-      } else {
-        await prisma.payoutJob.update({
+    // Non-retryable rail errors (`op_no_trust` / `op_no_destination`) can never
+    // succeed on a blind retry — the recipient `G…` must add a USDC trustline /
+    // be funded first. Fail immediately (consume the full retry budget) and refund
+    // the campaign balance rather than requeue. `tx_bad_seq` is retried once inside
+    // `payUsdc`, so it never surfaces here.
+    if (err instanceof StellarPaymentError && !err.retryable) {
+      await prisma.$transaction([
+        prisma.submission.update({
+          where: { id: submissionId },
+          data: { payoutStatus: "failed", payoutError: `non-retryable (${err.code})`, retryCount: MAX_RETRIES },
+        }),
+        prisma.payoutJob.update({
           where: { id: jobId },
-          data: { status: "queued", workerHeartbeatAt: null, lastError: `nonce error, will retry: ${message}`, retryCount: newRetryCount },
-        });
-        console.warn(`[payout-worker] submission job ${jobId} nonce error, requeued (retry ${newRetryCount}/${MAX_RETRIES}): ${message}`);
-      }
+          data: { status: "failed", completedAt: new Date(), lastError: `non-retryable (${err.code}): ${message}`, retryCount: MAX_RETRIES },
+        }),
+      ]);
+      await refundCampaignBalance(submission.task, submissionId, amount, `refund: non-retryable payout (${err.code})`);
+      console.error(`[payout-worker] submission job ${jobId} failed non-retryably (${err.code}): ${message}`);
+      Sentry.captureMessage(`[payout-worker] submission job ${jobId} non-retryable (${err.code}): ${message}`, { level: "warning" });
       return;
     }
 

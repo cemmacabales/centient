@@ -1,14 +1,17 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
-const { mockWaitForTx, mockFindMany, mockUpdate } = vi.hoisted(() => ({
-  mockWaitForTx: vi.fn(),
+// The reconcile cron now resolves finality via Horizon `getTxStatus` (ST-3b),
+// which returns "confirmed" | "failed" | "not_found" — replacing the EVM
+// `waitForTx` receipt poll.
+const { mockGetTxStatus, mockFindMany, mockUpdate } = vi.hoisted(() => ({
+  mockGetTxStatus: vi.fn(),
   mockFindMany: vi.fn(),
   mockUpdate: vi.fn(),
 }));
 
-vi.mock("@/lib/payout", () => ({
-  waitForTx: mockWaitForTx,
+vi.mock("@/lib/stellar/client", () => ({
+  getTxStatus: mockGetTxStatus,
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -22,6 +25,11 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { POST } from "../route";
+
+// Bare-hex Stellar tx hashes (no EVM `0x` prefix).
+const TX_A = "aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111";
+const TX_B = "bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222bbbb2222";
+const TX_C = "cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333cccc3333";
 
 const ENV_ORIGINAL = { ...process.env };
 
@@ -79,11 +87,9 @@ describe("/api/cron/payout-reconcile", () => {
       expect(body.failed).toBe(0);
     });
 
-    it("marks submission confirmed when receipt status is success", async () => {
-      mockFindMany.mockResolvedValueOnce([
-        { id: "sub-1", payoutTxHash: "0xabc" },
-      ]);
-      mockWaitForTx.mockResolvedValueOnce({ status: "success" });
+    it("marks submission confirmed when Horizon reports confirmed", async () => {
+      mockFindMany.mockResolvedValueOnce([{ id: "sub-1", payoutTxHash: TX_A }]);
+      mockGetTxStatus.mockResolvedValueOnce("confirmed");
 
       const res = await POST(cronReq());
       const body = await res.json();
@@ -91,7 +97,7 @@ describe("/api/cron/payout-reconcile", () => {
       expect(body.confirmed).toBe(1);
       expect(body.failed).toBe(0);
 
-      expect(mockWaitForTx).toHaveBeenCalledWith("0xabc");
+      expect(mockGetTxStatus).toHaveBeenCalledWith(TX_A);
       expect(mockUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "sub-1" },
@@ -100,11 +106,9 @@ describe("/api/cron/payout-reconcile", () => {
       );
     });
 
-    it("marks submission failed when receipt status is reverted", async () => {
-      mockFindMany.mockResolvedValueOnce([
-        { id: "sub-2", payoutTxHash: "0xdef" },
-      ]);
-      mockWaitForTx.mockResolvedValueOnce({ status: "reverted" });
+    it("marks submission failed when Horizon reports failed", async () => {
+      mockFindMany.mockResolvedValueOnce([{ id: "sub-2", payoutTxHash: TX_B }]);
+      mockGetTxStatus.mockResolvedValueOnce("failed");
 
       const res = await POST(cronReq());
       const body = await res.json();
@@ -120,13 +124,9 @@ describe("/api/cron/payout-reconcile", () => {
       );
     });
 
-    it("skips — leaves as sent — when waitForTx times out", async () => {
-      mockFindMany.mockResolvedValueOnce([
-        { id: "sub-3", payoutTxHash: "0xghi" },
-      ]);
-      const timeoutErr = new Error("timed out");
-      timeoutErr.name = "WaitForTransactionReceiptTimeoutError";
-      mockWaitForTx.mockRejectedValueOnce(timeoutErr);
+    it("leaves submission sent when Horizon reports not_found (still pending)", async () => {
+      mockFindMany.mockResolvedValueOnce([{ id: "sub-3", payoutTxHash: TX_C }]);
+      mockGetTxStatus.mockResolvedValueOnce("not_found");
 
       const res = await POST(cronReq());
       const body = await res.json();
@@ -137,28 +137,14 @@ describe("/api/cron/payout-reconcile", () => {
       expect(mockUpdate).not.toHaveBeenCalled();
     });
 
-    it("skips when error message contains 'timed out'", async () => {
-      mockFindMany.mockResolvedValueOnce([
-        { id: "sub-3b", payoutTxHash: "0xghi" },
-      ]);
-      const timeoutErr = new Error("Transaction timed out after 30s");
-      mockWaitForTx.mockRejectedValueOnce(timeoutErr);
+    it("skips (leaves sent) on a transient Horizon read error", async () => {
+      mockFindMany.mockResolvedValueOnce([{ id: "sub-4", payoutTxHash: TX_A }]);
+      mockGetTxStatus.mockRejectedValueOnce(new Error("Horizon 503"));
 
       const res = await POST(cronReq());
       const body = await res.json();
       expect(res.status).toBe(200);
-      expect(mockUpdate).not.toHaveBeenCalled();
-    });
-
-    it("skips generic non-timeout receipt errors so next cycle can retry", async () => {
-      mockFindMany.mockResolvedValueOnce([
-        { id: "sub-4", payoutTxHash: "0xjkl" },
-      ]);
-      mockWaitForTx.mockRejectedValueOnce(new Error("RPC connection error"));
-
-      const res = await POST(cronReq());
-      const body = await res.json();
-      expect(res.status).toBe(200);
+      expect(body.confirmed).toBe(0);
       expect(body.failed).toBe(0);
 
       expect(mockUpdate).not.toHaveBeenCalled();
@@ -166,20 +152,20 @@ describe("/api/cron/payout-reconcile", () => {
 
     it("processes multiple submissions in a batch", async () => {
       mockFindMany.mockResolvedValueOnce([
-        { id: "sub-6", payoutTxHash: "0xone" },
-        { id: "sub-7", payoutTxHash: "0xtwo" },
-        { id: "sub-8", payoutTxHash: "0xthree" },
+        { id: "sub-6", payoutTxHash: TX_A },
+        { id: "sub-7", payoutTxHash: TX_B },
+        { id: "sub-8", payoutTxHash: TX_C },
       ]);
-      mockWaitForTx
-        .mockResolvedValueOnce({ status: "success" })
-        .mockResolvedValueOnce({ status: "reverted" })
+      mockGetTxStatus
+        .mockResolvedValueOnce("confirmed")
+        .mockResolvedValueOnce("failed")
         .mockRejectedValueOnce(new Error("Connection refused"));
 
       const res = await POST(cronReq());
       const body = await res.json();
       expect(body.confirmed).toBe(1);
       expect(body.failed).toBe(1);
-      expect(mockWaitForTx).toHaveBeenCalledTimes(3);
+      expect(mockGetTxStatus).toHaveBeenCalledTimes(3);
 
       expect(mockUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
