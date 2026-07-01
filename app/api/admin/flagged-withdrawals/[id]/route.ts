@@ -85,7 +85,9 @@ export async function PATCH(
       await addBannedIdentity("EMAIL", flag.user.email, banReason);
     }
     if (flag.user.walletAddress) {
-      await addBannedIdentity("WALLET", flag.user.walletAddress.toLowerCase(), banReason);
+      // Case-preserved `G…` StrKey — lowercasing would store an un-matchable ban
+      // that the case-sensitive lookup could never hit (ST-4d).
+      await addBannedIdentity("WALLET", flag.user.walletAddress, banReason);
     }
     await addBannedIdentity("USER_ID", flag.userId, banReason);
 

@@ -19,6 +19,11 @@ import { createUser } from "@/tests/helpers/factories";
 
 const ADMIN = { sub: "admin-1", role: "SUPER_ADMIN" as const };
 
+// A valid, case-sensitive Stellar `G…` StrKey. ST-4d stores WALLET bans verbatim
+// (no `.toLowerCase()`) and rejects malformed addresses, so banning a wallet
+// requires a real StrKey rather than the factory's legacy `0x…`.
+const G_WALLET = "GDJ3LPVCSFVJHBTX47I7OBG2ZK2ZH3KQAHAHMNTJW3JLSLZUWC4OQQ7P";
+
 function makeReq(id: string, body: Record<string, unknown>): NextRequest {
   return new NextRequest(`http://localhost/api/admin/flagged-withdrawals/${id}`, {
     method: "PATCH",
@@ -129,7 +134,7 @@ describe("PATCH /api/admin/flagged-withdrawals/[id]", () => {
   });
 
   it("bans the account and binds the ban to email, wallet and userId", async () => {
-    const user = await createUser({ email: "fraud@example.com" });
+    const user = await createUser({ email: "fraud@example.com", walletAddress: G_WALLET });
     const flag = await createFlag(user.id, {
       reason: "BANNED_IDENTITY",
       walletAddress: user.walletAddress,
@@ -149,7 +154,7 @@ describe("PATCH /api/admin/flagged-withdrawals/[id]", () => {
     expect(types).toEqual(["EMAIL", "USER_ID", "WALLET"]);
     expect(
       banned.find((b) => b.identifierType === "WALLET")?.identifierValue,
-    ).toBe(user.walletAddress.toLowerCase());
+    ).toBe(user.walletAddress); // case-preserved StrKey, never lowercased
 
     expect(mockAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: "user.ban", targetId: user.id }),
@@ -160,7 +165,7 @@ describe("PATCH /api/admin/flagged-withdrawals/[id]", () => {
   });
 
   it("increments banCount instead of overwriting it", async () => {
-    const user = await createUser({ email: "repeat@example.com" });
+    const user = await createUser({ email: "repeat@example.com", walletAddress: G_WALLET });
     await prisma.user.update({ where: { id: user.id }, data: { banCount: 2 } });
     const flag = await createFlag(user.id, {
       reason: "BANNED_IDENTITY",
