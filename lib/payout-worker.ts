@@ -21,6 +21,27 @@ const BATCH_SIZE = 20;
 let shouldStop = false;
 let currentJobId: string | null = null;
 
+// A refund is the last step that returns the user's locked balance after a payout
+// is abandoned. If it throws (DB constraint, ledger error), the funds are stranded
+// with the job already marked failed/completed — no retry path. Swallowing the error
+// silently loses money without a trace, so surface it loudly to Sentry + logs.
+async function safeRefund(
+  userId: string,
+  amountUnits: bigint,
+  jobId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    await refundReversal(userId, amountUnits, jobId, reason);
+  } catch (refundErr) {
+    console.error(`[payout-worker] CRITICAL: refund failed for job ${jobId} (${reason}):`, refundErr);
+    Sentry.captureException(refundErr, {
+      level: "error",
+      extra: { context: "payout-refund-failure", jobId, userId, amountUnits: amountUnits.toString(), reason },
+    });
+  }
+}
+
 export async function claimNextJob(): Promise<{
   id: string;
   submissionId: string | null;
@@ -104,7 +125,7 @@ async function processWithdrawalJob(
         where: { id: jobId },
         data: { status: "failed", completedAt: new Date(), lastError: "no destination address" },
       });
-      await refundReversal(userId, amountUnits, jobId, "Refund for missing destination").catch(() => {});
+      await safeRefund(userId, amountUnits, jobId, "Refund for missing destination");
       return;
     }
     destination = user.walletAddress;
@@ -143,7 +164,7 @@ async function processWithdrawalJob(
           },
         }),
       ]);
-      await refundReversal(userId, amountUnits, jobId, "Refund for daily cap hit").catch(() => {});
+      await safeRefund(userId, amountUnits, jobId, "Refund for daily cap hit");
       console.warn(`[payout-worker] withdrawal job ${jobId} failed: daily cap reached`);
       Sentry.captureMessage(`[payout-worker] withdrawal job ${jobId} daily cap hit: ${message}`, { level: "warning" });
       return;
@@ -165,7 +186,7 @@ async function processWithdrawalJob(
           retryCount: MAX_RETRIES,
         },
       });
-      await refundReversal(userId, amountUnits, jobId, `Refund for non-retryable payout (${err.code})`).catch(() => {});
+      await safeRefund(userId, amountUnits, jobId, `Refund for non-retryable payout (${err.code})`);
       console.warn(`[payout-worker] withdrawal job ${jobId} failed non-retryably (${err.code}): ${message}`);
       Sentry.captureMessage(`[payout-worker] withdrawal job ${jobId} non-retryable (${err.code}): ${message}`, { level: "warning" });
       return;
@@ -186,7 +207,7 @@ async function processWithdrawalJob(
           },
         }),
       ]);
-      await refundReversal(userId, amountUnits, jobId, `Refund for failed withdrawal: ${message}`).catch(() => {});
+      await safeRefund(userId, amountUnits, jobId, `Refund for failed withdrawal: ${message}`);
       console.error(`[payout-worker] withdrawal job ${jobId} failed permanently after ${MAX_RETRIES} retries: ${message}`);
       Sentry.captureMessage(`[payout-worker] withdrawal job ${jobId} permanently failed: ${message}`, { level: "error" });
     } else {

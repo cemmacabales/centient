@@ -86,7 +86,15 @@ export async function POST(req: NextRequest) {
                     retryCount: MAX_RETRIES,
                   },
                 })
-                .catch(() => {});
+                .catch((updateErr) => {
+                  // If this fails, retryCount isn't exhausted and the job will be
+                  // retried again on the next cron pass — not a fund-loss risk, but
+                  // wasteful, so surface it rather than swallowing silently.
+                  console.error(
+                    `[cron/payout-retry] failed to record non-retryable error for submission ${job.id}:`,
+                    updateErr instanceof Error ? updateErr.message : updateErr,
+                  );
+                });
             }
             console.error(
               `[cron/payout-retry] retry failed for submission ${job.id}:`,
