@@ -2,16 +2,8 @@ import { REWARD_AMOUNT } from "./constants";
 import { usdcToUnits } from "./stellar/config";
 import { payUsdc, getTxStatus } from "./stellar/client";
 import { checkPayoutCap, maybeSendCapAlert, PayoutCapError } from "./payout-cap";
-import { randomBytes } from "node:crypto";
-import { isSimulationMode } from "./simulation";
 
 export { PayoutCapError };
-
-// Local-sim only: a syntactically valid 64-char hex Stellar tx hash, never
-// broadcast. Stellar hashes are bare 32-byte hex with no hex prefix (unlike EVM).
-function simulatedTxHash(): string {
-  return randomBytes(32).toString("hex");
-}
 
 /**
  * Settle a single USDC payout from the pooled platform account to `to` (a `G…`
@@ -28,10 +20,6 @@ function simulatedTxHash(): string {
  */
 export async function payReward(to: string, amountUnits?: bigint): Promise<string> {
   const amount = amountUnits ?? rewardInUnits();
-
-  if (isSimulationMode()) {
-    return simulatedTxHash();
-  }
 
   await checkPayoutCap(amount);
 
@@ -55,10 +43,6 @@ export async function payReward(to: string, amountUnits?: bigint): Promise<strin
 export async function waitForTx(
   hash: string,
 ): Promise<{ status: "success" | "reverted"; transactionHash: string }> {
-  if (isSimulationMode()) {
-    return { status: "success", transactionHash: hash };
-  }
-
   const status = await getTxStatus(hash);
   if (status === "not_found") {
     throw new Error(

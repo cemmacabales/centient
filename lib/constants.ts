@@ -5,10 +5,10 @@ import type { WithdrawalThresholds } from "@/lib/withdrawal-eligibility";
 // ── Celo / EVM chain-config (legacy — being migrated to Stellar) ──
 // ST-1a (#291) introduces the Stellar chain foundation in `lib/stellar/config.ts`.
 // The CELO_* / activeChain / activeRpcUrl / REWARD_TOKEN_ADDRESS exports below are
-// deliberately RETAINED here, not deleted, because their consumers — lib/payout.ts,
-// lib/admin-data.ts, lib/metamask.ts — are still on viem and
+// deliberately RETAINED here, not deleted, because their remaining consumers —
+// lib/admin-data.ts and the answering-flow API routes — are still on viem and
 // migrate in Waves 2–5. Removing them now would break `tsc` (the harder DoD gate).
-// Final removal lands with the closing viem-removal step after ST-4c/ST-5, per the
+// Final removal lands with the closing viem-removal step after ST-5, per the
 // roadmap (#289). New chain config goes in lib/stellar/config.ts, not here.
 
 const toHex = (id: number) => `0x${id.toString(16)}`;
