@@ -27,6 +27,14 @@ const SOME_SESSION = "11111111-1111-1111-1111-111111111111";
 // trustline gates). The shared `makeWallet()` factory still emits `0x…` (its
 // global swap is ST-6b) — it's used here only where an invalid address is wanted.
 const G_WALLET = "GCKIPQX2TEZWBQSUPPNMKGJBODL246B374Y52SPD2OGJ2AAQ6SHYUR6E";
+// More distinct, valid `G…` StrKeys for the shared-wallet / ban-path tests, which
+// now match on case-sensitive StrKey (ST-4d) instead of lowercased `0x…`.
+const G_SHARED = "GAX7VLUK2MZAQJ5JNRTUFSYO677CF642STTPECUJYCOZ3AD5BQS45SQZ";
+const G_USERS = [
+  "GCPE6PVCMTWNN3M3LSUW5NBLMDAF7OYK5ITU7VWVHC6PUQKOZ4V6ZQXD",
+  "GB4PQVRZKT6IJF4XFTXS553JYFL2LC2HOML2N3YOGZUXPW42ERBNFSGV",
+  "GCKPZ3UTFJAAMPWA2INEQKPQNLLI7EEI7QKQ6FVWV2ETRPVIJWM3AXE7",
+];
 
 function makeReq(): NextRequest {
   return new NextRequest("http://localhost/api/me/withdraw", { method: "POST" });
@@ -303,11 +311,11 @@ describe("POST /api/me/withdraw", () => {
   });
 
   it("returns 403 when the user's wallet is banned", async () => {
-    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: G_WALLET });
     await prisma.bannedIdentity.create({
       data: {
         identifierType: "WALLET",
-        identifierValue: user.walletAddress!.toLowerCase(),
+        identifierValue: user.walletAddress!, // case-preserved StrKey
         reason: "wallet ban",
       },
     });
@@ -319,7 +327,7 @@ describe("POST /api/me/withdraw", () => {
     const body = await res.json();
     expect(body.error).toBe("identity_banned");
     expect(body.identifierType).toBe("WALLET");
-    expect(body.identifierValue).toBe(user.walletAddress!.toLowerCase());
+    expect(body.identifierValue).toBe(user.walletAddress!);
   });
 
   it("returns 403 when the userId is banned", async () => {
@@ -359,11 +367,11 @@ describe("POST /api/me/withdraw", () => {
   });
 
   it("returns 403 when shared wallet has received from MAX_WALLET_ACCOUNT_COUNT accounts", async () => {
-    const sharedWallet = "0x0000000000000000000000000000000000000aAa";
+    const sharedWallet = G_SHARED;
     const users = await Promise.all(
       Array.from({ length: 3 }, (_, i) =>
         createUser({
-          walletAddress: `0x00000000000000000000000000000000000000${i.toString().padStart(2, "0")}`,
+          walletAddress: G_USERS[i],
           pendingBalanceUnits: 5000000000000000000n,
         }),
       ),
@@ -375,7 +383,7 @@ describe("POST /api/me/withdraw", () => {
           type: "WITHDRAWAL",
           userId: user.id,
           amountUnits: 1000000000000000000n,
-          destinationAddress: sharedWallet.toLowerCase(),
+          destinationAddress: sharedWallet, // case-preserved StrKey
           status: "done",
         },
       });
@@ -392,7 +400,7 @@ describe("POST /api/me/withdraw", () => {
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toBe("shared_wallet_detected");
-    expect(body.walletAddress).toBe(sharedWallet.toLowerCase());
+    expect(body.walletAddress).toBe(sharedWallet);
     expect(body.accountCount).toBe(3);
   });
 

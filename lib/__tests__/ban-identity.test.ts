@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { Keypair } from "@stellar/stellar-sdk";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 import {
   isAnyIdentifierBanned,
@@ -10,13 +11,28 @@ import {
   MAX_SHARED_WALLET_ACCOUNTS,
 } from "../ban-identity";
 
+// ST-4d — the fraud controls now operate on Stellar `G…` StrKey addresses, which
+// are **case-sensitive base32**. Every address below is a real, valid StrKey so
+// the validation helper (StrKey.isValidEd25519PublicKey) accepts it; lowercasing
+// any of them corrupts it into an invalid address. The old code lowercased wallet
+// values, which silently broke matching once addresses became case-significant.
+const BANNED_WALLET = "GDJ3LPVCSFVJHBTX47I7OBG2ZK2ZH3KQAHAHMNTJW3JLSLZUWC4OQQ7P";
+const SHARED_WALLET = "GAX7VLUK2MZAQJ5JNRTUFSYO677CF642STTPECUJYCOZ3AD5BQS45SQZ";
+// MAX_SHARED_WALLET_ACCOUNTS is environment-driven, so generate exactly as many
+// valid, distinct `G…` StrKeys as the configured threshold needs. A fixed-size
+// list would throw (undefined walletAddress) the moment the limit is raised past
+// its length.
+const USER_WALLETS = Array.from({ length: MAX_SHARED_WALLET_ACCOUNTS }, () =>
+  Keypair.random().publicKey(),
+);
+
 beforeEach(async () => {
   await truncateAll();
 });
 
 describe("isAnyIdentifierBanned", () => {
   it("returns null when no identifiers are banned", async () => {
-    const result = await isAnyIdentifierBanned("test@example.com", "0x123", "user-123");
+    const result = await isAnyIdentifierBanned("test@example.com", BANNED_WALLET, "user-123");
     expect(result).toBeNull();
   });
 
@@ -29,7 +45,7 @@ describe("isAnyIdentifierBanned", () => {
       },
     });
 
-    const result = await isAnyIdentifierBanned("banned@example.com", "0x123", "user-123");
+    const result = await isAnyIdentifierBanned("banned@example.com", BANNED_WALLET, "user-123");
 
     expect(result).toBeInstanceOf(BannedIdentityError);
     expect(result!.bannedIdentifierType).toBe("EMAIL");
@@ -41,16 +57,57 @@ describe("isAnyIdentifierBanned", () => {
     await prisma.bannedIdentity.create({
       data: {
         identifierType: "WALLET",
-        identifierValue: "0xabc",
+        identifierValue: BANNED_WALLET,
         reason: "fraud",
       },
     });
 
-    const result = await isAnyIdentifierBanned("test@example.com", "0xabc", "user-123");
+    const result = await isAnyIdentifierBanned("test@example.com", BANNED_WALLET, "user-123");
 
     expect(result).toBeInstanceOf(BannedIdentityError);
     expect(result!.bannedIdentifierType).toBe("WALLET");
-    expect(result!.identifierValue).toBe("0xabc");
+    expect(result!.identifierValue).toBe(BANNED_WALLET);
+  });
+
+  // Regression for the ST-4d hazard: a banned `G…` StrKey with uppercase chars
+  // must still match. Under the old `.toLowerCase()` on the lookup value the
+  // stored (case-preserved) ban and the lowercased lookup never compared equal,
+  // so the Sybil/ban defense was silently dead.
+  it("matches a banned case-sensitive G… StrKey without lowercasing it", async () => {
+    expect(BANNED_WALLET).not.toBe(BANNED_WALLET.toLowerCase()); // guard: address has case
+
+    await prisma.bannedIdentity.create({
+      data: {
+        identifierType: "WALLET",
+        identifierValue: BANNED_WALLET,
+        reason: "sybil",
+      },
+    });
+
+    const result = await isAnyIdentifierBanned("test@example.com", BANNED_WALLET, "user-123");
+
+    expect(result).toBeInstanceOf(BannedIdentityError);
+    expect(result!.identifierValue).toBe(BANNED_WALLET);
+  });
+
+  // StrKey is exact-match, never case-folded: a lowercased variant of a banned
+  // address is a *different* (in fact invalid) address and must not match.
+  it("does not match a lowercased (corrupted) variant of a banned G… address", async () => {
+    await prisma.bannedIdentity.create({
+      data: {
+        identifierType: "WALLET",
+        identifierValue: BANNED_WALLET,
+        reason: "sybil",
+      },
+    });
+
+    const result = await isAnyIdentifierBanned(
+      "test@example.com",
+      BANNED_WALLET.toLowerCase(),
+      "user-123",
+    );
+
+    expect(result).toBeNull();
   });
 
   it("returns BannedIdentityError when userId is banned", async () => {
@@ -62,7 +119,7 @@ describe("isAnyIdentifierBanned", () => {
       },
     });
 
-    const result = await isAnyIdentifierBanned("test@example.com", "0x123", "banned-user-id");
+    const result = await isAnyIdentifierBanned("test@example.com", BANNED_WALLET, "banned-user-id");
 
     expect(result).toBeInstanceOf(BannedIdentityError);
     expect(result!.bannedIdentifierType).toBe("USER_ID");
@@ -78,7 +135,7 @@ describe("isAnyIdentifierBanned", () => {
       },
     });
 
-    const result = await isAnyIdentifierBanned("old@example.com", "0x123", "user-123");
+    const result = await isAnyIdentifierBanned("old@example.com", BANNED_WALLET, "user-123");
 
     expect(result).toBeNull();
   });
@@ -92,7 +149,7 @@ describe("isAnyIdentifierBanned", () => {
       },
     });
 
-    const result = await isAnyIdentifierBanned("test@example.com", "0x123", "user-123");
+    const result = await isAnyIdentifierBanned("test@example.com", BANNED_WALLET, "user-123");
 
     expect(result).toBeInstanceOf(BannedIdentityError);
     expect(result!.bannedIdentifierType).toBe("USER_ID");
@@ -106,14 +163,12 @@ describe("isAnyIdentifierBanned", () => {
 });
 
 describe("checkSharedWallet", () => {
-  const SHARED_WALLET = "0x0000000000000000000000000000000000000cCc";
-
   it("returns null when wallet has received from fewer than MAX_SHARED_WALLET_ACCOUNTS accounts", async () => {
     const users = await Promise.all(
       Array.from({ length: MAX_SHARED_WALLET_ACCOUNTS - 1 }, (_, i) =>
         prisma.user.create({
           data: {
-            walletAddress: `0x00000000000000000000000000000000000000${i}`,
+            walletAddress: USER_WALLETS[i],
             pendingBalanceUnits: 0n,
           },
         }),
@@ -126,7 +181,7 @@ describe("checkSharedWallet", () => {
           type: "WITHDRAWAL",
           userId: user.id,
           amountUnits: 1000000000000000000n,
-          destinationAddress: SHARED_WALLET.toLowerCase(),
+          destinationAddress: SHARED_WALLET,
           status: "done",
         },
       });
@@ -136,12 +191,12 @@ describe("checkSharedWallet", () => {
     expect(result).toBeNull();
   });
 
-  it("returns SharedWalletError when wallet has received from MAX_SHARED_WALLET_ACCOUNTS accounts", async () => {
+  it("returns SharedWalletError with the case-preserved G… address when the threshold is hit", async () => {
     const users = await Promise.all(
       Array.from({ length: MAX_SHARED_WALLET_ACCOUNTS }, (_, i) =>
         prisma.user.create({
           data: {
-            walletAddress: `0x0000000000000000000000000000000000000${i}d`,
+            walletAddress: USER_WALLETS[i],
             pendingBalanceUnits: 0n,
           },
         }),
@@ -154,7 +209,7 @@ describe("checkSharedWallet", () => {
           type: "WITHDRAWAL",
           userId: user.id,
           amountUnits: 1000000000000000000n,
-          destinationAddress: SHARED_WALLET.toLowerCase(),
+          destinationAddress: SHARED_WALLET,
           status: "done",
         },
       });
@@ -163,14 +218,15 @@ describe("checkSharedWallet", () => {
     const result = await checkSharedWallet(SHARED_WALLET);
 
     expect(result).toBeInstanceOf(SharedWalletError);
-    expect(result!.walletAddress).toBe(SHARED_WALLET.toLowerCase());
+    // Raw StrKey, NOT lowercased — otherwise the surfaced address would be invalid.
+    expect(result!.walletAddress).toBe(SHARED_WALLET);
     expect(result!.accountCount).toBe(MAX_SHARED_WALLET_ACCOUNTS);
   });
 
   it("excludes current user from count", async () => {
     const currentUser = await prisma.user.create({
       data: {
-        walletAddress: "0x0000000000000000000000000000000000000eEe",
+        walletAddress: USER_WALLETS[MAX_SHARED_WALLET_ACCOUNTS - 1],
         pendingBalanceUnits: 0n,
       },
     });
@@ -179,7 +235,7 @@ describe("checkSharedWallet", () => {
       Array.from({ length: MAX_SHARED_WALLET_ACCOUNTS - 1 }, (_, i) =>
         prisma.user.create({
           data: {
-            walletAddress: `0x0000000000000000000000000000000000000${i}f`,
+            walletAddress: USER_WALLETS[i],
             pendingBalanceUnits: 0n,
           },
         }),
@@ -192,7 +248,7 @@ describe("checkSharedWallet", () => {
           type: "WITHDRAWAL",
           userId: user.id,
           amountUnits: 1000000000000000000n,
-          destinationAddress: SHARED_WALLET.toLowerCase(),
+          destinationAddress: SHARED_WALLET,
           status: "done",
         },
       });
@@ -208,7 +264,7 @@ describe("checkSharedWallet", () => {
       Array.from({ length: MAX_SHARED_WALLET_ACCOUNTS }, (_, i) =>
         prisma.user.create({
           data: {
-            walletAddress: `0x0000000000000000000000000000000000000${i}g`,
+            walletAddress: USER_WALLETS[i],
             pendingBalanceUnits: 0n,
           },
         }),
@@ -221,7 +277,7 @@ describe("checkSharedWallet", () => {
           type: "WITHDRAWAL",
           userId: user.id,
           amountUnits: 1000000000000000000n,
-          destinationAddress: SHARED_WALLET.toLowerCase(),
+          destinationAddress: SHARED_WALLET,
           status: "queued",
         },
       });
@@ -252,12 +308,33 @@ describe("addBannedIdentity / removeBannedIdentity", () => {
   });
 
   it("upserts an existing banned identity", async () => {
-    await addBannedIdentity("WALLET", "0x123", "first reason");
-    await addBannedIdentity("WALLET", "0x123", "updated reason");
+    await addBannedIdentity("WALLET", BANNED_WALLET, "first reason");
+    await addBannedIdentity("WALLET", BANNED_WALLET, "updated reason");
 
     const banned = await prisma.bannedIdentity.findUnique({
-      where: { identifierType_identifierValue: { identifierType: "WALLET", identifierValue: "0x123" } },
+      where: { identifierType_identifierValue: { identifierType: "WALLET", identifierValue: BANNED_WALLET } },
     });
     expect(banned!.reason).toBe("updated reason");
+  });
+
+  // Store-path validation: a malformed `G…` StrKey must be rejected, not silently
+  // stored as an un-matchable ban record.
+  it("rejects a malformed WALLET StrKey on store", async () => {
+    await expect(addBannedIdentity("WALLET", "not-a-real-stellar-address", "bad")).rejects.toThrow();
+
+    const count = await prisma.bannedIdentity.count({ where: { identifierType: "WALLET" } });
+    expect(count).toBe(0);
+  });
+
+  it("stores a WALLET StrKey case-preserved (no lowercasing)", async () => {
+    await addBannedIdentity("WALLET", BANNED_WALLET, "fraud");
+
+    const banned = await prisma.bannedIdentity.findUnique({
+      where: {
+        identifierType_identifierValue: { identifierType: "WALLET", identifierValue: BANNED_WALLET },
+      },
+    });
+    expect(banned).not.toBeNull();
+    expect(banned!.identifierValue).toBe(BANNED_WALLET);
   });
 });
