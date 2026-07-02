@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 import { auditLog } from "@/lib/audit";
 import { addBannedIdentity } from "@/lib/ban-identity";
+import { isValidStellarAddress } from "@/lib/stellar/signature";
 
 /**
  * P4c — resolve a flagged withdrawal.
@@ -84,9 +85,12 @@ export async function PATCH(
     if (flag.user.email) {
       await addBannedIdentity("EMAIL", flag.user.email, banReason);
     }
-    if (flag.user.walletAddress) {
+    if (flag.user.walletAddress && isValidStellarAddress(flag.user.walletAddress)) {
       // Case-preserved `G…` StrKey — lowercasing would store an un-matchable ban
-      // that the case-sensitive lookup could never hit (ST-4d).
+      // that the case-sensitive lookup could never hit (ST-4d). A malformed stored
+      // address is skipped: it can never match a well-formed withdrawal destination,
+      // and calling addBannedIdentity with it would throw here — after the flag and
+      // user rows are already written — leaving a partial ban and a 500.
       await addBannedIdentity("WALLET", flag.user.walletAddress, banReason);
     }
     await addBannedIdentity("USER_ID", flag.userId, banReason);

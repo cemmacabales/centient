@@ -164,6 +164,30 @@ describe("PATCH /api/admin/flagged-withdrawals/[id]", () => {
     );
   });
 
+  // A user carrying a malformed/legacy wallet must still ban cleanly: skip the
+  // un-matchable WALLET binding rather than letting addBannedIdentity throw after
+  // the flag + user rows are written (which would 500 with a half-applied ban).
+  it("bans without a WALLET binding when the stored wallet is not a valid StrKey", async () => {
+    const user = await createUser({
+      email: "legacy@example.com",
+      walletAddress: "0x1234567890abcdef1234567890abcdef12345678",
+    });
+    const flag = await createFlag(user.id, {
+      reason: "BANNED_IDENTITY",
+      walletAddress: user.walletAddress,
+    });
+
+    const res = await call(flag.id, { action: "ban", confirm: true });
+    expect(res.status).toBe(200);
+
+    const u = await prisma.user.findUnique({ where: { id: user.id } });
+    expect(u?.isBanned).toBe(true);
+
+    const banned = await prisma.bannedIdentity.findMany();
+    const types = banned.map((b) => b.identifierType).sort();
+    expect(types).toEqual(["EMAIL", "USER_ID"]); // no WALLET binding, no throw
+  });
+
   it("increments banCount instead of overwriting it", async () => {
     const user = await createUser({ email: "repeat@example.com", walletAddress: G_WALLET });
     await prisma.user.update({ where: { id: user.id }, data: { banCount: 2 } });

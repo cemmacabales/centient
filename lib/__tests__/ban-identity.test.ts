@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { Keypair } from "@stellar/stellar-sdk";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 import {
   isAnyIdentifierBanned,
@@ -17,12 +18,13 @@ import {
 // values, which silently broke matching once addresses became case-significant.
 const BANNED_WALLET = "GDJ3LPVCSFVJHBTX47I7OBG2ZK2ZH3KQAHAHMNTJW3JLSLZUWC4OQQ7P";
 const SHARED_WALLET = "GAX7VLUK2MZAQJ5JNRTUFSYO677CF642STTPECUJYCOZ3AD5BQS45SQZ";
-const USER_WALLETS = [
-  "GCPE6PVCMTWNN3M3LSUW5NBLMDAF7OYK5ITU7VWVHC6PUQKOZ4V6ZQXD",
-  "GB4PQVRZKT6IJF4XFTXS553JYFL2LC2HOML2N3YOGZUXPW42ERBNFSGV",
-  "GCKPZ3UTFJAAMPWA2INEQKPQNLLI7EEI7QKQ6FVWV2ETRPVIJWM3AXE7",
-  "GADPVKQTFTGCCTHEEVU5SVBBVRPHV7PPSQROHSBEZPYNYSZEVAPTMQDU",
-];
+// MAX_SHARED_WALLET_ACCOUNTS is environment-driven, so generate exactly as many
+// valid, distinct `G…` StrKeys as the configured threshold needs. A fixed-size
+// list would throw (undefined walletAddress) the moment the limit is raised past
+// its length.
+const USER_WALLETS = Array.from({ length: MAX_SHARED_WALLET_ACCOUNTS }, () =>
+  Keypair.random().publicKey(),
+);
 
 beforeEach(async () => {
   await truncateAll();

@@ -175,23 +175,27 @@ export async function trackIdentifierChange(
   oldValue: string | null,
   newValue: string | null,
 ): Promise<void> {
+  // EMAIL is case-insensitive → canonicalize lowercase. WALLET is a
+  // case-sensitive StrKey → keep it verbatim (lowercasing corrupts it). The SAME
+  // canonicalization must apply to both old and new values, or the unlink below
+  // matches on a raw mixed-case EMAIL that no longer equals the stored (lowercased)
+  // row, leaving the old identifier active alongside the new one.
+  const canonicalize = (value: string) =>
+    identifierType === "EMAIL" ? value.toLowerCase() : value;
+
   if (oldValue) {
     await prisma.userIdentifierHistory.updateMany({
-      where: { userId, identifierType, identifierValue: oldValue, isActive: true },
+      where: { userId, identifierType, identifierValue: canonicalize(oldValue), isActive: true },
       data: { isActive: false, unlinkedAt: new Date() },
     });
   }
 
   if (newValue) {
-    // EMAIL is case-insensitive → canonicalize lowercase. WALLET is a
-    // case-sensitive StrKey → store it verbatim (lowercasing corrupts it).
-    const canonicalValue =
-      identifierType === "EMAIL" ? newValue.toLowerCase() : newValue;
     await prisma.userIdentifierHistory.create({
       data: {
         userId,
         identifierType,
-        identifierValue: canonicalValue,
+        identifierValue: canonicalize(newValue),
         isActive: true,
       },
     });
