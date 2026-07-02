@@ -8,6 +8,7 @@ import {
 } from "@/lib/constants";
 import { resolveRewardUnits } from "@/lib/payout";
 import { unitsToUsdcDisplay } from "@/lib/stellar/config";
+import { getLabelerSession } from "@/lib/labeler-auth";
 import {
   isInCooldown,
   isInRetest,
@@ -22,28 +23,31 @@ function computeResponseTarget(
 }
 
 export async function GET(req: NextRequest) {
-  const wallet = req.nextUrl.searchParams.get("wallet")?.toLowerCase();
-  if (!wallet || !/^0x[a-f0-9]{40}$/.test(wallet)) {
-    return NextResponse.json({ error: "invalid_wallet" }, { status: 400 });
+  // ST-5d: task assignment is keyed on the session (userId), not a `?wallet=`
+  // param — an email-only labeler with no linked wallet can still be served tasks.
+  const userId = await getLabelerSession(req);
+  if (!userId) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   const user = await prisma.user.findUnique({
-    where: { walletAddress: wallet },
+    where: { id: userId },
   });
+  if (!user) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
 
-  if (user && isInCooldown(user.isBanned, user.bannedUntil)) {
+  if (isInCooldown(user.isBanned, user.bannedUntil)) {
     return NextResponse.json({
       cooldown: true,
       unbannedAt: user.bannedUntil!.toISOString(),
     });
   }
 
-  const inRetest = user
-    ? isInRetest(user.isBanned, user.bannedUntil, user.banCount)
-    : false;
+  const inRetest = isInRetest(user.isBanned, user.bannedUntil, user.banCount);
 
   const done = await prisma.submission.findMany({
-    where: { walletAddress: wallet },
+    where: { userId },
     select: { taskId: true },
   });
   const doneIds = done.map((s) => s.taskId);
@@ -79,7 +83,7 @@ export async function GET(req: NextRequest) {
     });
 
     if (!task) {
-      console.warn(`[task] gold pool exhausted for wallet ${wallet}, falling back to non-gold`);
+      console.warn(`[task] gold pool exhausted for user ${userId}, falling back to non-gold`);
     }
   }
 

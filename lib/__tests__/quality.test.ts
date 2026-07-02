@@ -102,33 +102,35 @@ describe("checkReasonRepetition", () => {
 import { beforeEach } from "vitest";
 import { checkReasonRepetition } from "@/lib/quality";
 import { prisma, truncateAll } from "@/tests/helpers/db";
-import { createUser, createTask, makeWallet, VALID_REASON } from "@/tests/helpers/factories";
+import { createUser, createTask, VALID_REASON } from "@/tests/helpers/factories";
 
 beforeEach(async () => {
   await truncateAll();
 });
 
-async function seedReasons(wallet: string, reasons: string[]) {
-  const user = await createUser({ walletAddress: wallet });
+// ST-5d: repetition is keyed on the labeler identity (userId), not a wallet. Seed
+// submissions for a fresh user and return its id to drive checkReasonRepetition.
+async function seedReasons(reasons: string[]): Promise<string> {
+  const user = await createUser();
   const tasks = await Promise.all(reasons.map(() => createTask()));
   await prisma.submission.createMany({
     data: tasks.map((t, i) => ({
-      walletAddress: wallet,
-      userId: user.id,          // fixed: use user.id, not task.id
+      walletAddress: user.walletAddress,
+      userId: user.id,
       taskId: t.id,
       choice: "A",
       reason: reasons[i],
-      payoutAmountUnits: 0,       // number (not string)
+      payoutAmountUnits: 0,
       payoutStatus: "skipped",
     })),
   });
+  return user.id;
 }
 
 describe("checkReasonRepetition - exact duplicates", () => {
   it("flags when new reason matches 3+ of the last 10", async () => {
-    const wallet = makeWallet();
     const dup = "Response A is clearer and more accurate overall.";
-    await seedReasons(wallet, [
+    const userId = await seedReasons([
       "Unique reason one is different.",
       "Unique reason two is distinct.",
       "Unique reason three is unique.",
@@ -141,14 +143,13 @@ describe("checkReasonRepetition - exact duplicates", () => {
       dup,
     ]);
 
-    const result = await checkReasonRepetition(wallet, dup);
+    const result = await checkReasonRepetition(userId, dup);
     expect(result.isRepetitive).toBe(true);
   });
 
   it("does not flag when duplicates are below threshold", async () => {
-    const wallet = makeWallet();
     const dup = "Response A is clearer.";
-    await seedReasons(wallet, [
+    const userId = await seedReasons([
       "Unique reason one is different.",
       "Unique reason two is distinct.",
       "Unique reason three is unique.",
@@ -160,13 +161,12 @@ describe("checkReasonRepetition - exact duplicates", () => {
       "Eighth unique reason is here.",
     ]);
 
-    const result = await checkReasonRepetition(wallet, dup);
+    const result = await checkReasonRepetition(userId, dup);
     expect(result.isRepetitive).toBe(false);
   });
 
   it("flags exact duplicates regardless of case and whitespace", async () => {
-    const wallet = makeWallet();
-    await seedReasons(wallet, [
+    const userId = await seedReasons([
       "Response A is clearer and more accurate.",
       "response a is clearer and more accurate.",
       "  response a is clearer and more accurate.  ",
@@ -179,31 +179,29 @@ describe("checkReasonRepetition - exact duplicates", () => {
     ]);
 
     const result = await checkReasonRepetition(
-      wallet,
+      userId,
       "Response A is clearer and more accurate.",
     );
     expect(result.isRepetitive).toBe(true);
   });
 
   it("does not flag when user has fewer than window submissions total", async () => {
-    const wallet = makeWallet();
     const dup = "response a is better";
-    await seedReasons(wallet, [
+    const userId = await seedReasons([
       dup,
       dup,
       "Another different reason.",
     ]);
 
-    const result = await checkReasonRepetition(wallet, dup);
+    const result = await checkReasonRepetition(userId, dup);
     expect(result.isRepetitive).toBe(true);
   });
 });
 
 describe("checkReasonRepetition - near duplicates (Jaccard)", () => {
   it("flags when 5+ reasons have >80% token overlap with the new one", async () => {
-    const wallet = makeWallet();
     const near = "Response A is clearer and more accurate.";
-    await seedReasons(wallet, [
+    const userId = await seedReasons([
       "Response A is clearer and more accurate here.",
       "Response A is clearer and more accurate now.",
       "Response A is clearer and more accurate too.",
@@ -214,14 +212,13 @@ describe("checkReasonRepetition - near duplicates (Jaccard)", () => {
       "Yet another unique reason here.",
     ]);
 
-    const result = await checkReasonRepetition(wallet, near);
+    const result = await checkReasonRepetition(userId, near);
     expect(result.isRepetitive).toBe(true);
   });
 
   it("does not flag when near-duplicates are below 5", async () => {
-    const wallet = makeWallet();
     const near = "Response A is clearer and more accurate overall.";
-    await seedReasons(wallet, [
+    const userId = await seedReasons([
       "Response A is clearer and more accurate.",
       "Response A is clearer and more accurate indeed.",
       "Response A is clearer and more accurate here.",
@@ -232,13 +229,12 @@ describe("checkReasonRepetition - near duplicates (Jaccard)", () => {
       "Eighth completely different reason.",
     ]);
 
-    const result = await checkReasonRepetition(wallet, near);
+    const result = await checkReasonRepetition(userId, near);
     expect(result.isRepetitive).toBe(false);
   });
 
   it("does not flag when reasons are genuinely unique", async () => {
-    const wallet = makeWallet();
-    await seedReasons(wallet, [
+    const userId = await seedReasons([
       "The first response is more concise and direct.",
       "I prefer how the second one explains things step by step.",
       "The language used in response A is more professional.",
@@ -249,7 +245,7 @@ describe("checkReasonRepetition - near duplicates (Jaccard)", () => {
       "Response A handles the edge case more gracefully.",
     ]);
 
-    const result = await checkReasonRepetition(wallet, VALID_REASON);
+    const result = await checkReasonRepetition(userId, VALID_REASON);
     expect(result.isRepetitive).toBe(false);
   });
 });

@@ -21,6 +21,7 @@ import {
   InsufficientBalanceError,
 } from "@/lib/campaign-balance";
 import { creditReward } from "@/lib/user-balance";
+import { getLabelerSession } from "@/lib/labeler-auth";
 import { REWARDED_STATUSES } from "@/lib/constants";
 
 function errorResponse(code: string, status: number, context: Record<string, unknown> = {}) {
@@ -33,6 +34,14 @@ function errorResponse(code: string, status: number, context: Record<string, unk
 }
 
 export async function POST(req: NextRequest) {
+  // ST-5d: identity is the session (userId), not a `0x` wallet in the body — an
+  // email-only labeler with no linked wallet can answer. The wallet is retained
+  // on the submission only when the account has one linked.
+  const userId = await getLabelerSession(req);
+  if (!userId) {
+    return errorResponse("unauthorized", 401);
+  }
+
   let body: unknown;
   try {
     body = await req.json();
@@ -40,61 +49,57 @@ export async function POST(req: NextRequest) {
     return errorResponse("invalid_body", 400);
   }
 
-  const { walletAddress: rawWallet, taskId, choice, reason } =
+  const { taskId, choice, reason } =
     (body ?? {}) as {
-      walletAddress?: string;
       taskId?: string;
       choice?: string;
       reason?: string;
     };
 
-  const walletAddress = typeof rawWallet === "string" ? rawWallet.toLowerCase() : "";
-  if (!/^0x[a-f0-9]{40}$/.test(walletAddress)) {
-    return errorResponse("invalid_wallet", 400, { walletAddress });
-  }
   if (typeof taskId !== "string" || !taskId) {
-    return errorResponse("invalid_task", 400, { walletAddress, taskId });
+    return errorResponse("invalid_task", 400, { userId, taskId });
   }
   if (choice !== "A" && choice !== "B") {
-    return errorResponse("invalid_choice", 400, { walletAddress, taskId, choice });
+    return errorResponse("invalid_choice", 400, { userId, taskId, choice });
   }
 
   if (typeof reason !== "string" || isSpamReason(reason) || !validateReason(reason)) {
-    return errorResponse("invalid_reason", 400, { walletAddress, taskId });
+    return errorResponse("invalid_reason", 400, { userId, taskId });
   }
 
-  const repetitionCheck = await checkReasonRepetition(walletAddress, reason);
+  const repetitionCheck = await checkReasonRepetition(userId, reason);
   if (repetitionCheck.isRepetitive) {
-    return errorResponse("repetitive_reason", 400, { walletAddress, taskId });
+    return errorResponse("repetitive_reason", 400, { userId, taskId });
   }
 
-  if (await checkWalletRateLimit(walletAddress)) {
-    return errorResponse("rate_limited", 429, { walletAddress });
+  // Rate limit keyed on the userId (opaque bucket key), so wallet-less answerers
+  // are still throttled.
+  if (await checkWalletRateLimit(userId)) {
+    return errorResponse("rate_limited", 429, { userId });
   }
 
   try {
-    const user = await prisma.user.upsert({
-      where: { walletAddress },
-      create: { walletAddress },
-      update: {},
-    });
-    const userId = user.id;
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return errorResponse("unauthorized", 401, { userId });
+    }
+    const walletAddress = user.walletAddress;
 
     if (isPermanentlyBanned(user.isBanned, user.bannedUntil, user.banCount)) {
-      return errorResponse("banned", 403, { walletAddress, permanent: true });
+      return errorResponse("banned", 403, { userId, permanent: true });
     }
     if (isInCooldown(user.isBanned, user.bannedUntil)) {
       return errorResponse("banned", 403, {
-        walletAddress,
+        userId,
         unbannedAt: user.bannedUntil?.toISOString(),
       });
     }
 
     const existing = await prisma.submission.findUnique({
-      where: { walletAddress_taskId: { walletAddress, taskId } },
+      where: { userId_taskId: { userId, taskId } },
     });
     if (existing) {
-      return errorResponse("already_submitted", 409, { walletAddress, taskId });
+      return errorResponse("already_submitted", 409, { userId, taskId });
     }
 
     const task = await prisma.task.findUnique({
@@ -105,18 +110,18 @@ export async function POST(req: NextRequest) {
       },
     });
     if (!task) {
-      return errorResponse("task_not_found", 404, { walletAddress, taskId });
+      return errorResponse("task_not_found", 404, { userId, taskId });
     }
 
     if (!task.isGold) {
       const responseTarget = task.responseTarget ?? task.campaign?.defaultResponseTarget ?? null;
       if (responseTarget !== null && task._count.submissions >= responseTarget) {
-        return errorResponse("response_target_reached", 409, { walletAddress, taskId, responseTarget, paid: task._count.submissions });
+        return errorResponse("response_target_reached", 409, { userId, taskId, responseTarget, paid: task._count.submissions });
       }
     }
 
     if (isInRetest(user.isBanned, user.bannedUntil, user.banCount) && !task.isGold) {
-      return errorResponse("invalid_task", 400, { walletAddress, taskId, reason: "retest_requires_gold_task" });
+      return errorResponse("invalid_task", 400, { userId, taskId, reason: "retest_requires_gold_task" });
     }
 
     if (task.isGold) {
@@ -141,7 +146,7 @@ export async function POST(req: NextRequest) {
             },
           });
           await tx.user.update({
-            where: { walletAddress },
+            where: { id: userId },
             data: {
               goldAttempted: { increment: 1 },
               ...(correct ? { goldCorrect: { increment: 1 } } : {}),
@@ -150,12 +155,12 @@ export async function POST(req: NextRequest) {
         });
 
         const retestCount = await prisma.submission.count({
-          where: { walletAddress, isGoldCheck: true, createdAt: { gte: retestStart } },
+          where: { userId, isGoldCheck: true, createdAt: { gte: retestStart } },
         });
 
         if (retestCount >= RETEST_GOLD_COUNT) {
           const retestGoldSubs = await prisma.submission.findMany({
-            where: { walletAddress, isGoldCheck: true, createdAt: { gte: retestStart } },
+            where: { userId, isGoldCheck: true, createdAt: { gte: retestStart } },
             select: { goldPassed: true },
             orderBy: { createdAt: "desc" },
             take: RETEST_GOLD_COUNT,
@@ -165,15 +170,15 @@ export async function POST(req: NextRequest) {
 
           if (accuracy >= RETEST_PASS_THRESHOLD) {
             await prisma.user.update({
-              where: { walletAddress },
+              where: { id: userId },
               data: { isBanned: false, bannedAt: null, bannedReason: null, bannedUntil: null },
             });
-            console.warn("[submit] retest_passed", { walletAddress, accuracy, passed, total: retestGoldSubs.length });
+            console.warn("[submit] retest_passed", { userId, accuracy, passed, total: retestGoldSubs.length });
           } else {
-            const refreshed = await prisma.user.findUniqueOrThrow({ where: { walletAddress } });
+            const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
             const next = computeCooldownBan(refreshed.banCount, refreshed.lastBanAt);
             await prisma.user.update({
-              where: { walletAddress },
+              where: { id: userId },
               data: {
                 isBanned: true,
                 bannedAt: new Date(),
@@ -183,7 +188,7 @@ export async function POST(req: NextRequest) {
                 lastBanAt: new Date(),
               },
             });
-            console.warn("[submit] retest_failed", { walletAddress, accuracy, passed, total: retestGoldSubs.length, escalatedTo: next.banCount });
+            console.warn("[submit] retest_failed", { userId, accuracy, passed, total: retestGoldSubs.length, escalatedTo: next.banCount });
           }
         }
 
@@ -206,7 +211,7 @@ export async function POST(req: NextRequest) {
             },
           });
           await tx.user.update({
-            where: { walletAddress },
+            where: { id: userId },
             data: {
               goldAttempted: { increment: 1 },
               lastSubmissionAt: new Date(),
@@ -215,7 +220,7 @@ export async function POST(req: NextRequest) {
         });
 
         const refreshed = await prisma.user.findUniqueOrThrow({
-          where: { walletAddress },
+          where: { id: userId },
         });
         const banDecision = evaluateBanRule({
           goldAttempted: refreshed.goldAttempted,
@@ -224,7 +229,7 @@ export async function POST(req: NextRequest) {
         if (banDecision.shouldBan) {
           const cooldown = computeCooldownBan(refreshed.banCount, refreshed.lastBanAt);
           await prisma.user.update({
-            where: { walletAddress },
+            where: { id: userId },
             data: {
               isBanned: true,
               bannedAt: new Date(),
@@ -234,8 +239,8 @@ export async function POST(req: NextRequest) {
               lastBanAt: new Date(),
             },
           });
-          console.warn("[submit] banned_wallet", {
-            walletAddress,
+          console.warn("[submit] banned_user", {
+            userId,
             goldAttempted: refreshed.goldAttempted,
             goldCorrect: refreshed.goldCorrect,
             banCount: cooldown.banCount,
@@ -247,7 +252,7 @@ export async function POST(req: NextRequest) {
       }
 
       await prisma.user.update({
-        where: { walletAddress },
+        where: { id: userId },
         data: {
           goldCorrect: { increment: 1 },
           goldAttempted: { increment: 1 },
@@ -256,7 +261,7 @@ export async function POST(req: NextRequest) {
     }
 
     const recent = await prisma.submission.findMany({
-      where: { walletAddress },
+      where: { userId },
       orderBy: { createdAt: "desc" },
       take: 20,
       select: { choice: true },
@@ -277,11 +282,11 @@ export async function POST(req: NextRequest) {
           },
         });
         await prisma.user.update({
-          where: { walletAddress },
+          where: { id: userId },
           data: { lastSubmissionAt: new Date() },
         });
         return errorResponse("left_bias_detected", 400, {
-          walletAddress,
+          userId,
           taskId,
           sameSide,
           recent: recent.length,
@@ -316,7 +321,7 @@ export async function POST(req: NextRequest) {
             data: { payoutStatus: "skipped" },
           });
           return errorResponse("campaign_balance_insufficient", 402, {
-            walletAddress,
+            userId,
             taskId,
             campaignId: task.campaignId,
             balanceUnits: String(err.balanceUnits),
@@ -365,10 +370,10 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("[submit] UNHANDLED ERROR:", err);
     Sentry.captureException(err, {
-      extra: { walletAddress, taskId },
+      extra: { userId, taskId },
     });
     return errorResponse("server_error", 500, {
-      walletAddress,
+      userId,
       taskId,
       err: err instanceof Error ? { message: err.message, stack: err.stack } : err,
     });

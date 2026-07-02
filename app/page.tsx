@@ -23,7 +23,6 @@ type Screen =
   | "checking"
   | "login"
   | "account_auth"
-  | "account_home"
   | "loading"
   | "onboarding"
   | "landing"
@@ -128,8 +127,12 @@ export default function Home() {
 
   const dismissToast = useCallback(() => setToast(null), []);
 
-  const fetchUserData = useCallback(async (addr: string) => {
-    const res = await fetch(`/api/me?wallet=${addr}`);
+  // ST-5d: identity comes from the session cookie (`labeler_session`), not a
+  // `?wallet=` query param — an email-only labeler with no linked wallet can
+  // read their profile and answer tasks. `credentials` are same-origin so the
+  // cookie rides along automatically.
+  const fetchUserData = useCallback(async () => {
+    const res = await fetch("/api/me");
     const data = await res.json();
     setSubmissionCount(data.submissionCount ?? 0);
     setOnboardingCompleted(data.onboardingCompleted ?? false);
@@ -161,8 +164,8 @@ export default function Home() {
     }
   }, []);
 
-  const fetchTask = useCallback(async (addr: string) => {
-    const res = await fetch(`/api/task?wallet=${addr}`);
+  const fetchTask = useCallback(async () => {
+    const res = await fetch("/api/task");
     const data = await res.json();
     if (data.task) {
       setTask({
@@ -176,7 +179,7 @@ export default function Home() {
       });
       setScreen("task");
       if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
-        posthog.capture("task_viewed", { wallet: addr, taskId: data.task.id });
+        posthog.capture("task_viewed", { taskId: data.task.id });
       }
     } else {
       setScreen("no_tasks");
@@ -194,13 +197,16 @@ export default function Home() {
         }
         const data = (await res.json()) as {
           authenticated?: boolean;
-          wallet?: string;
+          wallet?: string | null;
         };
-        if (data.authenticated && data.wallet) {
+        if (data.authenticated) {
           if (cancelled) return;
-          setWallet(data.wallet);
+          // ST-5d: a linked wallet is display-only (the withdrawal destination),
+          // not a gate. Any authenticated labeler — wallet-linked or email-only —
+          // proceeds to answer tasks, keyed on the session.
+          setWallet(data.wallet ?? null);
           setScreen("loading");
-          const userData = await fetchUserData(data.wallet);
+          const userData = await fetchUserData();
           await fetchBalance();
           if (cancelled) return;
           if (userData?.onboardingCompleted) {
@@ -208,9 +214,6 @@ export default function Home() {
           } else {
             setScreen("onboarding");
           }
-        } else if (data.authenticated) {
-          // Signed-in email account with no linked wallet yet.
-          if (!cancelled) setScreen("account_home");
         } else {
           if (!cancelled) setScreen("login");
         }
@@ -228,20 +231,20 @@ export default function Home() {
     try {
       const res = await fetch("/api/auth/me");
       const data = res.ok ? await res.json() : null;
-      if (data?.authenticated && data.wallet) {
-        // Legacy account auto-linked to a wallet: resume the full wallet flow.
-        setWallet(data.wallet);
-        const userData = await fetchUserData(data.wallet);
+      if (data?.authenticated) {
+        // ST-5d: identity is the session; a linked wallet (if any) is display-only.
+        // Both wallet-linked and email-only accounts go straight to answering.
+        setWallet(data.wallet ?? null);
+        const userData = await fetchUserData();
+        await fetchBalance();
         setScreen(userData?.onboardingCompleted ? "landing" : "onboarding");
         return;
       }
-      // Wallet-less account: identity is established, but answering still
-      // requires a wallet in this phase. Land on the account home.
-      setScreen("account_home");
+      setScreen("login");
     } catch {
-      setScreen("account_home");
+      setScreen("login");
     }
-  }, [fetchUserData]);
+  }, [fetchUserData, fetchBalance]);
 
   useEffect(() => {
     if (!unbannedAt || screen !== "cooldown") return;
@@ -265,10 +268,9 @@ export default function Home() {
   }, [unbannedAt, screen]);
 
   const handleStartEarning = useCallback(() => {
-    if (!wallet) return;
     setScreen("loading");
-    fetchTask(wallet);
-  }, [wallet, fetchTask]);
+    fetchTask();
+  }, [fetchTask]);
 
   const handleOnboardingComplete = useCallback(() => {
     setOnboardingCompleted(true);
@@ -279,7 +281,7 @@ export default function Home() {
   }, [wallet]);
 
   async function handleSubmit(choice: "A" | "B", reason: string) {
-    if (!wallet || !task) return;
+    if (!task) return;
     setSubmitting(true);
     try {
       let res: Response;
@@ -287,7 +289,8 @@ export default function Home() {
         res = await fetch("/api/submit", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ walletAddress: wallet, taskId: task.id, choice, reason }),
+          // ST-5d: identity is the session cookie; the wallet is no longer sent.
+          body: JSON.stringify({ taskId: task.id, choice, reason }),
         });
       } catch (err) {
         console.error("[submit] network error", err);
@@ -315,14 +318,14 @@ export default function Home() {
         if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
           posthog.capture("quality_check_failed", { wallet, taskId: task.id });
         }
-        setTimeout(() => fetchTask(wallet), 1500);
+        setTimeout(() => fetchTask(), 1500);
         return;
       }
 
       if (data.status === "pending") {
         // The approved answer is credited to the off-chain balance (P2a). Refresh
         // the balance + recent credits instead of polling a per-question payout.
-        await fetchUserData(wallet);
+        await fetchUserData();
         await fetchBalance();
         setScreen("success");
         if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
@@ -360,45 +363,10 @@ export default function Home() {
         initialMode={accountAuthMode}
       />
     );
-  } else if (screen === "account_home") {
-    body = (
-      <div className="relative flex min-h-screen flex-col items-center justify-center bg-surface px-6 text-center">
-        <div className="flex w-full max-w-sm flex-col items-center gap-6">
-          <div className="flex h-24 w-24 items-center justify-center rounded-full bg-secondary-container">
-            <span
-              className="material-symbols-outlined text-[48px] text-on-secondary-container"
-              aria-hidden="true"
-            >
-              account_circle
-            </span>
-          </div>
-          <div className="flex flex-col items-center gap-2">
-            <h2 className="text-2xl font-headline font-bold text-on-surface">
-              You&apos;re signed in
-            </h2>
-            <p className="font-body text-sm text-on-surface-variant">
-              Your account is ready. Earning tasks isn&apos;t available for
-              accounts without a linked wallet yet — we&apos;re finishing wallet
-              linking and will let you know when it&apos;s live.
-            </p>
-          </div>
-          {/*
-            ST-4c: no CTA here. Wallet login was removed, so a "Connect a wallet"
-            button that routed to <LoginScreen> was a dead-end loop — the login
-            screen is email-only now. Answering tasks still keys off a linked
-            wallet (the EVM-shaped constraint in /api/task, /api/me, /api/submit),
-            and re-keying identity to the session/userId is a separate migration
-            (tracked in #301). Restore a real action here once that lands.
-          */}
-        </div>
-      </div>
-    );
   } else if (screen === "onboarding") {
-    body = wallet ? (
-      <OnboardingScreen onComplete={handleOnboardingComplete} />
-    ) : (
-      <LoadingScreen />
-    );
+    // ST-5d: onboarding no longer requires a linked wallet — the session is the
+    // identity, so email-only labelers onboard and answer like anyone else.
+    body = <OnboardingScreen onComplete={handleOnboardingComplete} />;
   } else if (screen === "landing") {
     body = (
       <InAppLanding
@@ -521,7 +489,7 @@ export default function Home() {
               </div>
             )}
           </div>
-          <SubmitButton label="Next Task" onClick={() => wallet && fetchTask(wallet)} />
+          <SubmitButton label="Next Task" onClick={() => fetchTask()} />
         </div>
       </div>
     );
@@ -539,7 +507,7 @@ export default function Home() {
           </div>
           <h2 className="text-2xl font-headline font-bold text-on-surface">Quality check failed</h2>
           <p className="text-center font-body text-sm text-on-surface-variant">Try another task.</p>
-          <SubmitButton label="Next Task" onClick={() => wallet && fetchTask(wallet)} />
+          <SubmitButton label="Next Task" onClick={() => fetchTask()} />
         </div>
       </div>
     );
