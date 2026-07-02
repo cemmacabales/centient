@@ -5,6 +5,14 @@ import { useRouter } from "next/navigation";
 import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 import RetryPayoutButton from "./RetryPayoutButton";
 
+// A Stellar tx hash is 64 hex chars. Payouts settled before the Stellar migration
+// hold an EVM `0x…` hash that would 404 on stellar.expert's /tx/ path, so only
+// link Stellar-shaped hashes; legacy EVM hashes render as plain text (info kept,
+// no dead link).
+function isStellarTxHash(hash: string): boolean {
+  return /^[0-9a-f]{64}$/i.test(hash);
+}
+
 export interface UserProfileProps {
   walletAddress: string;
   createdAt: string;
@@ -230,16 +238,21 @@ export default function UserProfileView({ profile }: { profile: UserProfileProps
                     Error: {s.payoutError}
                   </div>
                 )}
-                {s.payoutTxHash && (
-                  <a
-                    href={`${process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://stellar.expert/explorer/testnet"}/tx/${s.payoutTxHash}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-1 inline-block font-mono text-[10px] text-primary hover:underline"
-                  >
-                    {s.payoutTxHash.slice(0, 10)}…{s.payoutTxHash.slice(-6)}
-                  </a>
-                )}
+                {s.payoutTxHash &&
+                  (isStellarTxHash(s.payoutTxHash) ? (
+                    <a
+                      href={`${process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://stellar.expert/explorer/testnet"}/tx/${s.payoutTxHash}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 inline-block font-mono text-[10px] text-primary hover:underline"
+                    >
+                      {s.payoutTxHash.slice(0, 10)}…{s.payoutTxHash.slice(-6)}
+                    </a>
+                  ) : (
+                    <span className="mt-1 inline-block font-mono text-[10px] text-on-surface-variant">
+                      {s.payoutTxHash.slice(0, 10)}…{s.payoutTxHash.slice(-6)}
+                    </span>
+                  ))}
               </li>
             ))}
           </ul>
