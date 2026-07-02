@@ -61,7 +61,7 @@ export function jaccardSimilarity(a: string, b: string): number {
 }
 
 export async function checkReasonRepetition(
-  walletAddress: string,
+  userId: string,
   newReason: string,
 ): Promise<{ isRepetitive: boolean }> {
   const window = parseInt(process.env.REASON_REPEAT_WINDOW ?? "10", 10);
@@ -69,8 +69,10 @@ export async function checkReasonRepetition(
   const jaccardThreshold = parseFloat(process.env.REASON_REPEAT_JACCARD_THRESHOLD ?? "0.8");
   const jaccardMinCount = parseInt(process.env.REASON_REPEAT_JACCARD_MIN_COUNT ?? "5", 10);
 
+  // ST-5d: repetition is scoped to the labeler identity (userId), not a wallet —
+  // an email-only answerer has no wallet but must still be quality-checked.
   const recent = await prisma.submission.findMany({
-    where: { walletAddress },
+    where: { userId },
     orderBy: { createdAt: "desc" },
     take: window - 1,
     select: { reason: true },

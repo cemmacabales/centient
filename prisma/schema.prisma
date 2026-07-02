@@ -162,7 +162,10 @@ model Task {
 
 model Submission {
   id              String    @id @default(uuid())
-  walletAddress   String
+  // Nullable as of ST-5d: identity is the FK `userId`, not the wallet. Email-only
+  // answerers have no linked wallet, so a submission may have no walletAddress.
+  // Retained (not dropped) for forensic/analytics use when a wallet IS linked.
+  walletAddress   String?
   userId          String
   taskId          String
   choice          String
@@ -181,9 +184,7 @@ model Submission {
   task Task @relation(fields: [taskId], references: [id])
   payoutJob PayoutJob?
 
-  @@unique([walletAddress, taskId])
   @@unique([userId, taskId])
-  @@index([walletAddress])
   @@index([userId])
   @@index([payoutStatus])
   @@index([payoutStatus, createdAt])

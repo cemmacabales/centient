@@ -263,6 +263,24 @@ async function processSubmissionPayout(
   const walletAddress = submission.walletAddress;
   const amount = submission.payoutAmountUnits;
 
+  // A submission with no linked wallet (email-only answerer, ST-5d) has no on-chain
+  // destination. New earnings accrue off-chain and are never enqueued here, so this
+  // legacy per-submission path only meets a wallet-less row defensively — fail it
+  // rather than attempt an unpayable transfer.
+  if (!walletAddress) {
+    await prisma.$transaction([
+      prisma.submission.update({
+        where: { id: submissionId },
+        data: { payoutStatus: "failed", payoutError: "no linked wallet", retryCount: MAX_RETRIES },
+      }),
+      prisma.payoutJob.update({
+        where: { id: jobId },
+        data: { status: "failed", completedAt: new Date(), lastError: "submission has no linked wallet", retryCount: MAX_RETRIES },
+      }),
+    ]);
+    return;
+  }
+
   const heartbeat = setInterval(() => {
     prisma.payoutJob
       .update({ where: { id: jobId }, data: { workerHeartbeatAt: new Date() } })
@@ -278,8 +296,10 @@ async function processSubmissionPayout(
         data: { payoutStatus: "sent", payoutTxHash: txHash },
       });
 
+      // Identity is the FK `userId` (ST-5d), not the wallet — the wallet is just the
+      // on-chain destination validated above.
       await tx.user.update({
-        where: { walletAddress: submission.walletAddress },
+        where: { id: submission.userId },
         data: {
           submissionCount: { increment: 1 },
           totalEarnedUnits: { increment: amount },
@@ -288,18 +308,9 @@ async function processSubmissionPayout(
         },
       });
 
-      const user = await tx.user.findUnique({
-        where: { walletAddress: submission.walletAddress },
-        select: { id: true },
-      });
-
-      if (!user) {
-        throw new Error(`No user found for walletAddress ${submission.walletAddress} — rolling back payout`);
-      }
-
       await tx.userBalanceLedger.create({
         data: {
-          userId: user.id,
+          userId: submission.userId,
           type: "CREDIT_REWARD",
           amountUnits: amount,
           submissionId: submissionId,
