@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { connect, signOwnership } from "@/lib/stellar/wallet";
+import { connect, signOwnership, signTransaction } from "@/lib/stellar/wallet";
 
 interface StellarWalletLinkProps {
   /**
@@ -32,6 +32,46 @@ export default function StellarWalletLink({
 }: StellarWalletLinkProps) {
   const [linking, setLinking] = useState(false);
 
+  /**
+   * Ensure `address` holds a USDC trustline, sponsoring it (CAP-33) if not. The
+   * labeler pays 0 XLM. Returns true when the address is ready to receive USDC,
+   * false when the caller should abort (a toast has already been shown). One
+   * retry on the tx_bad_seq race (a concurrent payout took the platform's
+   * sequence — rebuild + re-sign).
+   */
+  const ensureTrustline = async (address: string): Promise<boolean> => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await fetch(
+        `/api/me/wallet/sponsor?address=${encodeURIComponent(address)}`,
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(data.error ?? "Could not set up USDC payouts", "error");
+        return false;
+      }
+      if (!data.needed) return true; // already trusts USDC
+
+      const signedXdr = await signTransaction(data.xdr, address);
+      const submit = await fetch("/api/me/wallet/sponsor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, signedXdr }),
+      });
+      if (submit.ok) return true;
+
+      const err = await submit.json();
+      if (submit.status === 409 && err.error === "retry") continue; // rebuild + re-sign
+      if (submit.status === 503) {
+        showToast("Payouts are temporarily unavailable. Please try again shortly.", "error");
+        return false;
+      }
+      showToast(err.error ?? "Could not set up USDC payouts", "error");
+      return false;
+    }
+    showToast("Could not set up USDC payouts. Please try again.", "error");
+    return false;
+  };
+
   const handleLink = async () => {
     if (linking) return;
     setLinking(true);
@@ -39,7 +79,11 @@ export default function StellarWalletLink({
       // 1. Connect a wallet and read its `G…` address (never normalized).
       const { address } = await connect();
 
-      // 2. Fetch a one-time, server-issued challenge bound to this address.
+      // 2. Ensure the address can receive USDC — sponsor its trustline if needed
+      //    (labeler pays 0 XLM). Replaces ST-4b's hard no-trustline reject.
+      if (!(await ensureTrustline(address))) return;
+
+      // 3. Fetch a one-time, server-issued challenge bound to this address.
       const challengeRes = await fetch(
         `/api/me/wallet?address=${encodeURIComponent(address)}`,
       );
@@ -49,10 +93,10 @@ export default function StellarWalletLink({
         return;
       }
 
-      // 3. Prove ownership by signing the challenge (Freighter SEP-53).
+      // 4. Prove ownership by signing the challenge (Freighter SEP-53).
       const { signature } = await signOwnership(challenge.message, address);
 
-      // 4. Submit the proof; server verifies + prechecks the USDC trustline.
+      // 5. Submit the proof; server verifies + prechecks the USDC trustline.
       const linkRes = await fetch("/api/me/wallet", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
