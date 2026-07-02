@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { Account, Keypair, Transaction, TransactionBuilder } from "@stellar/stellar-sdk";
+import { Account, Asset, Keypair, Operation, Transaction, TransactionBuilder } from "@stellar/stellar-sdk";
 
 // Real throwaway keypairs — only the signing/address machinery is exercised; all
 // network I/O is mocked at the `server()` boundary below. Never funded.
@@ -18,7 +18,7 @@ vi.mock("../config", async (importOriginal) => {
 });
 
 import { server } from "../config";
-import { payUsdc, getTxStatus, StellarPaymentError, buildSponsoredTrustlineTx } from "../client";
+import { payUsdc, getTxStatus, StellarPaymentError, buildSponsoredTrustlineTx, submitSponsoredTrustline } from "../client";
 
 const mockedServer = vi.mocked(server);
 
@@ -229,5 +229,89 @@ describe("buildSponsoredTrustlineTx", () => {
     expect((tx.operations[1] as { destination: string; startingBalance: string }).destination).toBe(recipient);
     // The Stellar SDK normalizes amounts to 7 decimal places when decoding from XDR.
     expect((tx.operations[1] as { startingBalance: string }).startingBalance).toBe("0.0000000");
+  });
+});
+
+const PASSPHRASE = "Test SDF Network ; September 2015";
+
+// Build a valid recipient-signed-looking sandwich XDR for submit tests. Platform
+// + recipient both sign so the envelope parses; Horizon is mocked so real
+// signature verification never runs.
+function sandwichXdr(recipient: Keypair): string {
+  const account = new Account(platformKp.publicKey(), "1000");
+  const tx = new TransactionBuilder(account, {
+    fee: "300",
+    networkPassphrase: PASSPHRASE,
+  })
+    .addOperation(Operation.beginSponsoringFutureReserves({ sponsoredId: recipient.publicKey() }))
+    .addOperation(Operation.changeTrust({ asset: makeUsdc(), source: recipient.publicKey() }))
+    .addOperation(Operation.endSponsoringFutureReserves({ source: recipient.publicKey() }))
+    .setTimeout(180)
+    .build();
+  tx.sign(platformKp, recipient);
+  return tx.toXDR();
+}
+function makeUsdc() {
+  return new Asset("USDC", process.env.STELLAR_USDC_ISSUER!);
+}
+// A tampered envelope: an extra payment op the platform never sponsored.
+function tamperedXdr(recipient: Keypair): string {
+  const account = new Account(platformKp.publicKey(), "1000");
+  const tx = new TransactionBuilder(account, {
+    fee: "200",
+    networkPassphrase: PASSPHRASE,
+  })
+    .addOperation(Operation.beginSponsoringFutureReserves({ sponsoredId: recipient.publicKey() }))
+    .addOperation(Operation.payment({ destination: recipient.publicKey(), asset: makeUsdc(), amount: "100" }))
+    .setTimeout(180)
+    .build();
+  tx.sign(platformKp);
+  return tx.toXDR();
+}
+
+const lowReserveError = () =>
+  horizonError({ transaction: "tx_failed", operations: ["op_low_reserve"] });
+
+describe("submitSponsoredTrustline", () => {
+  it("submits a well-formed sandwich and returns the hash", async () => {
+    const recipient = Keypair.random();
+    mockedServer.mockReturnValue(
+      makeServer({ submitTransaction: vi.fn(async () => ({ hash: "SPONSOR_HASH" })) }) as never,
+    );
+    const { hash } = await submitSponsoredTrustline(sandwichXdr(recipient));
+    expect(hash).toBe("SPONSOR_HASH");
+  });
+
+  it("rejects a tampered envelope before submitting", async () => {
+    const recipient = Keypair.random();
+    const submit = vi.fn();
+    mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
+    await expect(submitSponsoredTrustline(tamperedXdr(recipient))).rejects.toMatchObject({
+      code: "invalid_sponsor_tx",
+      retryable: false,
+    });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("maps op_low_reserve to a non-retryable error", async () => {
+    const recipient = Keypair.random();
+    mockedServer.mockReturnValue(
+      makeServer({ submitTransaction: vi.fn(async () => { throw lowReserveError(); }) }) as never,
+    );
+    await expect(submitSponsoredTrustline(sandwichXdr(recipient))).rejects.toMatchObject({
+      code: "op_low_reserve",
+      retryable: false,
+    });
+  });
+
+  it("maps tx_bad_seq to a retryable error", async () => {
+    const recipient = Keypair.random();
+    mockedServer.mockReturnValue(
+      makeServer({ submitTransaction: vi.fn(async () => { throw badSeqError(); }) }) as never,
+    );
+    await expect(submitSponsoredTrustline(sandwichXdr(recipient))).rejects.toMatchObject({
+      code: "tx_bad_seq",
+      retryable: true,
+    });
   });
 });

@@ -18,6 +18,7 @@ import {
   BASE_FEE,
   Keypair,
   Operation,
+  Transaction,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
 import { Mutex } from "async-mutex";
@@ -255,4 +256,83 @@ export async function buildSponsoredTrustlineTx(
   tx.sign(kp);
 
   return { xdr: tx.toXDR(), kind: exists ? "trustline" : "account+trustline" };
+}
+
+/**
+ * Assert `xdr` is exactly a platform-sponsored USDC-trustline sandwich for a
+ * single recipient — begin / [createAccount] / changeTrust(USDC) / end, no other
+ * op types (esp. no payment). Defense in depth: the platform already signed a
+ * fixed envelope (tampering invalidates that signature), but we re-check the
+ * sponsored target + asset before submitting. Throws `invalid_sponsor_tx`.
+ */
+function assertSponsoredTrustlineShape(tx: Transaction): void {
+  const types = tx.operations.map((o) => o.type);
+  const withAccount = ["beginSponsoringFutureReserves", "createAccount", "changeTrust", "endSponsoringFutureReserves"];
+  const withoutAccount = ["beginSponsoringFutureReserves", "changeTrust", "endSponsoringFutureReserves"];
+  const ok =
+    JSON.stringify(types) === JSON.stringify(withAccount) ||
+    JSON.stringify(types) === JSON.stringify(withoutAccount);
+  if (!ok) {
+    throw new StellarPaymentError(
+      `submitSponsoredTrustline: unexpected op shape [${types.join(", ")}]`,
+      "invalid_sponsor_tx",
+      false,
+    );
+  }
+  const begin = tx.operations[0] as { sponsoredId?: string };
+  const changeTrust = tx.operations.find((o) => o.type === "changeTrust") as
+    | { source?: string; line?: { code?: string; issuer?: string } }
+    | undefined;
+  const asset = usdcAsset();
+  const sponsored = begin.sponsoredId;
+  if (
+    !sponsored ||
+    !changeTrust ||
+    changeTrust.source !== sponsored ||
+    changeTrust.line?.code !== asset.getCode() ||
+    changeTrust.line?.issuer !== asset.getIssuer()
+  ) {
+    throw new StellarPaymentError(
+      "submitSponsoredTrustline: sponsored target / asset mismatch",
+      "invalid_sponsor_tx",
+      false,
+    );
+  }
+}
+
+/**
+ * Submit a recipient-co-signed sponsored-trustline XDR (from
+ * {@link buildSponsoredTrustlineTx}). Validates the op shape, then submits.
+ * Maps: `op_low_reserve` → non-retryable (platform lacks XLM for the sponsored
+ * reserves); `tx_bad_seq` → retryable (caller re-runs the flow); shape mismatch
+ * → non-retryable `invalid_sponsor_tx`. A `changeTrust` on an already-trusting
+ * line is idempotent, so a duplicate submission still succeeds.
+ */
+export async function submitSponsoredTrustline(
+  signedXdr: string,
+): Promise<{ hash: string }> {
+  const tx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase()) as Transaction;
+  assertSponsoredTrustlineShape(tx);
+  try {
+    const res = await server().submitTransaction(tx);
+    return { hash: res.hash };
+  } catch (err) {
+    if (err instanceof StellarPaymentError) throw err;
+    const codes = resultCodes(err);
+    if (codes.operations?.includes("op_low_reserve")) {
+      throw new StellarPaymentError(
+        "submitSponsoredTrustline: platform account cannot fund sponsored reserves (op_low_reserve)",
+        "op_low_reserve",
+        false,
+      );
+    }
+    if (codes.transaction === "tx_bad_seq") {
+      throw new StellarPaymentError(
+        "submitSponsoredTrustline: stale sequence (tx_bad_seq) — rebuild and retry",
+        "tx_bad_seq",
+        true,
+      );
+    }
+    throw err;
+  }
 }
