@@ -69,9 +69,26 @@ describe("GET /api/me/wallet/sponsor", () => {
     const body = await (await GET(getReq(ADDR))).json();
     expect(body).toEqual({ needed: true, xdr: "XDR", kind: "trustline" });
   });
+  it("429 when rate-limited", async () => {
+    mockRateLimit.mockResolvedValue(true);
+    const res = await GET(getReq(ADDR));
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toBe("rate_limited");
+  });
+  it("502 when build throws", async () => {
+    mockHasTrustline.mockResolvedValue(false);
+    mockBuild.mockRejectedValue(new Error("horizon down"));
+    const res = await GET(getReq(ADDR));
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toBe("build_failed");
+  });
 });
 
 describe("POST /api/me/wallet/sponsor", () => {
+  it("401 without a session", async () => {
+    mockGetSession.mockResolvedValue(null);
+    expect((await POST(postReq({ address: ADDR, signedXdr: "SIGNED" }))).status).toBe(401);
+  });
   it("400 on an invalid address", async () => {
     expect((await POST(postReq({ address: "x", signedXdr: "X" }))).status).toBe(400);
   });
@@ -92,5 +109,17 @@ describe("POST /api/me/wallet/sponsor", () => {
     const res = await POST(postReq({ address: ADDR, signedXdr: "SIGNED" }));
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe("retry");
+  });
+  it("400 on invalid_sponsor_tx", async () => {
+    mockSubmit.mockRejectedValue(new StellarPaymentError("x", "invalid_sponsor_tx", false));
+    const res = await POST(postReq({ address: ADDR, signedXdr: "SIGNED" }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("invalid_sponsor_tx");
+  });
+  it("502 on an unmapped StellarPaymentError code", async () => {
+    mockSubmit.mockRejectedValue(new StellarPaymentError("x", "unknown_code", false));
+    const res = await POST(postReq({ address: ADDR, signedXdr: "SIGNED" }));
+    expect(res.status).toBe(502);
+    expect((await res.json()).error).toBe("submit_failed");
   });
 });
