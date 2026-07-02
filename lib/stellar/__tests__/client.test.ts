@@ -268,6 +268,23 @@ function tamperedXdr(recipient: Keypair): string {
   tx.sign(platformKp);
   return tx.toXDR();
 }
+// A sandwich where endSponsoringFutureReserves.source is a DIFFERENT key than the
+// sponsored recipient. Fix 4 ensures this is rejected before submit.
+function wrongEndSponsoringXdr(recipient: Keypair): string {
+  const wrongKey = Keypair.random().publicKey();
+  const account = new Account(platformKp.publicKey(), "1000");
+  const tx = new TransactionBuilder(account, {
+    fee: "300",
+    networkPassphrase: networkPassphrase(),
+  })
+    .addOperation(Operation.beginSponsoringFutureReserves({ sponsoredId: recipient.publicKey() }))
+    .addOperation(Operation.changeTrust({ asset: makeUsdc(), source: recipient.publicKey() }))
+    .addOperation(Operation.endSponsoringFutureReserves({ source: wrongKey }))
+    .setTimeout(180)
+    .build();
+  tx.sign(platformKp, recipient);
+  return tx.toXDR();
+}
 // A crafted 4-op sandwich where createAccount targets a DIFFERENT account than
 // the sponsoredId (and changeTrust.source). This must be rejected by
 // assertSponsoredTrustlineShape before submit.
@@ -297,7 +314,7 @@ describe("submitSponsoredTrustline", () => {
     mockedServer.mockReturnValue(
       makeServer({ submitTransaction: vi.fn(async () => ({ hash: "SPONSOR_HASH" })) }) as never,
     );
-    const { hash } = await submitSponsoredTrustline(sandwichXdr(recipient));
+    const { hash } = await submitSponsoredTrustline(sandwichXdr(recipient), recipient.publicKey());
     expect(hash).toBe("SPONSOR_HASH");
   });
 
@@ -305,7 +322,7 @@ describe("submitSponsoredTrustline", () => {
     const recipient = Keypair.random();
     const submit = vi.fn();
     mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
-    await expect(submitSponsoredTrustline(tamperedXdr(recipient))).rejects.toMatchObject({
+    await expect(submitSponsoredTrustline(tamperedXdr(recipient), recipient.publicKey())).rejects.toMatchObject({
       code: "invalid_sponsor_tx",
       retryable: false,
     });
@@ -317,7 +334,7 @@ describe("submitSponsoredTrustline", () => {
     mockedServer.mockReturnValue(
       makeServer({ submitTransaction: vi.fn(async () => { throw lowReserveError(); }) }) as never,
     );
-    await expect(submitSponsoredTrustline(sandwichXdr(recipient))).rejects.toMatchObject({
+    await expect(submitSponsoredTrustline(sandwichXdr(recipient), recipient.publicKey())).rejects.toMatchObject({
       code: "op_low_reserve",
       retryable: false,
     });
@@ -328,7 +345,7 @@ describe("submitSponsoredTrustline", () => {
     mockedServer.mockReturnValue(
       makeServer({ submitTransaction: vi.fn(async () => { throw badSeqError(); }) }) as never,
     );
-    await expect(submitSponsoredTrustline(sandwichXdr(recipient))).rejects.toMatchObject({
+    await expect(submitSponsoredTrustline(sandwichXdr(recipient), recipient.publicKey())).rejects.toMatchObject({
       code: "tx_bad_seq",
       retryable: true,
     });
@@ -338,7 +355,44 @@ describe("submitSponsoredTrustline", () => {
     const recipient = Keypair.random();
     const submit = vi.fn();
     mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
-    await expect(submitSponsoredTrustline(mismatchedCreateAccountXdr(recipient))).rejects.toMatchObject({
+    await expect(submitSponsoredTrustline(mismatchedCreateAccountXdr(recipient), recipient.publicKey())).rejects.toMatchObject({
+      code: "invalid_sponsor_tx",
+      retryable: false,
+    });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  // Fix 2: expectedRecipient that differs from envelope's sponsoredId → rejected.
+  it("rejects when expectedRecipient differs from envelope sponsoredId", async () => {
+    const recipient = Keypair.random();
+    const wrongRecipient = Keypair.random().publicKey();
+    const submit = vi.fn();
+    mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
+    await expect(submitSponsoredTrustline(sandwichXdr(recipient), wrongRecipient)).rejects.toMatchObject({
+      code: "invalid_sponsor_tx",
+      retryable: false,
+    });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  // Fix 3: garbage XDR → invalid_sponsor_tx, submit never called.
+  it("rejects a garbage XDR string with invalid_sponsor_tx before submitting", async () => {
+    const recipient = Keypair.random();
+    const submit = vi.fn();
+    mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
+    await expect(submitSponsoredTrustline("not-valid-xdr-at-all", recipient.publicKey())).rejects.toMatchObject({
+      code: "invalid_sponsor_tx",
+      retryable: false,
+    });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  // Fix 4: endSponsoringFutureReserves.source is a different key → rejected.
+  it("rejects a sandwich where endSponsoringFutureReserves.source differs from sponsored", async () => {
+    const recipient = Keypair.random();
+    const submit = vi.fn();
+    mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
+    await expect(submitSponsoredTrustline(wrongEndSponsoringXdr(recipient), recipient.publicKey())).rejects.toMatchObject({
       code: "invalid_sponsor_tx",
       retryable: false,
     });

@@ -50,6 +50,10 @@ export default function StellarWalletLink({
         return false;
       }
       if (!data.needed) return true; // already trusts USDC
+      if (data.needed && !data.xdr) {
+        showToast("Could not set up USDC payouts", "error");
+        return false;
+      }
 
       const signedXdr = await signTransaction(data.xdr, address);
       const submit = await fetch("/api/me/wallet/sponsor", {

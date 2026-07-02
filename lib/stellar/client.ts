@@ -264,8 +264,11 @@ export async function buildSponsoredTrustlineTx(
  * op types (esp. no payment). Defense in depth: the platform already signed a
  * fixed envelope (tampering invalidates that signature), but we re-check the
  * sponsored target + asset before submitting. Throws `invalid_sponsor_tx`.
+ *
+ * Fix 2: also asserts `beginSponsoringFutureReserves.sponsoredId === expectedRecipient`.
+ * Fix 4: also asserts `endSponsoringFutureReserves.source === sponsored`.
  */
-function assertSponsoredTrustlineShape(tx: Transaction): void {
+function assertSponsoredTrustlineShape(tx: Transaction, expectedRecipient: string): void {
   const types = tx.operations.map((o) => o.type);
   const withAccount = ["beginSponsoringFutureReserves", "createAccount", "changeTrust", "endSponsoringFutureReserves"];
   const withoutAccount = ["beginSponsoringFutureReserves", "changeTrust", "endSponsoringFutureReserves"];
@@ -298,6 +301,17 @@ function assertSponsoredTrustlineShape(tx: Transaction): void {
       false,
     );
   }
+  // Fix 2: the envelope's sponsoredId must match the address the route validated.
+  // Guards against an injected envelope targeting a different account while reusing
+  // a valid shape (the platform signature check is defense-in-depth; this is an
+  // additional semantic guard).
+  if (sponsored !== expectedRecipient) {
+    throw new StellarPaymentError(
+      "submitSponsoredTrustline: sponsored target does not match expected recipient",
+      "invalid_sponsor_tx",
+      false,
+    );
+  }
   const createAccount = tx.operations.find((o) => o.type === "createAccount") as
     | { destination?: string }
     | undefined;
@@ -308,21 +322,59 @@ function assertSponsoredTrustlineShape(tx: Transaction): void {
       false,
     );
   }
+  // Fix 4: the endSponsoringFutureReserves op must be sourced by the recipient
+  // (sponsored), not some other party.
+  const endSponsoring = tx.operations.find((o) => o.type === "endSponsoringFutureReserves") as
+    | { source?: string }
+    | undefined;
+  if (!endSponsoring || endSponsoring.source !== sponsored) {
+    throw new StellarPaymentError(
+      "submitSponsoredTrustline: endSponsoringFutureReserves.source does not match sponsored",
+      "invalid_sponsor_tx",
+      false,
+    );
+  }
 }
 
 /**
  * Submit a recipient-co-signed sponsored-trustline XDR (from
- * {@link buildSponsoredTrustlineTx}). Validates the op shape, then submits.
+ * {@link buildSponsoredTrustlineTx}). Validates the op shape and asserts the
+ * envelope targets `expectedRecipient`, then submits.
  * Maps: `op_low_reserve` → non-retryable (platform lacks XLM for the sponsored
  * reserves); `tx_bad_seq` → retryable (caller re-runs the flow); shape mismatch
- * → non-retryable `invalid_sponsor_tx`. A `changeTrust` on an already-trusting
- * line is idempotent, so a duplicate submission still succeeds.
+ * or garbage input → non-retryable `invalid_sponsor_tx` (→ 400 at the route).
+ * A `changeTrust` on an already-trusting line is idempotent.
+ *
+ * NOTE: the sponsor path is intentionally NOT serialized by `seqMutex` (simple
+ * strategy; payUsdc self-heals via its tx_bad_seq retry).
  */
 export async function submitSponsoredTrustline(
   signedXdr: string,
+  expectedRecipient: string,
 ): Promise<{ hash: string }> {
-  const tx = TransactionBuilder.fromXDR(signedXdr, networkPassphrase()) as Transaction;
-  assertSponsoredTrustlineShape(tx);
+  // Fix 3: wrap XDR parse so garbage input / fee-bump envelopes become
+  // `invalid_sponsor_tx` (→ 400) instead of a raw JS error (→ 502).
+  let tx: Transaction;
+  try {
+    const parsed = TransactionBuilder.fromXDR(signedXdr, networkPassphrase());
+    if (!(parsed instanceof Transaction)) {
+      throw new StellarPaymentError(
+        "submitSponsoredTrustline: fee-bump or non-standard envelope not accepted",
+        "invalid_sponsor_tx",
+        false,
+      );
+    }
+    tx = parsed;
+  } catch (err) {
+    if (err instanceof StellarPaymentError) throw err;
+    throw new StellarPaymentError(
+      "submitSponsoredTrustline: could not parse XDR (malformed or garbage input)",
+      "invalid_sponsor_tx",
+      false,
+    );
+  }
+  // Fix 2 + Fix 4: validate shape, recipient match, and end-sponsoring source.
+  assertSponsoredTrustlineShape(tx, expectedRecipient);
   try {
     const res = await server().submitTransaction(tx);
     return { hash: res.hash };

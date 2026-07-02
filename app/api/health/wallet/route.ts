@@ -5,6 +5,8 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const health = await getWalletHealth();
+  // Reports the pooled platform account's USDC float + XLM fee/reserve floor,
+  // now including sponsored-reserve liability (num_sponsoring × 0.5 XLM).
   return NextResponse.json({
     usdcBalance: health.usdcBalance,
     rewardTokenSymbol: health.rewardTokenSymbol,

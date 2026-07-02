@@ -69,8 +69,15 @@ describe("GET /api/me/wallet/sponsor", () => {
     const body = await (await GET(getReq(ADDR))).json();
     expect(body).toEqual({ needed: true, xdr: "XDR", kind: "trustline" });
   });
-  it("429 when rate-limited", async () => {
+  it("429 when rate-limited by address", async () => {
     mockRateLimit.mockResolvedValue(true);
+    const res = await GET(getReq(ADDR));
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toBe("rate_limited");
+  });
+  // Fix 1: per-user throttle keyed by session user id, not just address.
+  it("429 when per-user rate limit fires (sponsor-user: key)", async () => {
+    mockRateLimit.mockImplementation(async (key: string) => key.startsWith("sponsor-user:"));
     const res = await GET(getReq(ADDR));
     expect(res.status).toBe(429);
     expect((await res.json()).error).toBe("rate_limited");
@@ -121,5 +128,12 @@ describe("POST /api/me/wallet/sponsor", () => {
     const res = await POST(postReq({ address: ADDR, signedXdr: "SIGNED" }));
     expect(res.status).toBe(502);
     expect((await res.json()).error).toBe("submit_failed");
+  });
+  // Fix 1: per-user throttle in POST (POST had no rate limit check before).
+  it("429 when per-user rate limit fires on POST (sponsor-user: key)", async () => {
+    mockRateLimit.mockImplementation(async (key: string) => key.startsWith("sponsor-user:"));
+    const res = await POST(postReq({ address: ADDR, signedXdr: "SIGNED" }));
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toBe("rate_limited");
   });
 });

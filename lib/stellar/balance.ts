@@ -13,7 +13,8 @@ import { server } from "./config";
 
 const MAX_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
 
-/** XLM reserve locked on the sponsor per sponsored trustline (Stellar base reserve × 1). */
+/** XLM reserve locked per sponsored reserve unit (Horizon num_sponsoring counts an
+ * account-creation sponsorship as multiple units). */
 export const TRUSTLINE_RESERVE_XLM = 0.5;
 
 /** Balance line as returned by Horizon `account.balances[]` (subset we read). */

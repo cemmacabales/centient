@@ -33,6 +33,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "invalid_address" }, { status: 400 });
   }
 
+  // Per-user throttle: the per-address limiter below gives no per-user bound — a
+  // labeler could loop fresh keypairs to bypass it. This session-keyed check is a
+  // stopgap; a proper cap on outstanding sponsorships per labeler is tracked as a
+  // follow-up before ST-7 mainnet (issue link will be added).
+  if (await checkWalletRateLimit(`sponsor-user:${userId}`)) {
+    return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+  }
   // Same limiter the link GET uses — bound sponsored-tx build churn per address.
   if (await checkWalletRateLimit(address)) {
     return NextResponse.json({ error: "rate_limited" }, { status: 429 });
@@ -70,8 +77,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
 
+  // Per-user throttle: the per-address limiter does not exist on POST (no address
+  // check on the build step here), so a labeler could loop fresh keypairs to
+  // submit unlimited sponsorship txs. This session-keyed check is a stopgap; a
+  // proper cap on outstanding sponsorships per labeler is tracked as a follow-up
+  // before ST-7 mainnet (issue link will be added).
+  if (await checkWalletRateLimit(`sponsor-user:${userId}`)) {
+    return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+  }
+
   try {
-    await submitSponsoredTrustline(signedXdr);
+    await submitSponsoredTrustline(signedXdr, address);
     return NextResponse.json({ established: true });
   } catch (err) {
     if (err instanceof StellarPaymentError) {
