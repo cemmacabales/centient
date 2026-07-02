@@ -1,15 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { formatUnits } from "viem";
 import { type ToastKind } from "@/components/Toast";
 import { truncateAddress } from "@/lib/wallet";
-import { REWARD_TOKEN_DECIMALS } from "@/lib/constants";
+import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 import StellarWalletLink from "@/components/StellarWalletLink";
 
 function formatTokenBalance(unitsStr: string): string {
   try {
-    return formatUnits(BigInt(unitsStr), REWARD_TOKEN_DECIMALS);
+    return unitsToUsdcDisplay(BigInt(unitsStr));
   } catch {
     return "0";
   }
@@ -366,7 +365,7 @@ export default function AccountSheet({
         </div>
 
         <a
-          href={`${explorerUrl}/address/${walletAddress}`}
+          href={`${explorerUrl}/account/${walletAddress}`}
           target="_blank"
           rel="noopener noreferrer"
           className="mb-6 block w-full rounded-xl bg-surface-container-high py-3 text-center font-label text-sm font-semibold text-primary transition-colors hover:bg-surface-container-highest focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"

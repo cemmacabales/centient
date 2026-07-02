@@ -129,3 +129,14 @@ export function unitsToUsdcString(units: bigint): string {
   const frac = (units % UNITS_PER_USDC).toString().padStart(USDC_DECIMALS, "0");
   return `${whole}.${frac}`;
 }
+
+/**
+ * Human-facing USDC amount: like {@link unitsToUsdcString} but trims trailing
+ * fractional zeros (and a bare trailing dot) for display — `"0.1230000" → "0.123"`,
+ * `"5.0000000" → "5"`. Use for UI/labels; use {@link unitsToUsdcString} for the
+ * SDK payment `amount`, which needs the fixed 7-decimal form. This is the
+ * viem-free replacement for `formatUnits(units, REWARD_TOKEN_DECIMALS)` display.
+ */
+export function unitsToUsdcDisplay(units: bigint): string {
+  return unitsToUsdcString(units).replace(/\.?0+$/, "");
+}

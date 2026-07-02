@@ -2,9 +2,6 @@
 
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
-const IS_TESTNET = process.env.NEXT_PUBLIC_CHAIN_ID === "11142220";
-const NETWORK_SUFFIX = IS_TESTNET ? " Sepolia (testnet)" : "";
-
 const ITEMS: { q: string; a: string }[] = [
   {
     q: "What is Centient?",
@@ -12,7 +9,7 @@ const ITEMS: { q: string; a: string }[] = [
   },
   {
     q: "How much do I earn?",
-    a: `${REWARD_AMOUNT} ${REWARD_TOKEN_SYMBOL} per valid submission, added to your account balance — withdraw to your wallet anytime${NETWORK_SUFFIX}.`,
+    a: `${REWARD_AMOUNT} ${REWARD_TOKEN_SYMBOL} per valid submission, added to your account balance — withdraw to your wallet anytime.`,
   },
   {
     q: "What makes a good submission?",
@@ -20,7 +17,7 @@ const ITEMS: { q: string; a: string }[] = [
   },
   {
     q: "How are payments sent?",
-    a: `Every valid submission triggers a ${REWARD_TOKEN_SYMBOL} transfer on Celo. View every payout from your account sheet.`,
+    a: `Every valid submission triggers a ${REWARD_TOKEN_SYMBOL} transfer on Stellar. View every payout from your account sheet.`,
   },
   {
     q: "What is a quality check?",

@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@/app/generated/prisma/client";
-import { formatUnits } from "viem";
 import {
   GOLD_TASK_RATIO,
-  REWARD_TOKEN_DECIMALS,
   REWARD_TOKEN_SYMBOL,
   REWARDED_STATUSES,
 } from "@/lib/constants";
 import { resolveRewardUnits } from "@/lib/payout";
+import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 import {
   isInCooldown,
   isInRetest,
@@ -133,7 +132,7 @@ export async function GET(req: NextRequest) {
   const target = computeResponseTarget(task.responseTarget, task.campaign?.defaultResponseTarget ?? null);
   const submissionsRemaining = target !== null ? Math.max(0, target - task._count.submissions) : null;
   const resolvedUnits = resolveRewardUnits(task.rewardUnits, task.campaign?.rewardUnits ?? null);
-  const rewardDisplay = formatUnits(resolvedUnits, REWARD_TOKEN_DECIMALS);
+  const rewardDisplay = unitsToUsdcDisplay(resolvedUnits);
 
   return NextResponse.json({
     task: {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { formatUnits } from "viem";
-import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 import { getLabelerUser } from "@/lib/labeler-auth";
 
 export async function GET(
@@ -64,7 +64,7 @@ export async function GET(
     id: submission.id,
     payoutStatus: submission.payoutStatus,
     payoutTxHash: submission.payoutTxHash,
-    payoutAmount: formatUnits(submission.payoutAmountUnits, REWARD_TOKEN_DECIMALS),
+    payoutAmount: unitsToUsdcDisplay(submission.payoutAmountUnits),
     payoutSymbol: REWARD_TOKEN_SYMBOL,
     walletAddress: submission.walletAddress,
     taskId: submission.taskId,

@@ -2,8 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { formatUnits } from "viem";
-import { REWARD_TOKEN_DECIMALS } from "@/lib/constants";
+import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 import RetryPayoutButton from "./RetryPayoutButton";
 
 export interface UserProfileProps {
@@ -214,7 +213,7 @@ export default function UserProfileView({ profile }: { profile: UserProfileProps
                   <div className="flex items-center gap-2">
                     <div className="font-label text-xs text-on-surface-variant">
                       chose <span className="font-bold text-on-surface">{s.choice}</span> ·{" "}
-                      {formatUnits(BigInt(s.payoutAmountUnits), REWARD_TOKEN_DECIMALS)} {profile.rewardSymbol}
+                      {unitsToUsdcDisplay(BigInt(s.payoutAmountUnits))} {profile.rewardSymbol}
                     </div>
                     <RetryPayoutButton
                       submissionId={s.id}
@@ -233,7 +232,7 @@ export default function UserProfileView({ profile }: { profile: UserProfileProps
                 )}
                 {s.payoutTxHash && (
                   <a
-                    href={`${process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://celoscan.io"}/tx/${s.payoutTxHash}`}
+                    href={`${process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://stellar.expert/explorer/testnet"}/tx/${s.payoutTxHash}`}
                     target="_blank"
                     rel="noreferrer"
                     className="mt-1 inline-block font-mono text-[10px] text-primary hover:underline"

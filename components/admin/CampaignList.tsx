@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { parseUnits } from "viem";
-import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { usdcToUnits } from "@/lib/stellar/config";
 
 interface Campaign {
   id: string;
@@ -298,7 +298,7 @@ function NewCampaignModal({ onSubmit, onClose, loading }: NewCampaignModalProps)
     if (!canSubmit) return;
     let units: string;
     try {
-      units = parseUnits(rewardDisplay.trim(), REWARD_TOKEN_DECIMALS).toString();
+      units = usdcToUnits(rewardDisplay.trim()).toString();
     } catch {
       return;
     }
