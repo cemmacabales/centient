@@ -11,8 +11,14 @@ interface LoginScreenProps {
 
 /**
  * Account-first entry. Email account creation/sign-in is the only login path —
- * EVM browser-wallet signature-login was ripped out in ST-4c. A Stellar wallet is
- * linked only later, at withdrawal, to prove the payout address.
+ * EVM browser-wallet signature-login was ripped out in ST-4c.
+ *
+ * Note: login no longer touches a wallet, but the rest of the client still does.
+ * Task answering (and balance/submit) currently key off a linked wallet address
+ * (`/api/task?wallet=…`, `/api/me`, `/api/submit`), and the withdrawal flow proves
+ * the payout address on top of that. Re-keying that identity to the session/userId
+ * so a wallet-less account can answer tasks is a separate migration (tracked in
+ * #301); until it lands, an email-only account with no wallet can't earn yet.
  */
 export default function LoginScreen({ onEmailAuth, error }: LoginScreenProps) {
   return (

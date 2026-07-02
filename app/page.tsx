@@ -376,10 +376,19 @@ export default function Home() {
               You&apos;re signed in
             </h2>
             <p className="font-body text-sm text-on-surface-variant">
-              Connect a wallet to start earning and to withdraw your balance.
+              Your account is ready. Earning tasks isn&apos;t available for
+              accounts without a linked wallet yet — we&apos;re finishing wallet
+              linking and will let you know when it&apos;s live.
             </p>
           </div>
-          <SubmitButton label="Connect a wallet" onClick={() => setScreen("login")} />
+          {/*
+            ST-4c: no CTA here. Wallet login was removed, so a "Connect a wallet"
+            button that routed to <LoginScreen> was a dead-end loop — the login
+            screen is email-only now. Answering tasks still keys off a linked
+            wallet (the EVM-shaped constraint in /api/task, /api/me, /api/submit),
+            and re-keying identity to the session/userId is a separate migration
+            (tracked in #301). Restore a real action here once that lands.
+          */}
         </div>
       </div>
     );
