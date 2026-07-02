@@ -1,45 +1,26 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
-import { isMiniPay } from "@/lib/minipay";
-import { isMetaMask } from "@/lib/metamask";
-import { isSimulationMode } from "@/lib/simulation";
 import Faq from "./Faq";
-import WalletLoginButton, { type WalletLoginType } from "./WalletLoginButton";
 
 interface LoginScreenProps {
-  onConnect: (type: WalletLoginType) => void;
-  /** Open the email account flow. P5a: this is the primary entry. */
+  /** Open the email account flow. Email/password is the only entry (ST-4c). */
   onEmailAuth: (mode: "login" | "register") => void;
   error: string | null;
 }
 
 /**
- * P5a — account-first entry. Email account creation/sign-in is the primary path;
- * wallet login is demoted to a clearly-labelled secondary option so existing
- * wallet users can still get in. A short explainer clarifies how the account and a
- * wallet relate (one account holds the balance; a wallet is only needed to withdraw).
+ * Account-first entry. Email account creation/sign-in is the only login path —
+ * EVM browser-wallet signature-login was ripped out in ST-4c.
+ *
+ * Note: login no longer touches a wallet, but the rest of the client still does.
+ * Task answering (and balance/submit) currently key off a linked wallet address
+ * (`/api/task?wallet=…`, `/api/me`, `/api/submit`), and the withdrawal flow proves
+ * the payout address on top of that. Re-keying that identity to the session/userId
+ * so a wallet-less account can answer tasks is a separate migration (tracked in
+ * #301); until it lands, an email-only account with no wallet can't earn yet.
  */
-export default function LoginScreen({ onConnect, onEmailAuth, error }: LoginScreenProps) {
-  const [ready, setReady] = useState(false);
-  const [miniPay, setMiniPay] = useState(false);
-  const [metaMask, setMetaMask] = useState(false);
-  const [sim, setSim] = useState(false);
-
-  useEffect(() => {
-    setMiniPay(isMiniPay());
-    setMetaMask(isMetaMask());
-    setSim(isSimulationMode());
-    setReady(true);
-  }, []);
-
-  const showMiniPay = ready && miniPay;
-  const showMetaMaskPrimary = ready && !miniPay && metaMask;
-  const showOpenMiniPay = ready && !miniPay && !metaMask;
-  const showMetaMaskSecondary = ready && miniPay && metaMask;
-  const showSimButton = ready && sim;
-
+export default function LoginScreen({ onEmailAuth, error }: LoginScreenProps) {
   return (
     <div className="relative min-h-screen bg-surface">
       <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
@@ -114,64 +95,6 @@ export default function LoginScreen({ onConnect, onEmailAuth, error }: LoginScre
             </div>
           </div>
 
-          {/* SECONDARY (P5a): wallet login, still supported for existing users */}
-          <div className="flex w-full max-w-xs flex-col items-center gap-3">
-            <div className="my-1 flex w-full items-center gap-3">
-              <span className="h-px flex-1 bg-outline-variant/60" />
-              <span className="font-label text-xs font-semibold uppercase tracking-widest text-outline">
-                Have a wallet?
-              </span>
-              <span className="h-px flex-1 bg-outline-variant/60" />
-            </div>
-
-            {!ready && (
-              <div className="h-14 w-full max-w-xs animate-pulse rounded-full bg-surface-container-high" />
-            )}
-
-            {showMiniPay && (
-              <WalletLoginButton type="minipay" variant="secondary" onClick={() => onConnect("minipay")} />
-            )}
-
-            {showMetaMaskPrimary && (
-              <WalletLoginButton type="metamask" variant="secondary" onClick={() => onConnect("metamask")} />
-            )}
-
-            {showOpenMiniPay && (
-              <a
-                href="https://minipay.to"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex h-14 w-full items-center justify-center gap-2 rounded-full border border-outline-variant bg-surface-container-lowest font-label text-base font-bold text-on-surface transition duration-200 hover:bg-surface-container-low active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-              >
-                Open in MiniPay
-                <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
-                  arrow_forward
-                </span>
-              </a>
-            )}
-
-            {showMetaMaskSecondary && (
-              <WalletLoginButton type="metamask" variant="secondary" onClick={() => onConnect("metamask")} />
-            )}
-
-            {showSimButton && (
-              <button
-                type="button"
-                onClick={() => onConnect("sim")}
-                className="flex h-12 w-full max-w-xs items-center justify-center gap-2 rounded-full border border-dashed border-primary bg-surface-container-high font-label text-sm font-bold text-primary transition duration-200 hover:bg-surface-container-low active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-              >
-                <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
-                  science
-                </span>
-                Simulate MiniPay login
-              </button>
-            )}
-
-            <p className="mt-1 max-w-xs text-center text-xs text-on-surface-variant">
-              Wallet login is still fully supported — existing users can sign in with their
-              wallet as before.
-            </p>
-          </div>
         </section>
 
         <section className="mb-10">

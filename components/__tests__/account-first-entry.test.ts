@@ -18,7 +18,8 @@ function render(node: ReturnType<typeof createElement>): string {
 }
 
 describe("LoginScreen — account-first default (P5a)", () => {
-  const props = { onConnect: () => {}, onEmailAuth: () => {}, error: null };
+  // ST-4c ripped EVM signature-login: email/password is now the only entry.
+  const props = { onEmailAuth: () => {}, error: null };
 
   it("makes account creation the primary call to action", () => {
     const html = render(createElement(LoginScreen, props));
@@ -32,21 +33,16 @@ describe("LoginScreen — account-first default (P5a)", () => {
     expect(html).toContain("Sign in");
   });
 
-  it("keeps wallet login available but demoted to a secondary section", () => {
+  it("no longer offers an EVM wallet-login path (ripped in ST-4c)", () => {
     const html = render(createElement(LoginScreen, props));
-    expect(html).toContain("Have a wallet?");
-    expect(html).toContain("Wallet login is still fully supported");
+    expect(html).not.toContain("Have a wallet?");
+    expect(html).not.toContain("Wallet login is still fully supported");
   });
 
   it("explains how the account relates to a wallet (one account holds the balance)", () => {
     const html = render(createElement(LoginScreen, props));
     expect(html).toContain("account");
     expect(html).toContain("withdraw");
-  });
-
-  it("orders the account path above the wallet path", () => {
-    const html = render(createElement(LoginScreen, props));
-    expect(html.indexOf("Create account")).toBeLessThan(html.indexOf("Have a wallet?"));
   });
 
   it("surfaces the connect error when present", () => {

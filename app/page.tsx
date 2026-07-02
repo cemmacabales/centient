@@ -1,9 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
-import { connectMiniPay, signMessage } from "@/lib/minipay";
-import { connectMetaMask, switchToCelo } from "@/lib/metamask";
 import TaskCard from "@/components/TaskCard";
 import EarningsBadge from "@/components/EarningsBadge";
 import WalletChip from "@/components/WalletChip";
@@ -80,7 +78,7 @@ function submitErrorMessage(status: number, code?: string): string {
     case "invalid_choice":
       return "Please select Response A or B first.";
     case "invalid_wallet":
-      return "Wallet address looks invalid. Reopen the app from MiniPay.";
+      return "Wallet address looks invalid. Please re-link your wallet and try again.";
     case "invalid_task":
       return "Task reference is invalid. Reload and try the next task.";
     case "invalid_body":
@@ -117,7 +115,6 @@ export default function Home() {
   const [cooldownRemaining, setCooldownRemaining] = useState<string>("");
   const [bannedReason, setBannedReason] = useState<string | null>(null);
   const [disputeOpen, setDisputeOpen] = useState(false);
-  const [connectError, setConnectError] = useState<string | null>(null);
   const [demographics, setDemographics] = useState<{
     country: string | null;
     gender: string | null;
@@ -129,20 +126,6 @@ export default function Home() {
   }, []);
 
   const dismissToast = useCallback(() => setToast(null), []);
-
-  const signInLabeler = useCallback(async (addr: string) => {
-    const nonceRes = await fetch(`/api/auth/nonce?address=${addr}`);
-    if (!nonceRes.ok) throw new Error("nonce_failed");
-    const { nonce } = await nonceRes.json();
-    const message = `Centient Labeler Authentication\nWallet: ${addr}\nNonce: ${nonce}`;
-    const signature = await signMessage(addr, message);
-    const verifyRes = await fetch("/api/auth/verify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address: addr, signature, nonce }),
-    });
-    if (!verifyRes.ok) throw new Error("verify_failed");
-  }, []);
 
   const fetchUserData = useCallback(async (addr: string) => {
     const res = await fetch(`/api/me?wallet=${addr}`);
@@ -176,47 +159,6 @@ export default function Home() {
       // ignore — balance display is non-critical
     }
   }, []);
-
-  const handleWalletConnect = useCallback(
-    async (type: "minipay" | "metamask" | "sim") => {
-      setConnectError(null);
-      setScreen("loading");
-      try {
-        let address: string;
-        if (type === "metamask") {
-          address = await connectMetaMask();
-          try {
-            await switchToCelo();
-          } catch (err) {
-            console.warn("switchToCelo failed", err);
-          }
-        } else {
-          // minipay and sim both use the MiniPay provider (sim installs isMiniPay)
-          address = await connectMiniPay();
-        }
-        setWallet(address);
-        try {
-          await signInLabeler(address);
-        } catch {
-          // session cookie may already exist; proceed
-        }
-        const userData = await fetchUserData(address);
-        await fetchBalance();
-        if (userData?.onboardingCompleted) {
-          setScreen("landing");
-        } else {
-          setScreen("onboarding");
-        }
-      } catch (err) {
-        console.error("wallet connect failed", err);
-        setConnectError(
-          err instanceof Error ? err.message : "Connection failed",
-        );
-        setScreen("login");
-      }
-    },
-    [fetchUserData, fetchBalance, signInLabeler],
-  );
 
   const fetchTask = useCallback(async (addr: string) => {
     const res = await fetch(`/api/task?wallet=${addr}`);
@@ -402,12 +344,11 @@ export default function Home() {
   } else if (screen === "login") {
     body = (
       <LoginScreen
-        onConnect={handleWalletConnect}
         onEmailAuth={(mode) => {
           setAccountAuthMode(mode);
           setScreen("account_auth");
         }}
-        error={connectError}
+        error={null}
       />
     );
   } else if (screen === "account_auth") {
@@ -435,10 +376,19 @@ export default function Home() {
               You&apos;re signed in
             </h2>
             <p className="font-body text-sm text-on-surface-variant">
-              Connect a wallet to start earning and to withdraw your balance.
+              Your account is ready. Earning tasks isn&apos;t available for
+              accounts without a linked wallet yet — we&apos;re finishing wallet
+              linking and will let you know when it&apos;s live.
             </p>
           </div>
-          <SubmitButton label="Connect a wallet" onClick={() => setScreen("login")} />
+          {/*
+            ST-4c: no CTA here. Wallet login was removed, so a "Connect a wallet"
+            button that routed to <LoginScreen> was a dead-end loop — the login
+            screen is email-only now. Answering tasks still keys off a linked
+            wallet (the EVM-shaped constraint in /api/task, /api/me, /api/submit),
+            and re-keying identity to the session/userId is a separate migration
+            (tracked in #301). Restore a real action here once that lands.
+          */}
         </div>
       </div>
     );

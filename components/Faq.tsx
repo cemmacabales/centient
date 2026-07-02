@@ -12,7 +12,7 @@ const ITEMS: { q: string; a: string }[] = [
   },
   {
     q: "How much do I earn?",
-    a: `${REWARD_AMOUNT} ${REWARD_TOKEN_SYMBOL} per valid submission, paid instantly to your MiniPay wallet on Celo${NETWORK_SUFFIX}.`,
+    a: `${REWARD_AMOUNT} ${REWARD_TOKEN_SYMBOL} per valid submission, added to your account balance — withdraw to your wallet anytime${NETWORK_SUFFIX}.`,
   },
   {
     q: "What makes a good submission?",
