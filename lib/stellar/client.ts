@@ -298,6 +298,16 @@ function assertSponsoredTrustlineShape(tx: Transaction): void {
       false,
     );
   }
+  const createAccount = tx.operations.find((o) => o.type === "createAccount") as
+    | { destination?: string }
+    | undefined;
+  if (createAccount && createAccount.destination !== sponsored) {
+    throw new StellarPaymentError(
+      "submitSponsoredTrustline: createAccount destination does not match sponsoredId",
+      "invalid_sponsor_tx",
+      false,
+    );
+  }
 }
 
 /**

@@ -195,7 +195,7 @@ describe("buildSponsoredTrustlineTx", () => {
     expect(kind).toBe("trustline");
 
     // No STELLAR_NETWORK set → networkPassphrase() defaults to testnet.
-    const tx = TransactionBuilder.fromXDR(xdr, "Test SDF Network ; September 2015") as Transaction;
+    const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase()) as Transaction;
     expect(tx.operations.map((o) => o.type)).toEqual([
       "beginSponsoringFutureReserves",
       "changeTrust",
@@ -219,7 +219,7 @@ describe("buildSponsoredTrustlineTx", () => {
 
     const { xdr, kind } = await buildSponsoredTrustlineTx(recipient);
     expect(kind).toBe("account+trustline");
-    const tx = TransactionBuilder.fromXDR(xdr, "Test SDF Network ; September 2015") as Transaction;
+    const tx = TransactionBuilder.fromXDR(xdr, networkPassphrase()) as Transaction;
     expect(tx.operations.map((o) => o.type)).toEqual([
       "beginSponsoringFutureReserves",
       "createAccount",
@@ -232,7 +232,7 @@ describe("buildSponsoredTrustlineTx", () => {
   });
 });
 
-const PASSPHRASE = "Test SDF Network ; September 2015";
+import { networkPassphrase } from "../config";
 
 // Build a valid recipient-signed-looking sandwich XDR for submit tests. Platform
 // + recipient both sign so the envelope parses; Horizon is mocked so real
@@ -241,7 +241,7 @@ function sandwichXdr(recipient: Keypair): string {
   const account = new Account(platformKp.publicKey(), "1000");
   const tx = new TransactionBuilder(account, {
     fee: "300",
-    networkPassphrase: PASSPHRASE,
+    networkPassphrase: networkPassphrase(),
   })
     .addOperation(Operation.beginSponsoringFutureReserves({ sponsoredId: recipient.publicKey() }))
     .addOperation(Operation.changeTrust({ asset: makeUsdc(), source: recipient.publicKey() }))
@@ -259,13 +259,32 @@ function tamperedXdr(recipient: Keypair): string {
   const account = new Account(platformKp.publicKey(), "1000");
   const tx = new TransactionBuilder(account, {
     fee: "200",
-    networkPassphrase: PASSPHRASE,
+    networkPassphrase: networkPassphrase(),
   })
     .addOperation(Operation.beginSponsoringFutureReserves({ sponsoredId: recipient.publicKey() }))
     .addOperation(Operation.payment({ destination: recipient.publicKey(), asset: makeUsdc(), amount: "100" }))
     .setTimeout(180)
     .build();
   tx.sign(platformKp);
+  return tx.toXDR();
+}
+// A crafted 4-op sandwich where createAccount targets a DIFFERENT account than
+// the sponsoredId (and changeTrust.source). This must be rejected by
+// assertSponsoredTrustlineShape before submit.
+function mismatchedCreateAccountXdr(recipient: Keypair): string {
+  const otherAccount = Keypair.random().publicKey();
+  const account = new Account(platformKp.publicKey(), "1000");
+  const tx = new TransactionBuilder(account, {
+    fee: "300",
+    networkPassphrase: networkPassphrase(),
+  })
+    .addOperation(Operation.beginSponsoringFutureReserves({ sponsoredId: recipient.publicKey() }))
+    .addOperation(Operation.createAccount({ destination: otherAccount, startingBalance: "0" }))
+    .addOperation(Operation.changeTrust({ asset: makeUsdc(), source: recipient.publicKey() }))
+    .addOperation(Operation.endSponsoringFutureReserves({ source: recipient.publicKey() }))
+    .setTimeout(180)
+    .build();
+  tx.sign(platformKp, recipient);
   return tx.toXDR();
 }
 
@@ -313,5 +332,16 @@ describe("submitSponsoredTrustline", () => {
       code: "tx_bad_seq",
       retryable: true,
     });
+  });
+
+  it("rejects a 4-op sandwich where createAccount.destination differs from sponsoredId", async () => {
+    const recipient = Keypair.random();
+    const submit = vi.fn();
+    mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
+    await expect(submitSponsoredTrustline(mismatchedCreateAccountXdr(recipient))).rejects.toMatchObject({
+      code: "invalid_sponsor_tx",
+      retryable: false,
+    });
+    expect(submit).not.toHaveBeenCalled();
   });
 });
