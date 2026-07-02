@@ -77,17 +77,17 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
   const walletAddress = submission.walletAddress;
   const amount = submission.payoutAmountUnits;
 
-  // Step 0: StrKey-validate the `G…` destination before doing any work. A
-  // malformed/non-StrKey address can never be paid (the rail would fail with
-  // `op_no_destination`), so mark it failed permanently rather than burning the
-  // retry budget on a payout that is guaranteed to fail.
-  if (!isValidStellarAddress(walletAddress)) {
+  // Step 0: StrKey-validate the `G…` destination before doing any work. A missing
+  // wallet (email-only answerer, ST-5d) or a malformed/non-StrKey address can never
+  // be paid (the rail would fail with `op_no_destination`), so mark it failed
+  // permanently rather than burning the retry budget on a guaranteed-to-fail payout.
+  if (!walletAddress || !isValidStellarAddress(walletAddress)) {
     await prisma.submission.update({
       where: { id: submissionId },
       data: { payoutStatus: "failed", lastRetriedAt: new Date() },
     });
     throw new Error(
-      `[payout-service] submission ${submissionId} has an invalid Stellar address: ${walletAddress}`,
+      `[payout-service] submission ${submissionId} has no payable Stellar address: ${walletAddress}`,
     );
   }
 

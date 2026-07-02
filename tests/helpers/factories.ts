@@ -68,7 +68,7 @@ export async function createCampaignBalance(
 
 export async function createUser(
   overrides: Partial<{
-    walletAddress: string;
+    walletAddress: string | null;
     email: string | null;
     isBanned: boolean;
     banCount: number;
@@ -79,7 +79,10 @@ export async function createUser(
     pendingBalanceUnits: bigint;
   }> = {},
 ) {
-  const walletAddress = overrides.walletAddress ?? makeWallet();
+  // An explicit `walletAddress: null` models an email-only labeler (ST-5d); when the
+  // key is omitted the factory generates a wallet for the common wallet-linked case.
+  const walletAddress =
+    "walletAddress" in overrides ? overrides.walletAddress ?? null : makeWallet();
   const user = await db.user.create({
     data: {
       walletAddress,
@@ -93,8 +96,9 @@ export async function createUser(
       pendingBalanceUnits: overrides.pendingBalanceUnits ?? 0n,
     },
   });
-  // walletAddress is nullable on User as of P0a; factory always creates wallet-keyed
-  // users, so narrow it back to a non-null string for ergonomic call sites.
+  // walletAddress is nullable on User; most call sites create wallet-keyed users, so
+  // narrow it back to a non-null string for ergonomic call sites. Tests that pass an
+  // explicit null assert on the persisted row (via prisma), not this return value.
   return { ...user, walletAddress: user.walletAddress as string };
 }
 
@@ -175,6 +179,38 @@ export async function seedSubmissions(
     data: tasks.map((t) => ({
       walletAddress: wallet,
       userId: user.id,
+      taskId: t.id,
+      choice,
+      reason,
+      payoutAmountUnits: 0,
+      payoutStatus: "skipped",
+    })),
+  });
+  return tasks;
+}
+
+/**
+ * Seed `count` skipped submissions for an existing user, keyed on `userId`
+ * (identity as of ST-5d). The submission's walletAddress mirrors the user's
+ * linked wallet — null for email-only accounts.
+ */
+export async function seedSubmissionsForUser(
+  userId: string,
+  count: number,
+  choice: "A" | "B",
+  reason = VALID_REASON,
+) {
+  const user = await db.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: { walletAddress: true },
+  });
+  const tasks = await Promise.all(
+    Array.from({ length: count }).map(() => createTask()),
+  );
+  await db.submission.createMany({
+    data: tasks.map((t) => ({
+      walletAddress: user.walletAddress,
+      userId,
       taskId: t.id,
       choice,
       reason,

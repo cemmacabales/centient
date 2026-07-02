@@ -153,7 +153,7 @@ export async function GET(
         s.reason,
         chosenModel ?? "",
         rejectedModel ?? "",
-        s.walletAddress,
+        s.walletAddress ?? "",
         s.payoutTxHash ?? "",
         s.createdAt.toISOString(),
       ].map(escapeCsv).join(",");

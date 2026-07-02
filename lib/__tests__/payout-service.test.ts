@@ -88,12 +88,34 @@ describe("reprocessPayoutWithNonceSafety", () => {
 
     await expect(
       reprocessPayoutWithNonceSafety("sub-bad-addr"),
-    ).rejects.toThrow(/invalid Stellar address/);
+    ).rejects.toThrow(/no payable Stellar address/);
 
     expect(mockPayReward).not.toHaveBeenCalled();
     expect(mockSubmissionUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "sub-bad-addr" },
+        data: expect.objectContaining({ payoutStatus: "failed" }),
+      }),
+    );
+  });
+
+  it("marks failed (no send) when the submission has no linked wallet (ST-5d)", async () => {
+    mockFindUnique.mockResolvedValueOnce({
+      id: "sub-no-wallet",
+      // Email-only answerer — no wallet was ever linked, so nothing to pay on-chain.
+      walletAddress: null,
+      payoutStatus: "pending",
+      payoutAmountUnits: 100n,
+    });
+
+    await expect(
+      reprocessPayoutWithNonceSafety("sub-no-wallet"),
+    ).rejects.toThrow(/no payable Stellar address/);
+
+    expect(mockPayReward).not.toHaveBeenCalled();
+    expect(mockSubmissionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "sub-no-wallet" },
         data: expect.objectContaining({ payoutStatus: "failed" }),
       }),
     );

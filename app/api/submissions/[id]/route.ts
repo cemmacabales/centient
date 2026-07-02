@@ -56,7 +56,9 @@ export async function GET(
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
 
-  if (submission.walletAddress.toLowerCase() !== sessionWallet.toLowerCase()) {
+  // A submission with no walletAddress (email-only answerer, ST-5d) can never match
+  // a wallet-bearing session, so it is forbidden through this wallet-keyed poll.
+  if (submission.walletAddress?.toLowerCase() !== sessionWallet.toLowerCase()) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 

@@ -173,7 +173,9 @@ export async function getRecentActivity(limit = 10): Promise<DashboardActivity[]
       createdAt: true,
     },
   });
-  return rows;
+  // walletAddress is null for email-only answerers (ST-5d); admin views are
+  // wallet-keyed for display, so coerce to "" as elsewhere in this module.
+  return rows.map((r) => ({ ...r, walletAddress: r.walletAddress ?? "" }));
 }
 
 export async function getTaskRows(): Promise<TaskRow[]> {
@@ -253,7 +255,7 @@ export async function getTaskTableItems(): Promise<TaskTableItem[]> {
     agreementScore: t.agreementScore,
     recentSubmissions: t.submissions.map((s) => ({
       id: s.id,
-      walletAddress: s.walletAddress,
+      walletAddress: s.walletAddress ?? "",
       choice: s.choice,
       reason: s.reason,
       payoutStatus: s.payoutStatus,
@@ -294,7 +296,7 @@ export async function getTaskDetail(id: string): Promise<TaskDetail | null> {
     goldAnswer: task.goldAnswer,
     majorityAnswer: task.majorityAnswer,
     agreementScore: task.agreementScore,
-    recentSubmissions: task.submissions,
+    recentSubmissions: task.submissions.map((s) => ({ ...s, walletAddress: s.walletAddress ?? "" })),
   };
 }
 
