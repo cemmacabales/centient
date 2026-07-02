@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { formatUnits } from "viem";
 import prisma from "@/lib/prisma";
-import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 import { isInCooldown, isPermanentlyBanned } from "@/lib/admin-data";
 
 export async function GET(req: NextRequest) {
@@ -21,7 +21,7 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     walletAddress: wallet,
-    totalEarned: user ? formatUnits(user.totalEarnedUnits, REWARD_TOKEN_DECIMALS) : "0",
+    totalEarned: user ? unitsToUsdcDisplay(user.totalEarnedUnits) : "0",
     rewardSymbol: REWARD_TOKEN_SYMBOL,
     submissionCount: user?.submissionCount ?? 0,
     onboardingCompleted: user?.onboardingCompleted ?? false,

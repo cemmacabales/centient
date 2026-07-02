@@ -1,8 +1,8 @@
-import { formatUnits } from "viem";
 import { requireRoleForPage } from "@/lib/admin-auth";
 import prisma from "@/lib/prisma";
 import { severityForReason, severityRank } from "@/lib/flagged-withdrawal";
-import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { unitsToUsdcString } from "@/lib/stellar/config";
 import FlaggedWithdrawalTable from "@/components/admin/FlaggedWithdrawalTable";
 
 export const dynamic = "force-dynamic";
@@ -27,7 +27,7 @@ export default async function AdminFlaggedWithdrawalsPage() {
       reason: f.reason,
       severity: severityForReason(f.reason),
       detail: (f.detail ?? null) as Record<string, unknown> | null,
-      balance: formatUnits(f.balanceUnits, REWARD_TOKEN_DECIMALS),
+      balance: unitsToUsdcString(f.balanceUnits),
       createdAt: f.createdAt.toISOString(),
       email: f.user.email,
       userWallet: f.user.walletAddress,

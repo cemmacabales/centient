@@ -8,6 +8,7 @@ import {
   server,
   usdcToUnits,
   unitsToUsdcString,
+  unitsToUsdcDisplay,
   usdcAsset,
 } from "@/lib/stellar/config";
 import { Keypair, Networks } from "@stellar/stellar-sdk";
@@ -151,6 +152,22 @@ describe("unitsToUsdcString", () => {
 
   it("rejects negative units", () => {
     expect(() => unitsToUsdcString(-1n)).toThrow("unitsToUsdcString");
+  });
+});
+
+describe("unitsToUsdcDisplay", () => {
+  it("trims trailing fractional zeros (viem formatUnits parity)", () => {
+    expect(unitsToUsdcDisplay(15_000_000n)).toBe("1.5");
+    expect(unitsToUsdcDisplay(1_230_000n)).toBe("0.123");
+    expect(unitsToUsdcDisplay(1n)).toBe("0.0000001");
+    expect(unitsToUsdcDisplay(1_234_567n)).toBe("0.1234567");
+  });
+
+  it("drops the fractional part entirely for whole amounts", () => {
+    expect(unitsToUsdcDisplay(0n)).toBe("0");
+    expect(unitsToUsdcDisplay(10_000_000n)).toBe("1");
+    expect(unitsToUsdcDisplay(100_000_000n)).toBe("10");
+    expect(unitsToUsdcDisplay(120_000_000n)).toBe("12");
   });
 });
 

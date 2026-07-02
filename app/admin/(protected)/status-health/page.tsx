@@ -153,7 +153,7 @@ export default async function AdminStatusHealthPage() {
           <StatCard
             label="Gold pool"
             value={String(snap.totalPlatformGoldTasks)}
-            subline={`Platform gold tasks available for ${snap.rewardSymbol === "cUSD" ? "Celo" : "active chain"}`}
+            subline={`Platform gold tasks available for ${snap.rewardSymbol} on Stellar`}
           />
         </div>
       </section>

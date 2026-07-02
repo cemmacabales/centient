@@ -9,7 +9,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { formatUnits } from "viem";
+import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 
 interface PayoutTimeSeriesPoint {
   hour: string;
@@ -23,16 +23,14 @@ function formatHourLabel(iso: string): string {
 
 export default function PayoutVolumeChart({
   data,
-  decimals,
   symbol,
 }: {
   data: PayoutTimeSeriesPoint[];
-  decimals: number;
   symbol: string;
 }) {
   const chartData = data.map((d) => ({
     hour: formatHourLabel(d.hour),
-    amount: Number(Number(formatUnits(BigInt(d.amountUnits), decimals)).toFixed(4)),
+    amount: Number(Number(unitsToUsdcDisplay(BigInt(d.amountUnits))).toFixed(4)),
   }));
 
   return (

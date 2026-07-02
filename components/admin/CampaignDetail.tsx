@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
-import { formatUnits, parseUnits } from "viem";
 import { useRouter } from "next/navigation";
-import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { usdcToUnits, unitsToUsdcDisplay } from "@/lib/stellar/config";
 import ExportModal from "@/components/admin/ExportModal";
 import BalanceCard from "@/components/admin/BalanceCard";
 
@@ -104,7 +104,7 @@ export default function CampaignDetail({
   const [error, setError] = useState<string | null>(null);
   const [campaignRewardEdit, setCampaignRewardEdit] = useState(false);
   const [campaignRewardDisplay, setCampaignRewardDisplay] = useState(() => {
-    try { return formatUnits(BigInt(rewardUnits), REWARD_TOKEN_DECIMALS); } catch { return "0.05"; }
+    try { return unitsToUsdcDisplay(BigInt(rewardUnits)); } catch { return "0.05"; }
   });
   const [campaignRewardSaving, setCampaignRewardSaving] = useState(false);
   const [pausedAt, setPausedAt] = useState<string | null>(initialPausedAt);
@@ -187,7 +187,7 @@ export default function CampaignDetail({
   async function handleSaveCampaignReward() {
     setCampaignRewardSaving(true);
     try {
-      const units = parseUnits(campaignRewardDisplay.trim(), REWARD_TOKEN_DECIMALS).toString();
+      const units = usdcToUnits(campaignRewardDisplay.trim()).toString();
       const res = await fetch(`/api/admin/campaigns/${campaignId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -196,7 +196,7 @@ export default function CampaignDetail({
       if (!res.ok) {
         setError("Failed to save campaign reward");
         setCampaignRewardDisplay(() => {
-          try { return formatUnits(BigInt(rewardUnits), REWARD_TOKEN_DECIMALS); } catch { return "0.05"; }
+          try { return unitsToUsdcDisplay(BigInt(rewardUnits)); } catch { return "0.05"; }
         });
       } else {
         setCampaignRewardEdit(false);
@@ -204,7 +204,7 @@ export default function CampaignDetail({
     } catch {
       setError("Invalid reward amount");
       setCampaignRewardDisplay(() => {
-        try { return formatUnits(BigInt(rewardUnits), REWARD_TOKEN_DECIMALS); } catch { return "0.05"; }
+        try { return unitsToUsdcDisplay(BigInt(rewardUnits)); } catch { return "0.05"; }
       });
     }
     setCampaignRewardSaving(false);
@@ -682,7 +682,7 @@ export default function CampaignDetail({
             <button
               onClick={() => {
                 setCampaignRewardEdit(false);
-                try { setCampaignRewardDisplay(formatUnits(BigInt(rewardUnits), REWARD_TOKEN_DECIMALS)); } catch { setCampaignRewardDisplay("0.05"); }
+                try { setCampaignRewardDisplay(unitsToUsdcDisplay(BigInt(rewardUnits))); } catch { setCampaignRewardDisplay("0.05"); }
               }}
               className="flex h-8 w-8 items-center justify-center rounded text-on-surface-variant transition-colors hover:bg-surface-container-high"
               title="Cancel"
@@ -903,19 +903,19 @@ export default function CampaignDetail({
                           inputMode="decimal"
                           placeholder="Inherit"
                           className="w-full rounded-lg border border-outline-variant bg-surface-container px-2 py-2 text-right font-body text-xs text-on-surface placeholder-on-surface-variant/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                          value={editing.rewardUnits !== undefined && editing.rewardUnits !== null ? (() => { try { return formatUnits(BigInt(editing.rewardUnits), REWARD_TOKEN_DECIMALS); } catch { return ""; } })() : ""}
+                          value={editing.rewardUnits !== undefined && editing.rewardUnits !== null ? (() => { try { return unitsToUsdcDisplay(BigInt(editing.rewardUnits)); } catch { return ""; } })() : ""}
                           onChange={e => {
                             const v = e.target.value.trim();
                             if (v === "") {
                               setEditing({ ...editing, rewardUnits: null });
                             } else {
-                              try { setEditing({ ...editing, rewardUnits: parseUnits(v, REWARD_TOKEN_DECIMALS).toString() }); } catch {}
+                              try { setEditing({ ...editing, rewardUnits: usdcToUnits(v).toString() }); } catch {}
                             }
                           }}
                         />
                       ) : (
                         <span className="block text-right font-body text-sm text-on-surface-variant">
-                          {(() => { try { return formatUnits(BigInt(t.rewardUnits || "0"), REWARD_TOKEN_DECIMALS); } catch { return "—"; } })()}
+                          {(() => { try { return unitsToUsdcDisplay(BigInt(t.rewardUnits || "0")); } catch { return "—"; } })()}
                         </span>
                       )}
                     </td>
@@ -1026,13 +1026,13 @@ export default function CampaignDetail({
                       inputMode="decimal"
                       placeholder="Inherit"
                       className="w-full rounded-lg border border-outline-variant bg-surface-container px-2 py-2 text-right font-body text-xs text-on-surface placeholder-on-surface-variant/40 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                      value={editing.rewardUnits !== undefined && editing.rewardUnits !== null ? (() => { try { return formatUnits(BigInt(editing.rewardUnits), REWARD_TOKEN_DECIMALS); } catch { return ""; } })() : ""}
+                      value={editing.rewardUnits !== undefined && editing.rewardUnits !== null ? (() => { try { return unitsToUsdcDisplay(BigInt(editing.rewardUnits)); } catch { return ""; } })() : ""}
                       onChange={e => {
                         const v = e.target.value.trim();
                         if (v === "") {
                           setEditing({ ...editing, rewardUnits: null });
                         } else {
-                          try { setEditing({ ...editing, rewardUnits: parseUnits(v, REWARD_TOKEN_DECIMALS).toString() }); } catch {}
+                          try { setEditing({ ...editing, rewardUnits: usdcToUnits(v).toString() }); } catch {}
                         }
                       }}
                     />

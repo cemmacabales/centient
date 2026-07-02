@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { formatUnits } from "viem";
 import prisma from "@/lib/prisma";
 import { getLabelerSession } from "@/lib/labeler-auth";
-import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 
 const RECENT_LEDGER_LIMIT = 20;
 
@@ -45,13 +45,13 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     pendingBalanceUnits: user.pendingBalanceUnits.toString(),
-    pendingBalance: formatUnits(user.pendingBalanceUnits, REWARD_TOKEN_DECIMALS),
+    pendingBalance: unitsToUsdcDisplay(user.pendingBalanceUnits),
     rewardSymbol: REWARD_TOKEN_SYMBOL,
     ledger: ledger.map((e) => ({
       id: e.id,
       type: e.type,
       amountUnits: e.amountUnits.toString(),
-      amount: formatUnits(e.amountUnits, REWARD_TOKEN_DECIMALS),
+      amount: unitsToUsdcDisplay(e.amountUnits),
       submissionId: e.submissionId,
       note: e.note,
       createdAt: e.createdAt.toISOString(),

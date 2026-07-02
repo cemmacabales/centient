@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { formatUnits } from "viem";
 import prisma from "@/lib/prisma";
 import { getLabelerUser } from "@/lib/labeler-auth";
-import { REWARD_TOKEN_DECIMALS } from "@/lib/constants";
+import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 
 const PAGE_SIZE = 20;
 
@@ -58,7 +57,7 @@ export async function GET(req: NextRequest) {
       choice: s.choice,
       isGoldCheck: s.isGoldCheck,
       goldPassed: s.goldPassed,
-      earnedDisplay: formatUnits(s.payoutAmountUnits, REWARD_TOKEN_DECIMALS),
+      earnedDisplay: unitsToUsdcDisplay(s.payoutAmountUnits),
       payoutStatus: s.payoutStatus,
       payoutTxHash: s.payoutTxHash,
       submittedAt: s.createdAt.toISOString(),

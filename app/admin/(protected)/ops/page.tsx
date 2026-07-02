@@ -1,6 +1,6 @@
 import { requireRoleForPage } from "@/lib/admin-auth";
 import { getOpsDashboardData } from "@/lib/admin-data";
-import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 import SubmissionVolumeChart from "@/components/admin/SubmissionVolumeChart";
 import PayoutVolumeChart from "@/components/admin/PayoutVolumeChart";
 import GoldPassRateCard from "@/components/admin/GoldPassRateCard";
@@ -54,7 +54,6 @@ export default async function AdminOpsPage() {
           ) : (
             <PayoutVolumeChart
               data={data.payoutVolume24h}
-              decimals={REWARD_TOKEN_DECIMALS}
               symbol={REWARD_TOKEN_SYMBOL}
             />
           )}

@@ -5,11 +5,18 @@ import prisma from "./prisma";
 import { normalizeReason } from "./quality";
 import {
   REWARD_TOKEN_ADDRESS,
-  REWARD_TOKEN_DECIMALS,
   REWARD_TOKEN_SYMBOL,
   activeChain,
   activeRpcUrl,
 } from "./constants";
+import { unitsToUsdcDisplay } from "./stellar/config";
+
+// The legacy hot wallet holds cUSD, an 18-decimal Celo ERC-20 read on-chain via
+// viem. Kept explicit and decoupled from the Stellar-valued REWARD_TOKEN_DECIMALS
+// (which ST-5 re-valued to USDC's 7) so the real balance formats correctly during
+// the migration window. This whole viem read is removed in the post-ST-5 closing
+// viem-removal step (see the note in lib/constants.ts).
+const CUSD_DECIMALS = 18;
 
 export interface DashboardTotals {
   totalSubmissions: number;
@@ -95,7 +102,10 @@ async function hotWallet(): Promise<{ address: string; balance: string }> {
     });
     return {
       address: account.address,
-      balance: formatUnits(raw, REWARD_TOKEN_DECIMALS),
+      // raw is an 18-decimal cUSD balance — format with the EVM token's own
+      // decimals, NOT the Stellar-valued REWARD_TOKEN_DECIMALS (7), which would
+      // overstate the balance by 10^11 on the ops-facing status-health page.
+      balance: formatUnits(raw, CUSD_DECIMALS),
     };
   } catch (err) {
     const account = (() => {
@@ -141,7 +151,7 @@ export async function getDashboardTotals(): Promise<DashboardTotals> {
     totalSubmissions,
     totalPaidSubmissions,
     totalFailedSubmissions,
-    totalPaidOut: formatUnits(paidUnits, REWARD_TOKEN_DECIMALS),
+    totalPaidOut: unitsToUsdcDisplay(paidUnits),
     rewardSymbol: REWARD_TOKEN_SYMBOL,
     hotWalletBalance: wallet.balance,
     hotWalletAddress: wallet.address,
@@ -296,7 +306,7 @@ export async function getWalletRows(): Promise<WalletRow[]> {
     walletAddress: u.walletAddress ?? "", // legacy rows are always wallet-keyed; null only once wallet-less accounts land (later phase)
     createdAt: u.createdAt,
     submissionCount: u.submissionCount,
-    totalEarned: formatUnits(u.totalEarnedUnits, REWARD_TOKEN_DECIMALS),
+    totalEarned: unitsToUsdcDisplay(u.totalEarnedUnits),
     goldCorrect: u.goldCorrect,
     goldAttempted: u.goldAttempted,
     goldAccuracyPct:
@@ -336,7 +346,7 @@ export async function getUserRows(): Promise<UserRow[]> {
     walletAddress: u.walletAddress ?? "", // legacy rows are always wallet-keyed; null only once wallet-less accounts land (later phase)
     createdAt: u.createdAt,
     submissionCount: u.submissionCount,
-    totalEarned: formatUnits(u.totalEarnedUnits, REWARD_TOKEN_DECIMALS),
+    totalEarned: unitsToUsdcDisplay(u.totalEarnedUnits),
     goldCorrect: u.goldCorrect,
     goldAttempted: u.goldAttempted,
     goldAccuracyPct:
@@ -434,7 +444,7 @@ export async function getUserProfile(walletAddress: string): Promise<UserProfile
   return {
     walletAddress: wallet,
     createdAt: u.createdAt,
-    totalEarned: formatUnits(u.totalEarnedUnits, REWARD_TOKEN_DECIMALS),
+    totalEarned: unitsToUsdcDisplay(u.totalEarnedUnits),
     totalEarnedUnits: u.totalEarnedUnits,
     submissionCount: u.submissionCount,
     goldCorrect: u.goldCorrect,

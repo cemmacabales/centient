@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  /* Primary — Celo-adjacent deep green */
+  /* Primary — deep green brand accent */
   --color-primary: #006d3d;
   --color-on-primary: #ffffff;
   --color-primary-container: #35d07f;

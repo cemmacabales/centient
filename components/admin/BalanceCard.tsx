@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { formatUnits, parseUnits } from "viem";
-import { REWARD_TOKEN_DECIMALS, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { usdcToUnits, unitsToUsdcDisplay } from "@/lib/stellar/config";
 
 interface LedgerEntry {
   type: "DEPOSIT" | "DEBIT_REWARD" | "DEBIT_FEE" | "REFUND";
@@ -46,7 +46,7 @@ export default function BalanceCard({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const balanceFormatted = formatUnits(BigInt(balanceUnits), REWARD_TOKEN_DECIMALS);
+  const balanceFormatted = unitsToUsdcDisplay(BigInt(balanceUnits));
   const isLowBalance = estimated !== null && estimated < LOW_BALANCE_THRESHOLD;
 
   async function handleDeposit(e: React.FormEvent) {
@@ -55,7 +55,7 @@ export default function BalanceCard({
 
     let amountUnits: bigint;
     try {
-      amountUnits = parseUnits(amount, REWARD_TOKEN_DECIMALS);
+      amountUnits = usdcToUnits(amount);
       if (amountUnits <= 0n) throw new Error();
     } catch {
       setError("Enter a valid positive amount.");
@@ -188,7 +188,7 @@ export default function BalanceCard({
                   <td className="py-1 text-on-surface">{LEDGER_LABELS[entry.type]}</td>
                   <td className="py-1 text-on-surface">
                     {entry.type === "DEPOSIT" || entry.type === "REFUND" ? "+" : "−"}
-                    {Number(formatUnits(BigInt(entry.amountUnits), REWARD_TOKEN_DECIMALS)).toFixed(4)}{" "}
+                    {Number(unitsToUsdcDisplay(BigInt(entry.amountUnits))).toFixed(4)}{" "}
                     {REWARD_TOKEN_SYMBOL}
                   </td>
                   <td className="py-1 text-on-surface-variant">{entry.note ?? "—"}</td>

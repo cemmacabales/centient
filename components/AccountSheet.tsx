@@ -1,15 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { formatUnits } from "viem";
 import { type ToastKind } from "@/components/Toast";
 import { truncateAddress } from "@/lib/wallet";
-import { REWARD_TOKEN_DECIMALS } from "@/lib/constants";
+import { unitsToUsdcDisplay } from "@/lib/stellar/config";
+import { isValidStellarAddress } from "@/lib/stellar/signature";
 import StellarWalletLink from "@/components/StellarWalletLink";
 
 function formatTokenBalance(unitsStr: string): string {
   try {
-    return formatUnits(BigInt(unitsStr), REWARD_TOKEN_DECIMALS);
+    return unitsToUsdcDisplay(BigInt(unitsStr));
   } catch {
     return "0";
   }
@@ -365,14 +365,20 @@ export default function AccountSheet({
           )}
         </div>
 
-        <a
-          href={`${explorerUrl}/address/${walletAddress}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mb-6 block w-full rounded-xl bg-surface-container-high py-3 text-center font-label text-sm font-semibold text-primary transition-colors hover:bg-surface-container-highest focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-        >
-          View on explorer
-        </a>
+        {/* Only link to stellar.expert when walletAddress is a real Stellar `G…`
+            key. A labeler who hasn't linked a payout wallet may still carry a
+            legacy EVM `0x…` here (see StellarWalletLink), which would 404 on the
+            stellar.expert /account/ path — hide the link rather than show a dead one. */}
+        {isValidStellarAddress(walletAddress) && (
+          <a
+            href={`${explorerUrl}/account/${walletAddress}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mb-6 block w-full rounded-xl bg-surface-container-high py-3 text-center font-label text-sm font-semibold text-primary transition-colors hover:bg-surface-container-highest focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          >
+            View on explorer
+          </a>
+        )}
 
         <div>
           <h3 className="mb-3 font-label text-[10px] font-bold uppercase tracking-[0.2em] text-outline">

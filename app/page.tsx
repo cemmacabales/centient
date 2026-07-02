@@ -65,7 +65,8 @@ interface BalanceLedgerEntry {
   createdAt: string;
 }
 
-const EXPLORER_URL = process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://celoscan.io";
+const EXPLORER_URL =
+  process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://stellar.expert/explorer/testnet";
 
 function submitErrorMessage(status: number, code?: string): string {
   switch (code) {
