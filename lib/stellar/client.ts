@@ -199,3 +199,60 @@ export async function accountHasUsdcTrustline(address: string): Promise<boolean>
     throw err;
   }
 }
+
+/**
+ * Does `address` exist on-chain? A Horizon 404 means the account is unfunded /
+ * never created (so it needs sponsored creation before it can hold a trustline).
+ */
+async function accountExists(address: string): Promise<boolean> {
+  try {
+    await server().loadAccount(address);
+    return true;
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    if (status === 404) return false;
+    throw err;
+  }
+}
+
+/**
+ * Build a CAP-33 platform-sponsored USDC-trustline transaction for `recipientG`
+ * and platform-sign it. The platform is the transaction source (sequence + fee)
+ * and the sponsor; the recipient owns (and must also sign) the `changeTrust` and
+ * `endSponsoring` ops, but pays no reserve. If the recipient account does not yet
+ * exist, a sponsored `createAccount(recipient, "0")` is prepended.
+ *
+ * Sequence: built from the platform's *current* sequence but submitted later
+ * (after the recipient signs in-browser), so a concurrent payUsdc may consume it
+ * first → tx_bad_seq at submit; the caller re-runs the flow (simple strategy,
+ * ST-4e #314). Returns the base64 XDR for the browser to co-sign.
+ */
+export async function buildSponsoredTrustlineTx(
+  recipientG: string,
+): Promise<{ xdr: string; kind: "trustline" | "account+trustline" }> {
+  const kp = platformKeypair();
+  const srv = server();
+  const account = await srv.loadAccount(kp.publicKey());
+  const fee = await srv.fetchBaseFee().catch(() => Number(BASE_FEE));
+  const exists = await accountExists(recipientG);
+
+  const builder = new TransactionBuilder(account, {
+    fee: String(fee),
+    networkPassphrase: networkPassphrase(),
+  }).addOperation(Operation.beginSponsoringFutureReserves({ sponsoredId: recipientG }));
+
+  if (!exists) {
+    builder.addOperation(
+      Operation.createAccount({ destination: recipientG, startingBalance: "0" }),
+    );
+  }
+
+  const tx = builder
+    .addOperation(Operation.changeTrust({ asset: usdcAsset(), source: recipientG }))
+    .addOperation(Operation.endSponsoringFutureReserves({ source: recipientG }))
+    .setTimeout(TX_TIMEOUT_SECONDS)
+    .build();
+  tx.sign(kp);
+
+  return { xdr: tx.toXDR(), kind: exists ? "trustline" : "account+trustline" };
+}

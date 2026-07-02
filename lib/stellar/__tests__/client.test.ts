@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { Account, Keypair } from "@stellar/stellar-sdk";
+import { Account, Keypair, Transaction, TransactionBuilder } from "@stellar/stellar-sdk";
 
 // Real throwaway keypairs — only the signing/address machinery is exercised; all
 // network I/O is mocked at the `server()` boundary below. Never funded.
@@ -18,7 +18,7 @@ vi.mock("../config", async (importOriginal) => {
 });
 
 import { server } from "../config";
-import { payUsdc, getTxStatus, StellarPaymentError } from "../client";
+import { payUsdc, getTxStatus, StellarPaymentError, buildSponsoredTrustlineTx } from "../client";
 
 const mockedServer = vi.mocked(server);
 
@@ -177,5 +177,57 @@ describe("getTxStatus", () => {
       }) as never,
     );
     await expect(getTxStatus("h")).rejects.toMatchObject({ response: { status: 500 } });
+  });
+});
+
+// Horizon 404 shape (account not found).
+const notFound = () => ({ response: { status: 404 } });
+
+describe("buildSponsoredTrustlineTx", () => {
+  it("builds a begin/changeTrust/end sandwich for an existing account", async () => {
+    const recipient = Keypair.random().publicKey();
+    const srv = makeServer({});
+    // platform load (seq) + recipient load (exists) both succeed.
+    srv.loadAccount = vi.fn(async (pub: string) => new Account(pub, "1000"));
+    mockedServer.mockReturnValue(srv as never);
+
+    const { xdr, kind } = await buildSponsoredTrustlineTx(recipient);
+    expect(kind).toBe("trustline");
+
+    // No STELLAR_NETWORK set → networkPassphrase() defaults to testnet.
+    const tx = TransactionBuilder.fromXDR(xdr, "Test SDF Network ; September 2015") as Transaction;
+    expect(tx.operations.map((o) => o.type)).toEqual([
+      "beginSponsoringFutureReserves",
+      "changeTrust",
+      "endSponsoringFutureReserves",
+    ]);
+    // sponsor = platform (tx source); sponsored + trustline owner = recipient.
+    expect(tx.source).toBe(platformKp.publicKey());
+    expect((tx.operations[0] as { sponsoredId: string }).sponsoredId).toBe(recipient);
+    expect(tx.operations[1].source).toBe(recipient);
+    expect(tx.operations[2].source).toBe(recipient);
+  });
+
+  it("prepends createAccount(recipient, '0') when the account does not exist", async () => {
+    const recipient = Keypair.random().publicKey();
+    const srv = makeServer({});
+    srv.loadAccount = vi.fn(async (pub: string) => {
+      if (pub === recipient) throw notFound();
+      return new Account(pub, "1000");
+    });
+    mockedServer.mockReturnValue(srv as never);
+
+    const { xdr, kind } = await buildSponsoredTrustlineTx(recipient);
+    expect(kind).toBe("account+trustline");
+    const tx = TransactionBuilder.fromXDR(xdr, "Test SDF Network ; September 2015") as Transaction;
+    expect(tx.operations.map((o) => o.type)).toEqual([
+      "beginSponsoringFutureReserves",
+      "createAccount",
+      "changeTrust",
+      "endSponsoringFutureReserves",
+    ]);
+    expect((tx.operations[1] as { destination: string; startingBalance: string }).destination).toBe(recipient);
+    // The Stellar SDK normalizes amounts to 7 decimal places when decoding from XDR.
+    expect((tx.operations[1] as { startingBalance: string }).startingBalance).toBe("0.0000000");
   });
 });
