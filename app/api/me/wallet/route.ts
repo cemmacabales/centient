@@ -51,8 +51,9 @@ export async function GET(req: NextRequest) {
 
   // Throttle challenge issuance per candidate address: each GET prunes the prior
   // nonce and writes a new one, so an unthrottled loop would churn Prisma
-  // transactions. Same per-wallet limiter the submit path uses.
-  if (await checkWalletRateLimit(address)) {
+  // transactions. Distinct from the sponsor-build key so the two flows don't
+  // collide when the same address hits both in quick succession.
+  if (await checkWalletRateLimit(`link:${address}`)) {
     return NextResponse.json({ error: "rate_limited" }, { status: 429 });
   }
 

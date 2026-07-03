@@ -115,7 +115,7 @@ describe("GET /api/me/wallet (challenge)", () => {
     const res = await GET(getReq(G));
     expect(res.status).toBe(429);
     expect((await res.json()).error).toBe("rate_limited");
-    expect(mockCheckWalletRateLimit).toHaveBeenCalledWith(G);
+    expect(mockCheckWalletRateLimit).toHaveBeenCalledWith(`link:${G}`);
     expect(mockNonceCreate).not.toHaveBeenCalled();
   });
 });

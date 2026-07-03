@@ -37,11 +37,10 @@ export async function GET(req: NextRequest) {
   // labeler could loop fresh keypairs to bypass it. This session-keyed check is a
   // stopgap; a proper cap on outstanding sponsorships per labeler is tracked as a
   // follow-up before ST-7 mainnet (issue link will be added).
-  if (await checkWalletRateLimit(`sponsor-user:${userId}`)) {
+  if (await checkWalletRateLimit(`sponsor-get:${userId}`)) {
     return NextResponse.json({ error: "rate_limited" }, { status: 429 });
   }
-  // Same limiter the link GET uses — bound sponsored-tx build churn per address.
-  if (await checkWalletRateLimit(address)) {
+  if (await checkWalletRateLimit(`sponsor-build:${address}`)) {
     return NextResponse.json({ error: "rate_limited" }, { status: 429 });
   }
 
@@ -82,7 +81,7 @@ export async function POST(req: NextRequest) {
   // submit unlimited sponsorship txs. This session-keyed check is a stopgap; a
   // proper cap on outstanding sponsorships per labeler is tracked as a follow-up
   // before ST-7 mainnet (issue link will be added).
-  if (await checkWalletRateLimit(`sponsor-user:${userId}`)) {
+  if (await checkWalletRateLimit(`sponsor-submit:${userId}`)) {
     return NextResponse.json({ error: "rate_limited" }, { status: 429 });
   }
 

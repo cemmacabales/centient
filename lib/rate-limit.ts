@@ -30,18 +30,18 @@ async function ensureRateLimitBuckets(client: PrismaClientLike): Promise<void> {
   bucketsEnsured = true;
 }
 
-export async function checkWalletRateLimit(wallet: string): Promise<boolean> {
+export async function checkWalletRateLimit(bucketKey: string): Promise<boolean> {
   return prisma.$transaction(async (tx) => {
     await ensureRateLimitBuckets(tx);
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey("wallet", wallet)}))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey("wallet", bucketKey)}))`;
 
     await tx.$executeRaw`
       DELETE FROM rate_limit_buckets
-      WHERE key = ${wallet} AND expires_at < NOW()
+      WHERE key = ${bucketKey} AND expires_at < NOW()
     `;
 
     const rows = await tx.$queryRaw<Array<{ count: bigint }>>`
-      SELECT COUNT(*)::int8 as count FROM rate_limit_buckets WHERE key = ${wallet}
+      SELECT COUNT(*)::int8 as count FROM rate_limit_buckets WHERE key = ${bucketKey}
     `;
 
     if (Number(rows[0].count) > 0) {
@@ -50,7 +50,7 @@ export async function checkWalletRateLimit(wallet: string): Promise<boolean> {
 
     await tx.$executeRaw`
       INSERT INTO rate_limit_buckets (key, expires_at)
-      VALUES (${wallet}, NOW() + make_interval(secs => ${WALLET_WINDOW_MS}::int / 1000.0))
+      VALUES (${bucketKey}, NOW() + make_interval(secs => ${WALLET_WINDOW_MS}::int / 1000.0))
     `;
 
     return false;

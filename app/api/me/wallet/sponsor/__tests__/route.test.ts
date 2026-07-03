@@ -75,9 +75,9 @@ describe("GET /api/me/wallet/sponsor", () => {
     expect(res.status).toBe(429);
     expect((await res.json()).error).toBe("rate_limited");
   });
-  // Fix 1: per-user throttle keyed by session user id, not just address.
-  it("429 when per-user rate limit fires (sponsor-user: key)", async () => {
-    mockRateLimit.mockImplementation(async (key: string) => key.startsWith("sponsor-user:"));
+  // Ensure distinct keys per phase so GET doesn't consume POST's bucket.
+  it("429 when per-user rate limit fires on GET (sponsor-get: key)", async () => {
+    mockRateLimit.mockImplementation(async (key: string) => key.startsWith("sponsor-get:"));
     const res = await GET(getReq(ADDR));
     expect(res.status).toBe(429);
     expect((await res.json()).error).toBe("rate_limited");
@@ -129,9 +129,9 @@ describe("POST /api/me/wallet/sponsor", () => {
     expect(res.status).toBe(502);
     expect((await res.json()).error).toBe("submit_failed");
   });
-  // Fix 1: per-user throttle in POST (POST had no rate limit check before).
-  it("429 when per-user rate limit fires on POST (sponsor-user: key)", async () => {
-    mockRateLimit.mockImplementation(async (key: string) => key.startsWith("sponsor-user:"));
+  // Distinct per-phase key so POST doesn't share GET's 15s bucket.
+  it("429 when per-user rate limit fires on POST (sponsor-submit: key)", async () => {
+    mockRateLimit.mockImplementation(async (key: string) => key.startsWith("sponsor-submit:"));
     const res = await POST(postReq({ address: ADDR, signedXdr: "SIGNED" }));
     expect(res.status).toBe(429);
     expect((await res.json()).error).toBe("rate_limited");
