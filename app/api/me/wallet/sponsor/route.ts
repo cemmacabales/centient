@@ -9,6 +9,7 @@ import {
   StellarPaymentError,
 } from "@/lib/stellar/client";
 import { checkWalletRateLimit } from "@/lib/rate-limit";
+import { checkSponsorAllowed, recordSponsorship } from "@/lib/sponsored-trustline";
 
 /**
  * ST-4e (#314) — platform-sponsored USDC trustlines (CAP-33).
@@ -48,6 +49,18 @@ export async function GET(req: NextRequest) {
     if (await accountHasUsdcTrustline(address)) {
       return NextResponse.json({ needed: false });
     }
+    // #330: bound outstanding sponsorships per user (a session-keyed rate throttle
+    // caps *rate*, not *total outstanding* — a labeler could loop fresh keypairs to
+    // drain platform reserves). Gate before building so an over-cap user never even
+    // receives an XDR. Only reached when a sponsorship would actually be created
+    // (needed=true), so re-linking an already-trusting address never consumes it.
+    const gate = await checkSponsorAllowed(userId!, address);
+    if (!gate.ok) {
+      return NextResponse.json(
+        { error: gate.reason === "cap_reached" ? "sponsorship_cap_reached" : "address_in_use" },
+        { status: gate.reason === "cap_reached" ? 429 : 409 },
+      );
+    }
     const { xdr, kind } = await buildSponsoredTrustlineTx(address);
     return NextResponse.json({ needed: true, xdr, kind });
   } catch (err) {
@@ -85,8 +98,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "rate_limited" }, { status: 429 });
   }
 
+  // #330: authoritative per-user outstanding cap + cross-user address lock,
+  // re-checked here (not just at build) so a client that skips GET can't bypass it.
+  const gate = await checkSponsorAllowed(userId!, address);
+  if (!gate.ok) {
+    return NextResponse.json(
+      { error: gate.reason === "cap_reached" ? "sponsorship_cap_reached" : "address_in_use" },
+      { status: gate.reason === "cap_reached" ? 429 : 409 },
+    );
+  }
+
   try {
-    await submitSponsoredTrustline(signedXdr, address);
+    const { hash, kind } = await submitSponsoredTrustline(signedXdr, address);
+    // Record the locked reserve so it counts against the cap. Best-effort: the
+    // trustline IS established on-chain even if this write fails, so don't fail the
+    // request — but surface it, since an unrecorded sponsorship under-counts the cap.
+    try {
+      await recordSponsorship({ userId: userId!, address, kind, txHash: hash });
+    } catch (recordErr) {
+      Sentry.captureException(recordErr, { extra: { context: "sponsor-record", userId, address } });
+    }
     return NextResponse.json({ established: true });
   } catch (err) {
     if (err instanceof StellarPaymentError) {

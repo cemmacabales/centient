@@ -351,7 +351,7 @@ function assertSponsoredTrustlineShape(tx: Transaction, expectedRecipient: strin
 export async function submitSponsoredTrustline(
   signedXdr: string,
   expectedRecipient: string,
-): Promise<{ hash: string }> {
+): Promise<{ hash: string; kind: "trustline" | "account+trustline" }> {
   // Fix 3: wrap XDR parse so garbage input / fee-bump envelopes become
   // `invalid_sponsor_tx` (→ 400) instead of a raw JS error (→ 502).
   let tx: Transaction;
@@ -375,9 +375,16 @@ export async function submitSponsoredTrustline(
   }
   // Fix 2 + Fix 4: validate shape, recipient match, and end-sponsoring source.
   assertSponsoredTrustlineShape(tx, expectedRecipient);
+  // Derived from the validated shape so the caller can record which reserve kind
+  // was locked (#330): account-creation + trustline (~1.5 XLM) vs trustline only.
+  const kind: "trustline" | "account+trustline" = tx.operations.some(
+    (o) => o.type === "createAccount",
+  )
+    ? "account+trustline"
+    : "trustline";
   try {
     const res = await server().submitTransaction(tx);
-    return { hash: res.hash };
+    return { hash: res.hash, kind };
   } catch (err) {
     if (err instanceof StellarPaymentError) throw err;
     const codes = resultCodes(err);

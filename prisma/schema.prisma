@@ -42,8 +42,32 @@ model User {
   payoutJobs    PayoutJob[]
   identifierHistory UserIdentifierHistory[]
   flaggedWithdrawals FlaggedWithdrawal[]
+  sponsoredTrustlines SponsoredTrustline[]
 
   @@map("users")
+}
+
+// ST-4e follow-up (#330) — one row per platform-sponsored USDC trustline. Each
+// outstanding row (revokedAt = null) represents ~0.5–1.5 XLM of platform reserves
+// locked on the recipient's behalf. Counting outstanding rows per user enforces a
+// hard cap so one labeler can't loop fresh keypairs and drain the pooled account's
+// reserves (an economic DoS on mainnet). `revokedAt` is set when a future
+// revocation/reclaim job frees the reserves (deferred — pairs with unlink).
+// `address` is a case-sensitive `G…` StrKey and is never normalized.
+model SponsoredTrustline {
+  id        String    @id @default(uuid())
+  userId    String
+  address   String
+  kind      String    // "trustline" | "account+trustline"
+  txHash    String
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([address])
+  @@map("sponsored_trustlines")
 }
 
 enum BannedIdentifierType {

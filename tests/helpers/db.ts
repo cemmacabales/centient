@@ -45,6 +45,7 @@ export async function truncateAll(): Promise<void> {
   await tryDelete(() => prisma.adminAuditLog.deleteMany());
   await tryDelete(() => prisma.adminUser.deleteMany());
   await tryDelete(() => prisma.walletNonce.deleteMany());
+  await tryDelete(() => prisma.sponsoredTrustline.deleteMany());
   await tryDelete(() => prisma.user.deleteMany());
 }
 
