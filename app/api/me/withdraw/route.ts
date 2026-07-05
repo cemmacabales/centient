@@ -23,17 +23,6 @@ import { recordFlaggedWithdrawal } from "@/lib/flagged-withdrawal";
 import { isValidStellarAddress } from "@/lib/stellar/signature";
 import { accountHasUsdcTrustline } from "@/lib/stellar/client";
 
-/**
- * P3a — withdrawal endpoint. Turns the labeler's whole accumulated off-chain
- * balance into a single queued lump-sum payout to their linked wallet.
- *
- * Auth is cookie-session only (the strongest available): the destination is the
- * authenticated user's own linked wallet, never an address supplied in the body,
- * so knowing someone's wallet can't trigger a withdrawal. The atomic
- * lock-decrement-enqueue (and the one-in-flight unique index) live in
- * `enqueueWithdrawal`, so this handler only does auth, policy gates, and response
- * shaping.
- */
 export async function POST(req: NextRequest) {
   const userId = await getLabelerSession(req);
   const unauthorized = requireLabelerSession(userId);
@@ -42,7 +31,6 @@ export async function POST(req: NextRequest) {
   const user = await prisma.user.findUnique({
     where: { id: userId! },
     select: {
-      walletAddress: true,
       email: true,
       isBanned: true,
       submissionCount: true,
@@ -59,20 +47,35 @@ export async function POST(req: NextRequest) {
   if (user.isBanned) {
     return NextResponse.json({ error: "account_frozen" }, { status: 403 });
   }
-  if (!user.walletAddress) {
-    return NextResponse.json({ error: "no_wallet_linked" }, { status: 400 });
+
+  // Paste-and-send: the recipient Stellar address is supplied fresh in the body
+  // on every withdrawal — no persistent linked wallet and no ownership proof.
+  // This deliberately reverses the earlier "destination is never from the body"
+  // rule (product decision, 2026-07-05 spec). A typo sends USDC irreversibly, so
+  // the client shows a confirm step before calling this.
+  const body = await req.json().catch(() => null);
+  const destinationAddress =
+    body && typeof body === "object"
+      ? (body as { destinationAddress?: unknown }).destinationAddress
+      : undefined;
+  if (typeof destinationAddress !== "string" || !destinationAddress) {
+    return NextResponse.json({ error: "missing_address" }, { status: 400 });
+  }
+  // StrKey is case-sensitive — never normalize. A malformed or legacy `0x…`
+  // value can never receive USDC; reject before touching any balance.
+  if (!isValidStellarAddress(destinationAddress)) {
+    return NextResponse.json({ error: "invalid_wallet" }, { status: 400 });
   }
 
-  // P4c — every withdrawal blocked below is recorded for the admin review queue
-  // with its trigger reason. Best-effort: a failure to record must never turn a
-  // clean 403 rejection into a 500, so it is captured and swallowed.
+  // P4c — record blocked withdrawals for the admin queue. Best-effort; a failure
+  // to record must never turn a clean 403 into a 500.
   const flag = (
     reason: "BANNED_IDENTITY" | "SHARED_WALLET" | "INELIGIBLE",
     detail: Record<string, unknown>,
   ) =>
     recordFlaggedWithdrawal({
       userId: userId!,
-      walletAddress: user.walletAddress,
+      walletAddress: destinationAddress,
       reason,
       detail: detail as never,
       balanceUnits: user.pendingBalanceUnits,
@@ -80,9 +83,8 @@ export async function POST(req: NextRequest) {
       Sentry.captureException(err, { extra: { context: "flag-withdrawal", userId } });
     });
 
-  // P4b — identity-based anti-fraud gates: reject if the account's email or
-  // wallet is banned, or if the wallet is shared across too many accounts.
-  const banError = await isAnyIdentifierBanned(user.email, user.walletAddress, userId!);
+  // P4b — identity-based anti-fraud gates run against the typed destination.
+  const banError = await isAnyIdentifierBanned(user.email, destinationAddress, userId!);
   if (banError) {
     await flag("BANNED_IDENTITY", {
       identifierType: banError.bannedIdentifierType,
@@ -100,7 +102,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const sharedWalletError = await checkSharedWallet(user.walletAddress, userId!);
+  const sharedWalletError = await checkSharedWallet(destinationAddress, userId!);
   if (sharedWalletError) {
     await flag("SHARED_WALLET", {
       walletAddress: sharedWalletError.walletAddress,
@@ -116,10 +118,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // P4a — anti-fraud eligibility gates: quality history (gold rate), minimum
-  // submissions, and account age. Checked before locking any balance so a
-  // rejection never touches funds. The reason is surfaced so the UI can tell the
-  // labeler exactly which gate they have not yet cleared.
+  // P4a — quality/eligibility gates, checked before locking any balance.
   const eligibility = checkWithdrawalEligibility(
     {
       submissionCount: user.submissionCount,
@@ -146,22 +145,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // The linked destination must be a valid `G…` StrKey (case-sensitive). A legacy
-  // EVM `0x…` or any corrupted value can never receive USDC and would fail at
-  // payout with `op_no_destination` — reject it here so the labeler re-links via
-  // the Stellar wallet flow (ST-4b). Checked on the payout path (after the fraud
-  // gates) so ban/shared-wallet matching is unaffected until ST-4d retargets it.
-  if (!isValidStellarAddress(user.walletAddress)) {
-    return NextResponse.json({ error: "invalid_wallet" }, { status: 400 });
-  }
-
-  // USDC-trustline precheck before locking any balance: an untrusted `G…` would
-  // fail the on-chain payout with a non-retryable `op_no_trust`. Reject up front
-  // with guidance so funds are never locked against an unpayable destination.
-  // (ST-4e #314 will offer an in-app sponsored trustline instead of rejecting.)
+  // USDC-trustline precheck on the typed address before locking any balance: an
+  // untrusted address would fail the on-chain payout with `op_no_trust`. Reject
+  // with guidance so the recipient adds the trustline in their own wallet.
   let hasTrustline: boolean;
   try {
-    hasTrustline = await accountHasUsdcTrustline(user.walletAddress);
+    hasTrustline = await accountHasUsdcTrustline(destinationAddress);
   } catch (err) {
     Sentry.captureException(err, { extra: { context: "withdraw-trustline", userId } });
     return NextResponse.json({ error: "trustline_check_failed" }, { status: 502 });
@@ -180,7 +169,7 @@ export async function POST(req: NextRequest) {
   try {
     const result = await enqueueWithdrawal(
       userId!,
-      user.walletAddress,
+      destinationAddress,
       getMinWithdrawalUnits(),
     );
 
@@ -188,7 +177,7 @@ export async function POST(req: NextRequest) {
       status: "queued",
       withdrawalId: result.payoutJobId,
       amountUnits: result.amountUnits.toString(),
-      destinationAddress: user.walletAddress,
+      destinationAddress,
       token: REWARD_TOKEN_SYMBOL,
     });
   } catch (err) {
@@ -261,7 +250,6 @@ export async function GET(req: NextRequest) {
   const user = await prisma.user.findUnique({
     where: { id: userId! },
     select: {
-      walletAddress: true,
       isBanned: true,
       submissionCount: true,
       goldCorrect: true,
@@ -308,14 +296,8 @@ export async function GET(req: NextRequest) {
     (j) => j.status === "queued" || j.status === "processing",
   );
 
-  // A valid `G…` StrKey is linked. Distinct from a legacy EVM `0x…` still sitting
-  // in `walletAddress` — the client uses this (not mere truthiness of the address)
-  // to decide the link-button label.
-  const walletLinked = !!user.walletAddress && isValidStellarAddress(user.walletAddress);
-
   const canWithdraw =
     !user.isBanned &&
-    walletLinked &&
     eligibility.eligible &&
     user.pendingBalanceUnits >= minUnits &&
     !hasInFlightWithdrawal;
@@ -323,7 +305,6 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     pendingBalanceUnits: user.pendingBalanceUnits.toString(),
     thresholdUnits: minUnits.toString(),
-    walletLinked,
     canWithdraw,
     withdrawals: jobs.map((j) => ({
       id: j.id,
