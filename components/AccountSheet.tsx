@@ -5,7 +5,6 @@ import { type ToastKind } from "@/components/Toast";
 import { truncateAddress } from "@/lib/wallet";
 import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 import { isValidStellarAddress } from "@/lib/stellar/signature";
-import StellarWalletLink from "@/components/StellarWalletLink";
 
 function formatTokenBalance(unitsStr: string): string {
   try {
@@ -61,7 +60,6 @@ interface Withdrawal {
 interface WithdrawalData {
   pendingBalanceUnits: string;
   thresholdUnits: string;
-  walletLinked: boolean;
   canWithdraw: boolean;
   withdrawals: Withdrawal[];
 }
@@ -104,6 +102,8 @@ export default function AccountSheet({
   const [withdrawalData, setWithdrawalData] = useState<WithdrawalData | null>(null);
   const [loadingWithdrawal, setLoadingWithdrawal] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
+  const [payoutAddress, setPayoutAddress] = useState("");
+  const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -139,11 +139,17 @@ export default function AccountSheet({
 
   const truncated = truncateAddress(walletAddress);
 
-  const handleWithdraw = async () => {
-    if (!withdrawalData?.canWithdraw || withdrawing) return;
+  const addressValid = isValidStellarAddress(payoutAddress.trim());
+
+  const submitWithdraw = async () => {
+    setConfirming(false);
     setWithdrawing(true);
     try {
-      const res = await fetch("/api/me/withdraw", { method: "POST" });
+      const res = await fetch("/api/me/withdraw", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ destinationAddress: payoutAddress.trim() }),
+      });
       const data = await res.json();
       if (res.ok) {
         showToast(`Withdrawal initiated: ${formatTokenBalance(data.amountUnits)} ${rewardSymbol}`, "success");
@@ -152,13 +158,18 @@ export default function AccountSheet({
           .catch(() => null);
         if (updated) setWithdrawalData(updated);
       } else {
-        showToast(data.error || "Withdrawal failed", "error");
+        showToast(data.message || data.error || "Withdrawal failed", "error");
       }
     } catch {
       showToast("Withdrawal failed", "error");
     } finally {
       setWithdrawing(false);
     }
+  };
+
+  const handleWithdraw = () => {
+    if (!withdrawalData?.canWithdraw || withdrawing || !addressValid) return;
+    setConfirming(true);
   };
 
   const handleDeleteDemographics = async () => {
@@ -254,28 +265,66 @@ export default function AccountSheet({
           <span className="font-body text-xs text-on-surface-variant">
             Min withdrawal: {loadingWithdrawal ? "..." : withdrawalData ? formatTokenBalance(withdrawalData.thresholdUnits) : "—"} {rewardSymbol}
           </span>
-          <button
-            type="button"
-            onClick={handleWithdraw}
-            disabled={loadingWithdrawal || !withdrawalData?.canWithdraw || withdrawing}
-            className="mt-3 rounded-xl bg-primary px-6 py-2 font-label text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-50"
-          >
-            {withdrawing ? "Withdrawing..." : "Withdraw"}
-          </button>
-          <StellarWalletLink
-            isLinked={!!withdrawalData?.walletLinked}
-            showToast={showToast}
-            onLinked={() => {
-              setLoadingWithdrawal(true);
-              fetch("/api/me/withdraw")
-                .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`withdraw refresh failed: ${r.status}`))))
-                .then((data) => setWithdrawalData(data))
-                .catch((err) =>
-                  console.error("Failed to refresh withdrawal data after wallet link", err),
-                )
-                .finally(() => setLoadingWithdrawal(false));
-            }}
+          <input
+            type="text"
+            value={payoutAddress}
+            onChange={(e) => setPayoutAddress(e.target.value)}
+            spellCheck={false}
+            autoCapitalize="none"
+            autoCorrect="off"
+            placeholder="Recipient Stellar address (G…)"
+            aria-label="Recipient Stellar address"
+            className="mt-3 w-full rounded-xl bg-surface-container-low px-3 py-2 font-mono text-xs text-on-surface placeholder:text-outline focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
           />
+          {payoutAddress.trim() && !addressValid && (
+            <p className="mt-1 font-body text-[11px] text-error">
+              Enter a valid Stellar address (starts with G).
+            </p>
+          )}
+          {confirming ? (
+            <div className="mt-3 w-full rounded-xl bg-surface-container-low p-3 text-center">
+              <p className="font-body text-xs text-on-surface">
+                Send{" "}
+                <strong>
+                  {withdrawalData ? formatTokenBalance(withdrawalData.pendingBalanceUnits) : "—"} {rewardSymbol}
+                </strong>{" "}
+                to
+              </p>
+              <p className="mt-1 break-all font-mono text-[11px] text-on-surface-variant">
+                {payoutAddress.trim()}
+              </p>
+              <p className="mt-1 font-body text-[10px] text-error">
+                This is irreversible. Double-check the address.
+              </p>
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirming(false)}
+                  disabled={withdrawing}
+                  className="flex-1 rounded-xl bg-surface-container-high px-4 py-2 font-label text-sm font-semibold text-on-surface-variant transition-colors hover:bg-surface-container-highest disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={submitWithdraw}
+                  disabled={withdrawing}
+                  className="flex-1 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {withdrawing ? "Sending..." : "Confirm & send"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleWithdraw}
+              disabled={loadingWithdrawal || !withdrawalData?.canWithdraw || withdrawing || !addressValid}
+              className="mt-3 rounded-xl bg-primary px-6 py-2 font-label text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-50"
+            >
+              Withdraw
+            </button>
+          )}
         </div>
 
         {withdrawalData && withdrawalData.withdrawals.length > 0 && (
