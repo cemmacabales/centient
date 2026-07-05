@@ -153,6 +153,7 @@ export default function AccountSheet({
       const data = await res.json();
       if (res.ok) {
         showToast(`Withdrawal initiated: ${formatTokenBalance(data.amountUnits)} ${rewardSymbol}`, "success");
+        setPayoutAddress("");
         const updated = await fetch("/api/me/withdraw")
           .then((r) => (r.ok ? r.json() : Promise.reject(r)))
           .catch(() => null);
@@ -308,7 +309,7 @@ export default function AccountSheet({
                 <button
                   type="button"
                   onClick={submitWithdraw}
-                  disabled={withdrawing}
+                  disabled={withdrawing || !addressValid}
                   className="flex-1 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 disabled:opacity-50"
                 >
                   {withdrawing ? "Sending..." : "Confirm & send"}
