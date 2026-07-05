@@ -25,6 +25,7 @@ import {
   shouldFireAlert,
   recordAlertFired,
   getWalletHealth,
+  TRUSTLINE_RESERVE_XLM,
 } from "../balance";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -138,5 +139,34 @@ describe("getWalletHealth", () => {
     expect(health.usdcBalance).toBe("0.0000");
     expect(health.healthy).toBe(false);
     expect(health.pages.join(" ")).toMatch(/USDC/);
+  });
+});
+
+describe("getWalletHealth sponsored-reserve accounting", () => {
+  it("subtracts 0.5 XLM per num_sponsoring from the XLM floor", async () => {
+    // 6 XLM raw, but 10 sponsored trustlines lock 5 XLM → 1 XLM available,
+    // which is at/below the default page threshold (2 XLM) → pages.
+    mockLoadAccount.mockResolvedValue({
+      num_sponsoring: 10,
+      balances: [
+        { asset_type: "native", balance: "6.0000000" },
+        { asset_type: "credit_alphanum4", asset_code: "USDC", asset_issuer: ISSUER, balance: "100.0" },
+      ],
+    });
+    const health = await getWalletHealth();
+    expect(TRUSTLINE_RESERVE_XLM).toBe(0.5);
+    expect(health.numSponsoring).toBe(10);
+    expect(health.sponsoredReserveXlm).toBe("5.0000");
+    expect(health.healthy).toBe(false);
+    expect(health.pages.join(" ")).toMatch(/XLM/);
+  });
+
+  it("treats a missing num_sponsoring as 0", async () => {
+    mockLoadAccount.mockResolvedValue({
+      balances: [{ asset_type: "native", balance: "50.0" }],
+    });
+    const health = await getWalletHealth();
+    expect(health.numSponsoring).toBe(0);
+    expect(health.sponsoredReserveXlm).toBe("0.0000");
   });
 });

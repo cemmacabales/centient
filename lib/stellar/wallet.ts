@@ -32,6 +32,7 @@
 // is import-safe under SSR (no `window` access at module load) and the wallet
 // bundles stay out of the server build.
 import { isValidStellarAddress } from "./signature";
+import { networkPassphrase } from "./config";
 
 /** Which signing scheme produced a signature — selects the server verify path. */
 export type SignatureScheme = "sep53" | "albedo";
@@ -147,6 +148,44 @@ export async function signOwnership(
     scheme: "sep53",
     wallet: "freighter",
   };
+}
+
+/**
+ * Co-sign a server-built transaction XDR with the connected wallet and return the
+ * signed XDR. Used for the ST-4e sponsored-trustline flow: the platform has
+ * already signed as sponsor; the recipient adds their signature here. Freighter
+ * only — Albedo stays connect-only (no server-orchestrated signing path yet), so
+ * it throws the same guidance as `signOwnership`.
+ *
+ * @param xdr             The platform-signed transaction envelope (base64 XDR).
+ * @param expectedAddress The G… address whose signature is required; the wallet
+ *                        signer must match it exactly (case-sensitive).
+ */
+export async function signTransaction(
+  xdr: string,
+  expectedAddress: string,
+): Promise<string> {
+  assertAddress(expectedAddress);
+
+  if (!(await isFreighterAvailable())) {
+    throw new Error(
+      "Albedo cannot co-sign a sponsored trustline server-side yet. " +
+        "Install Freighter to set up USDC payouts.",
+    );
+  }
+
+  const { signTransaction: freighterSign } = await import("@stellar/freighter-api");
+  const res = await freighterSign(xdr, {
+    address: expectedAddress,
+    networkPassphrase: networkPassphrase(),
+  });
+  if (res.error) throw new Error(`Freighter signing failed: ${res.error.message}`);
+  if (res.signerAddress !== expectedAddress) {
+    throw new Error(
+      `Signed with the wrong account: expected ${expectedAddress}, got ${res.signerAddress}.`,
+    );
+  }
+  return res.signedTxXdr;
 }
 
 /** Guard a wallet-returned address: reject non-StrKey / corrupted input. */

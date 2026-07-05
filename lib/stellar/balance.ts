@@ -13,6 +13,10 @@ import { server } from "./config";
 
 const MAX_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
 
+/** XLM reserve locked per sponsored reserve unit (Horizon num_sponsoring counts an
+ * account-creation sponsorship as multiple units). */
+export const TRUSTLINE_RESERVE_XLM = 0.5;
+
 /** Balance line as returned by Horizon `account.balances[]` (subset we read). */
 interface HorizonBalanceLine {
   asset_type: string;
@@ -52,6 +56,10 @@ export interface WalletHealth {
   usdcBalance: string;
   /** XLM held for fees + base/trustline reserves. */
   xlmBalance: string;
+  /** Count of trustlines the platform is sponsoring (Horizon num_sponsoring). */
+  numSponsoring: number;
+  /** XLM locked by those sponsorships (0.5 × numSponsoring), informational. */
+  sponsoredReserveXlm: string;
   rewardTokenSymbol: string;
   healthy: boolean;
   warnings: string[];
@@ -63,11 +71,9 @@ export function parseBalanceThresholds(): BalanceThresholds {
   return {
     warnUsdc: Number(process.env.BALANCE_WARN_USDC ?? "50"),
     pageUsdc: Number(process.env.BALANCE_PAGE_USDC ?? "10"),
-    // XLM floor must cover fees + the account's base reserve and every trustline
-    // reserve. NOTE (ST-4e #314): once the platform sponsors recipient USDC
-    // trustlines, this floor must also budget 0.5 XLM × outstanding sponsored
-    // trustlines (+ ~1 XLM per sponsored account). That liability source doesn't
-    // exist until ST-4e lands; the threshold is env-tunable in the meantime.
+    // XLM floor covers fees + the account's base reserve + every trustline
+    // reserve. Sponsored recipient trustlines are subtracted from the balance in
+    // getWalletHealth (ST-4e #314), so this threshold stays fee-oriented.
     warnXlm: Number(process.env.BALANCE_WARN_XLM ?? "5"),
     pageXlm: Number(process.env.BALANCE_PAGE_XLM ?? "2"),
   };
@@ -152,6 +158,8 @@ export async function getWalletHealth(): Promise<WalletHealth> {
       address: "—",
       usdcBalance: "—",
       xlmBalance: "—",
+      numSponsoring: 0,
+      sponsoredReserveXlm: "0.0000",
       rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
       healthy: false,
       warnings: ["STELLAR_PLATFORM_SECRET not configured"],
@@ -162,14 +170,18 @@ export async function getWalletHealth(): Promise<WalletHealth> {
 
   let xlm = 0;
   let usdc = 0;
+  let numSponsoring = 0;
   try {
     const account = await server().loadAccount(address);
     ({ xlm, usdc } = extractBalances(account.balances as HorizonBalanceLine[]));
+    numSponsoring = Number((account as { num_sponsoring?: number }).num_sponsoring ?? 0);
   } catch {
     return {
       address,
       usdcBalance: "—",
       xlmBalance: "—",
+      numSponsoring: 0,
+      sponsoredReserveXlm: "0.0000",
       rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
       healthy: false,
       warnings: ["STELLAR_PLATFORM_SECRET not configured or Horizon unavailable"],
@@ -178,12 +190,20 @@ export async function getWalletHealth(): Promise<WalletHealth> {
     };
   }
 
-  const { healthy, warnings, pages } = evaluateThresholds(xlm, usdc, thresholds);
+  // Sponsored reserves are locked on the platform account — subtract them so the
+  // XLM floor reflects *available* fee XLM, not reserves the platform can't spend
+  // (ST-4e #314). USDC float is unaffected.
+  const sponsoredReserveXlm = TRUSTLINE_RESERVE_XLM * numSponsoring;
+  const availableXlm = xlm - sponsoredReserveXlm;
+
+  const { healthy, warnings, pages } = evaluateThresholds(availableXlm, usdc, thresholds);
 
   return {
     address,
     usdcBalance: usdc.toFixed(4),
     xlmBalance: xlm.toFixed(4),
+    numSponsoring,
+    sponsoredReserveXlm: sponsoredReserveXlm.toFixed(4),
     rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
     healthy,
     warnings,

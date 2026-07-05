@@ -18,6 +18,7 @@ import {
   BASE_FEE,
   Keypair,
   Operation,
+  Transaction,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
 import { Mutex } from "async-mutex";
@@ -196,6 +197,204 @@ export async function accountHasUsdcTrustline(address: string): Promise<boolean>
   } catch (err) {
     const status = (err as { response?: { status?: number } })?.response?.status;
     if (status === 404) return false;
+    throw err;
+  }
+}
+
+/**
+ * Does `address` exist on-chain? A Horizon 404 means the account is unfunded /
+ * never created (so it needs sponsored creation before it can hold a trustline).
+ */
+async function accountExists(address: string): Promise<boolean> {
+  try {
+    await server().loadAccount(address);
+    return true;
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    if (status === 404) return false;
+    throw err;
+  }
+}
+
+/**
+ * Build a CAP-33 platform-sponsored USDC-trustline transaction for `recipientG`
+ * and platform-sign it. The platform is the transaction source (sequence + fee)
+ * and the sponsor; the recipient owns (and must also sign) the `changeTrust` and
+ * `endSponsoring` ops, but pays no reserve. If the recipient account does not yet
+ * exist, a sponsored `createAccount(recipient, "0")` is prepended.
+ *
+ * Sequence: built from the platform's *current* sequence but submitted later
+ * (after the recipient signs in-browser), so a concurrent payUsdc may consume it
+ * first → tx_bad_seq at submit; the caller re-runs the flow (simple strategy,
+ * ST-4e #314). Returns the base64 XDR for the browser to co-sign.
+ */
+export async function buildSponsoredTrustlineTx(
+  recipientG: string,
+): Promise<{ xdr: string; kind: "trustline" | "account+trustline" }> {
+  const kp = platformKeypair();
+  const srv = server();
+  const account = await srv.loadAccount(kp.publicKey());
+  const fee = await srv.fetchBaseFee().catch(() => Number(BASE_FEE));
+  const exists = await accountExists(recipientG);
+
+  const builder = new TransactionBuilder(account, {
+    fee: String(fee),
+    networkPassphrase: networkPassphrase(),
+  }).addOperation(Operation.beginSponsoringFutureReserves({ sponsoredId: recipientG }));
+
+  if (!exists) {
+    builder.addOperation(
+      Operation.createAccount({ destination: recipientG, startingBalance: "0" }),
+    );
+  }
+
+  const tx = builder
+    .addOperation(Operation.changeTrust({ asset: usdcAsset(), source: recipientG }))
+    .addOperation(Operation.endSponsoringFutureReserves({ source: recipientG }))
+    .setTimeout(TX_TIMEOUT_SECONDS)
+    .build();
+  tx.sign(kp);
+
+  return { xdr: tx.toXDR(), kind: exists ? "trustline" : "account+trustline" };
+}
+
+/**
+ * Assert `xdr` is exactly a platform-sponsored USDC-trustline sandwich for a
+ * single recipient — begin / [createAccount] / changeTrust(USDC) / end, no other
+ * op types (esp. no payment). Defense in depth: the platform already signed a
+ * fixed envelope (tampering invalidates that signature), but we re-check the
+ * sponsored target + asset before submitting. Throws `invalid_sponsor_tx`.
+ *
+ * Fix 2: also asserts `beginSponsoringFutureReserves.sponsoredId === expectedRecipient`.
+ * Fix 4: also asserts `endSponsoringFutureReserves.source === sponsored`.
+ */
+function assertSponsoredTrustlineShape(tx: Transaction, expectedRecipient: string): void {
+  const types = tx.operations.map((o) => o.type);
+  const withAccount = ["beginSponsoringFutureReserves", "createAccount", "changeTrust", "endSponsoringFutureReserves"];
+  const withoutAccount = ["beginSponsoringFutureReserves", "changeTrust", "endSponsoringFutureReserves"];
+  const ok =
+    JSON.stringify(types) === JSON.stringify(withAccount) ||
+    JSON.stringify(types) === JSON.stringify(withoutAccount);
+  if (!ok) {
+    throw new StellarPaymentError(
+      `submitSponsoredTrustline: unexpected op shape [${types.join(", ")}]`,
+      "invalid_sponsor_tx",
+      false,
+    );
+  }
+  const begin = tx.operations[0] as { sponsoredId?: string };
+  const changeTrust = tx.operations.find((o) => o.type === "changeTrust") as
+    | { source?: string; line?: { code?: string; issuer?: string } }
+    | undefined;
+  const asset = usdcAsset();
+  const sponsored = begin.sponsoredId;
+  if (
+    !sponsored ||
+    !changeTrust ||
+    changeTrust.source !== sponsored ||
+    changeTrust.line?.code !== asset.getCode() ||
+    changeTrust.line?.issuer !== asset.getIssuer()
+  ) {
+    throw new StellarPaymentError(
+      "submitSponsoredTrustline: sponsored target / asset mismatch",
+      "invalid_sponsor_tx",
+      false,
+    );
+  }
+  // Fix 2: the envelope's sponsoredId must match the address the route validated.
+  // Guards against an injected envelope targeting a different account while reusing
+  // a valid shape (the platform signature check is defense-in-depth; this is an
+  // additional semantic guard).
+  if (sponsored !== expectedRecipient) {
+    throw new StellarPaymentError(
+      "submitSponsoredTrustline: sponsored target does not match expected recipient",
+      "invalid_sponsor_tx",
+      false,
+    );
+  }
+  const createAccount = tx.operations.find((o) => o.type === "createAccount") as
+    | { destination?: string }
+    | undefined;
+  if (createAccount && createAccount.destination !== sponsored) {
+    throw new StellarPaymentError(
+      "submitSponsoredTrustline: createAccount destination does not match sponsoredId",
+      "invalid_sponsor_tx",
+      false,
+    );
+  }
+  // Fix 4: the endSponsoringFutureReserves op must be sourced by the recipient
+  // (sponsored), not some other party.
+  const endSponsoring = tx.operations.find((o) => o.type === "endSponsoringFutureReserves") as
+    | { source?: string }
+    | undefined;
+  if (!endSponsoring || endSponsoring.source !== sponsored) {
+    throw new StellarPaymentError(
+      "submitSponsoredTrustline: endSponsoringFutureReserves.source does not match sponsored",
+      "invalid_sponsor_tx",
+      false,
+    );
+  }
+}
+
+/**
+ * Submit a recipient-co-signed sponsored-trustline XDR (from
+ * {@link buildSponsoredTrustlineTx}). Validates the op shape and asserts the
+ * envelope targets `expectedRecipient`, then submits.
+ * Maps: `op_low_reserve` → non-retryable (platform lacks XLM for the sponsored
+ * reserves); `tx_bad_seq` → retryable (caller re-runs the flow); shape mismatch
+ * or garbage input → non-retryable `invalid_sponsor_tx` (→ 400 at the route).
+ * A `changeTrust` on an already-trusting line is idempotent.
+ *
+ * NOTE: the sponsor path is intentionally NOT serialized by `seqMutex` (simple
+ * strategy; payUsdc self-heals via its tx_bad_seq retry).
+ */
+export async function submitSponsoredTrustline(
+  signedXdr: string,
+  expectedRecipient: string,
+): Promise<{ hash: string }> {
+  // Fix 3: wrap XDR parse so garbage input / fee-bump envelopes become
+  // `invalid_sponsor_tx` (→ 400) instead of a raw JS error (→ 502).
+  let tx: Transaction;
+  try {
+    const parsed = TransactionBuilder.fromXDR(signedXdr, networkPassphrase());
+    if (!(parsed instanceof Transaction)) {
+      throw new StellarPaymentError(
+        "submitSponsoredTrustline: fee-bump or non-standard envelope not accepted",
+        "invalid_sponsor_tx",
+        false,
+      );
+    }
+    tx = parsed;
+  } catch (err) {
+    if (err instanceof StellarPaymentError) throw err;
+    throw new StellarPaymentError(
+      "submitSponsoredTrustline: could not parse XDR (malformed or garbage input)",
+      "invalid_sponsor_tx",
+      false,
+    );
+  }
+  // Fix 2 + Fix 4: validate shape, recipient match, and end-sponsoring source.
+  assertSponsoredTrustlineShape(tx, expectedRecipient);
+  try {
+    const res = await server().submitTransaction(tx);
+    return { hash: res.hash };
+  } catch (err) {
+    if (err instanceof StellarPaymentError) throw err;
+    const codes = resultCodes(err);
+    if (codes.operations?.includes("op_low_reserve")) {
+      throw new StellarPaymentError(
+        "submitSponsoredTrustline: platform account cannot fund sponsored reserves (op_low_reserve)",
+        "op_low_reserve",
+        false,
+      );
+    }
+    if (codes.transaction === "tx_bad_seq") {
+      throw new StellarPaymentError(
+        "submitSponsoredTrustline: stale sequence (tx_bad_seq) — rebuild and retry",
+        "tx_bad_seq",
+        true,
+      );
+    }
     throw err;
   }
 }
