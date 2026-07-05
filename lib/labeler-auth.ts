@@ -82,6 +82,17 @@ export async function setLabelerSessionCookie(
   return res;
 }
 
+export function clearLabelerSessionCookie(res: NextResponse): NextResponse {
+  res.cookies.set(COOKIE_NAME, "", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 0, // expire immediately
+    path: "/",
+  });
+  return res;
+}
+
 export function requireLabelerSession(
   userId: string | null
 ): void | NextResponse {
