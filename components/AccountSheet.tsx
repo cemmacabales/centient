@@ -474,6 +474,15 @@ export default function AccountSheet({
             </ul>
           )}
         </div>
+
+        <form action="/api/auth/logout" method="post" className="mt-6 border-t border-outline-variant/20 pt-6">
+          <button
+            type="submit"
+            className="w-full rounded-xl bg-surface-container-high py-3 text-center font-label text-sm font-semibold text-on-surface-variant transition-colors hover:bg-surface-container-highest focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          >
+            Log out
+          </button>
+        </form>
       </div>
     </div>
   );
