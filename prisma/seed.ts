@@ -1088,6 +1088,46 @@ async function main() {
   } else {
     console.log("Centient customer already exists — leaving untouched");
   }
+
+  // Demo labeler — a ready-to-withdraw account for local demos/QA. Logs in via
+  // email/password at /api/auth/login (isVerified required). The balance is set
+  // comfortably above MIN_WITHDRAWAL_UNITS (default 10_000_000 = 1 USDC at 7
+  // decimals) and the eligibility stats clear the anti-fraud gates, so the
+  // Withdraw button is enabled immediately. Re-seeding resets the balance so the
+  // account is withdrawable again after a demo withdrawal spends it down.
+  const demoEmail = "demo@centient.work";
+  const demoPassword = process.env.DEMO_LABELER_PASSWORD ?? "Demo!123";
+  const demoPasswordHash = await bcrypt.hash(demoPassword, 12);
+  const demoBalanceUnits = 50_000_000n; // 5 USDC (7 decimals)
+  // Backdate creation so WITHDRAWAL_MIN_ACCOUNT_AGE_HOURS (if set) is satisfied.
+  const demoCreatedAt = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const demoStats = {
+    isVerified: true,
+    verifiedAt: demoCreatedAt,
+    onboardingCompleted: true,
+    totalEarnedUnits: demoBalanceUnits,
+    pendingBalanceUnits: demoBalanceUnits,
+    submissionCount: 120,
+    goldCorrect: 45,
+    goldAttempted: 50,
+    country: "US",
+    gender: "prefer_not_to_say",
+    ageRange: "25-34",
+  };
+  const demoUser = await prisma.user.upsert({
+    where: { email: demoEmail },
+    update: { passwordHash: demoPasswordHash, ...demoStats },
+    create: {
+      email: demoEmail,
+      passwordHash: demoPasswordHash,
+      createdAt: demoCreatedAt,
+      ...demoStats,
+    },
+  });
+  console.log(
+    `Seeded demo labeler '${demoEmail}' (password '${demoPassword}') with ` +
+      `${demoBalanceUnits} units (5 USDC) ready to withdraw [id=${demoUser.id}]`,
+  );
 }
 
 main()
