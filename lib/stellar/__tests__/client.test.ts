@@ -84,14 +84,19 @@ describe("payUsdc", () => {
     expect(srv.loadAccount).toHaveBeenCalledTimes(2); // fresh sequence on retry
   });
 
-  it("propagates a second consecutive tx_bad_seq (no infinite retry)", async () => {
+  it("surfaces a second consecutive tx_bad_seq as a retryable StellarPaymentError (no infinite retry, requeue-able)", async () => {
     const submit = vi.fn().mockRejectedValue(badSeqError());
     mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
 
-    await expect(payUsdc(destPub, 1n)).rejects.toMatchObject(
-      horizonError({ transaction: "tx_bad_seq" }),
-    );
-    expect(submit).toHaveBeenCalledTimes(2); // initial + one retry, then give up
+    // After the one in-call reload+resubmit still hits tx_bad_seq, payUsdc gives up
+    // but classifies it so the worker requeues (backoff via the job queue) instead of
+    // treating an opaque raw Horizon error as a generic failure.
+    await expect(payUsdc(destPub, 1n)).rejects.toMatchObject({
+      name: "StellarPaymentError",
+      code: "tx_bad_seq",
+      retryable: true,
+    });
+    expect(submit).toHaveBeenCalledTimes(2); // initial + one in-call retry, then give up
   });
 
   it("throws a non-retryable StellarPaymentError on op_no_destination and never retries", async () => {

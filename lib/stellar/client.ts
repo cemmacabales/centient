@@ -139,9 +139,25 @@ export async function payUsdc(to: string, amountUnits: bigint): Promise<{ hash: 
         );
       }
 
-      // Stale sequence — reload + resubmit exactly once.
+      // Stale sequence — reload + resubmit exactly once. If the resubmit *also*
+      // hits tx_bad_seq (sustained sequence contention on the pooled account),
+      // give up in-call but classify it as a retryable StellarPaymentError so the
+      // worker requeues the job — backoff via the job queue's own retry loop —
+      // rather than seeing an opaque raw Horizon error. Any other failure on the
+      // resubmit bubbles up unchanged.
       if (codes.transaction === "tx_bad_seq") {
-        return await buildSignSubmit(kp, to, amountUsdc);
+        try {
+          return await buildSignSubmit(kp, to, amountUsdc);
+        } catch (retryErr) {
+          if (resultCodes(retryErr).transaction === "tx_bad_seq") {
+            throw new StellarPaymentError(
+              `payUsdc: destination ${to} — sustained sequence contention (tx_bad_seq after one reload+resubmit); requeue`,
+              "tx_bad_seq",
+              true,
+            );
+          }
+          throw retryErr;
+        }
       }
 
       throw err;
