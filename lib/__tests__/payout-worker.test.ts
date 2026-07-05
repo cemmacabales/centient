@@ -22,6 +22,7 @@ vi.mock("@/lib/stellar/balance", () => ({
 
 import { processJob } from "@/lib/payout-worker";
 import { payReward, PayoutCapError } from "@/lib/payout";
+import { StellarPaymentError } from "@/lib/stellar/client";
 import { creditBalance } from "@/lib/campaign-balance";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 import { createUser, createTask, createCampaign, VALID_REASON } from "@/tests/helpers/factories";
@@ -186,5 +187,76 @@ describe("payout-worker campaign balance refunds", () => {
 
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
     expect(updated?.payoutStatus).toBe("failed");
+  });
+});
+
+// ST-6a: the worker classifies rail errors by StellarPaymentError.retryable.
+// Non-retryable (op_no_trust / op_no_destination) → fail immediately + refund,
+// even with retry budget remaining (a blind retry can never succeed). Retryable
+// (tx_bad_seq after payUsdc's in-call reload) → requeue, no refund, budget intact.
+describe("payout-worker rail-error classification (ST-6a)", () => {
+  it("fails immediately and refunds on a non-retryable op_no_trust, even with retries left", async () => {
+    vi.mocked(payReward).mockRejectedValueOnce(
+      new StellarPaymentError("no USDC trustline", "op_no_trust", false),
+    );
+    const campaign = await createCampaign();
+    const { submission, job, user } = await enqueuePendingPayout({
+      campaignId: campaign.id,
+      retryCount: 0, // budget still available — non-retryable must not requeue
+    });
+
+    await processJob(job.id, submission.id, user.id, submission.payoutAmountUnits, "SUBMISSION_PAYOUT");
+
+    expect(creditBalance).toHaveBeenCalledOnce();
+    expect(creditBalance).toHaveBeenCalledWith(
+      campaign.id,
+      expect.any(BigInt),
+      expect.stringContaining("op_no_trust"),
+      "REFUND",
+    );
+    const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
+    expect(updated?.payoutStatus).toBe("failed");
+    expect(updated?.payoutError).toContain("op_no_trust");
+    const updatedJob = await prisma.payoutJob.findUnique({ where: { id: job.id } });
+    expect(updatedJob?.status).toBe("failed");
+    expect(updatedJob?.retryCount).toBe(3); // budget consumed so it never re-runs
+  });
+
+  it("fails immediately on a non-retryable op_no_destination", async () => {
+    vi.mocked(payReward).mockRejectedValueOnce(
+      new StellarPaymentError("unfunded destination", "op_no_destination", false),
+    );
+    const campaign = await createCampaign();
+    const { submission, job, user } = await enqueuePendingPayout({
+      campaignId: campaign.id,
+      retryCount: 0,
+    });
+
+    await processJob(job.id, submission.id, user.id, submission.payoutAmountUnits, "SUBMISSION_PAYOUT");
+
+    const updatedJob = await prisma.payoutJob.findUnique({ where: { id: job.id } });
+    expect(updatedJob?.status).toBe("failed");
+    expect(updatedJob?.lastError).toContain("op_no_destination");
+    expect(creditBalance).toHaveBeenCalledOnce();
+  });
+
+  it("requeues (no refund, budget intact) on a retryable tx_bad_seq StellarPaymentError", async () => {
+    vi.mocked(payReward).mockRejectedValueOnce(
+      new StellarPaymentError("sustained sequence contention", "tx_bad_seq", true),
+    );
+    const campaign = await createCampaign();
+    const { submission, job, user } = await enqueuePendingPayout({
+      campaignId: campaign.id,
+      retryCount: 0,
+    });
+
+    await processJob(job.id, submission.id, user.id, submission.payoutAmountUnits, "SUBMISSION_PAYOUT");
+
+    expect(creditBalance).not.toHaveBeenCalled();
+    const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
+    expect(updated?.payoutStatus).toBe("pending");
+    const updatedJob = await prisma.payoutJob.findUnique({ where: { id: job.id } });
+    expect(updatedJob?.status).toBe("queued");
+    expect(updatedJob?.retryCount).toBe(1); // incremented, not exhausted
   });
 });
