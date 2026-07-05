@@ -4,6 +4,6 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "preDeployCommand": "npx prisma migrate deploy"
+    "preDeployCommand": "npx prisma migrate deploy && if [ \"$SEED_ON_DEPLOY\" = \"true\" ]; then npx prisma db seed; else echo 'SEED_ON_DEPLOY not set — skipping seed'; fi"
   }
 }
