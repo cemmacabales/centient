@@ -250,7 +250,6 @@ export async function GET(req: NextRequest) {
   const user = await prisma.user.findUnique({
     where: { id: userId! },
     select: {
-      walletAddress: true,
       isBanned: true,
       submissionCount: true,
       goldCorrect: true,
@@ -297,14 +296,8 @@ export async function GET(req: NextRequest) {
     (j) => j.status === "queued" || j.status === "processing",
   );
 
-  // A valid `G…` StrKey is linked. Distinct from a legacy EVM `0x…` still sitting
-  // in `walletAddress` — the client uses this (not mere truthiness of the address)
-  // to decide the link-button label.
-  const walletLinked = !!user.walletAddress && isValidStellarAddress(user.walletAddress);
-
   const canWithdraw =
     !user.isBanned &&
-    walletLinked &&
     eligibility.eligible &&
     user.pendingBalanceUnits >= minUnits &&
     !hasInFlightWithdrawal;
@@ -312,7 +305,6 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     pendingBalanceUnits: user.pendingBalanceUnits.toString(),
     thresholdUnits: minUnits.toString(),
-    walletLinked,
     canWithdraw,
     withdrawals: jobs.map((j) => ({
       id: j.id,

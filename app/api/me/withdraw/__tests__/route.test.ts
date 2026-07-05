@@ -555,19 +555,20 @@ describe("GET /api/me/withdraw (summary)", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns the balance, threshold, empty history, and canWithdraw=false with no linked wallet", async () => {
+  it("returns balance, threshold, empty history, and canWithdraw=true above the minimum", async () => {
     const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
 
     const res = await GET(makeGetReq());
     expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({
+    const body = await res.json();
+    expect(body).toMatchObject({
       pendingBalanceUnits: "5000000000000000000",
       thresholdUnits: MIN,
-      walletLinked: false,
-      canWithdraw: false,
+      canWithdraw: true,
       withdrawals: [],
     });
+    expect(body).not.toHaveProperty("walletLinked");
   });
 
   it("reports canWithdraw=false when the balance is below the minimum", async () => {
@@ -578,25 +579,15 @@ describe("GET /api/me/withdraw (summary)", () => {
     expect(body.canWithdraw).toBe(false);
   });
 
-  it("reports walletLinked=false and canWithdraw=false for a legacy 0x wallet (must re-link a G… address)", async () => {
-    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: makeWallet() });
+  it("reports canWithdraw=true for an eligible user with enough balance", async () => {
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
 
     const body = await (await GET(makeGetReq())).json();
-    expect(body.walletLinked).toBe(false);
-    expect(body.canWithdraw).toBe(false);
-  });
-
-  it("reports walletLinked=true and canWithdraw=true for an eligible user with a G… wallet and enough balance", async () => {
-    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: G_WALLET });
-    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
-
-    const body = await (await GET(makeGetReq())).json();
-    expect(body.walletLinked).toBe(true);
     expect(body.canWithdraw).toBe(true);
   });
 
-  it("reports canWithdraw=false (but walletLinked=true) when a withdrawal is already in flight", async () => {
+  it("reports canWithdraw=false when a withdrawal is already in flight", async () => {
     const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: G_WALLET });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
 
@@ -611,7 +602,6 @@ describe("GET /api/me/withdraw (summary)", () => {
     });
 
     const body = await (await GET(makeGetReq())).json();
-    expect(body.walletLinked).toBe(true);
     expect(body.canWithdraw).toBe(false);
   });
 
