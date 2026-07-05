@@ -46,6 +46,18 @@ export default function StellarWalletLink({
       );
       const data = await res.json();
       if (!res.ok) {
+        // #330: the platform caps how many payout wallets it will fund per account.
+        if (res.status === 429 && data.error === "sponsorship_cap_reached") {
+          showToast(
+            "You've reached the limit of payout wallets we can set up for your account. Use a wallet you've already linked.",
+            "error",
+          );
+          return false;
+        }
+        if (res.status === 409 && data.error === "address_in_use") {
+          showToast("This Stellar address is already set up for another account.", "error");
+          return false;
+        }
         showToast(data.error ?? "Could not set up USDC payouts", "error");
         return false;
       }
@@ -65,6 +77,17 @@ export default function StellarWalletLink({
 
       const err = await submit.json();
       if (submit.status === 409 && err.error === "retry") continue; // rebuild + re-sign
+      if (submit.status === 429 && err.error === "sponsorship_cap_reached") {
+        showToast(
+          "You've reached the limit of payout wallets we can set up for your account. Use a wallet you've already linked.",
+          "error",
+        );
+        return false;
+      }
+      if (submit.status === 409 && err.error === "address_in_use") {
+        showToast("This Stellar address is already set up for another account.", "error");
+        return false;
+      }
       if (submit.status === 503) {
         showToast("Payouts are temporarily unavailable. Please try again shortly.", "error");
         return false;
