@@ -36,8 +36,16 @@ const G_USERS = [
   "GCKPZ3UTFJAAMPWA2INEQKPQNLLI7EEI7QKQ6FVWV2ETRPVIJWM3AXE7",
 ];
 
-function makeReq(): NextRequest {
-  return new NextRequest("http://localhost/api/me/withdraw", { method: "POST" });
+// Pass null to send no body (testing missing_address); omit or pass a G… string for the normal path.
+// NOTE: `undefined` cannot be used as the no-body sentinel because JavaScript default parameter
+// semantics apply the `= G_WALLET` default whenever the argument is `undefined`, making it
+// impossible to distinguish "caller passed undefined" from "caller passed nothing".
+function makeReq(destinationAddress: string | null = G_WALLET): NextRequest {
+  return new NextRequest("http://localhost/api/me/withdraw", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: destinationAddress !== null ? JSON.stringify({ destinationAddress }) : undefined,
+  });
 }
 
 function makeGetReq(): NextRequest {
@@ -79,14 +87,12 @@ describe("POST /api/me/withdraw", () => {
     expect(await res.json()).toEqual({ error: "account_frozen" });
   });
 
-  it("returns 400 when the user has no linked wallet", async () => {
-    const user = await prisma.user.create({
-      data: { walletAddress: null, pendingBalanceUnits: 5000000000000000000n },
-    });
+  it("returns 400 missing_address when no destination address is supplied", async () => {
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
-    const res = await POST(makeReq());
+    const res = await POST(makeReq(null));
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: "no_wallet_linked" });
+    expect(await res.json()).toEqual({ error: "missing_address" });
   });
 
   it("returns 400 below_minimum when balance is under the threshold", async () => {
@@ -111,7 +117,7 @@ describe("POST /api/me/withdraw", () => {
     const body = await res.json();
     expect(body.status).toBe("queued");
     expect(body.amountUnits).toBe("5000000000000000000");
-    expect(body.destinationAddress).toBe(user.walletAddress);
+    expect(body.destinationAddress).toBe(G_WALLET);
     expect(body.withdrawalId).toBeTruthy();
 
     const jobs = await prisma.payoutJob.findMany({ where: { userId: user.id } });
@@ -128,16 +134,14 @@ describe("POST /api/me/withdraw", () => {
     expect(ledger).toHaveLength(1);
   });
 
-  it("returns 400 invalid_wallet when the linked address is not a valid StrKey", async () => {
-    // Default factory wallet is a legacy EVM `0x…` — not a Stellar `G…`.
+  it("returns 400 invalid_wallet when the destination is not a valid StrKey", async () => {
     const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
 
-    const res = await POST(makeReq());
+    const res = await POST(makeReq(makeWallet())); // legacy 0x… — not a Stellar G…
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "invalid_wallet" });
-    // No funds touched, no job enqueued.
     expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(0);
     const after = await prisma.user.findUnique({ where: { id: user.id } });
     expect(after?.pendingBalanceUnits).toBe(5000000000000000000n);
@@ -156,6 +160,18 @@ describe("POST /api/me/withdraw", () => {
     expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(0);
     const after = await prisma.user.findUnique({ where: { id: user.id } });
     expect(after?.pendingBalanceUnits).toBe(5000000000000000000n);
+  });
+
+  it("returns 409 no_trustline for a typed address with no USDC trustline", async () => {
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+    vi.mocked(accountHasUsdcTrustline).mockResolvedValue(false);
+
+    const res = await POST(makeReq(G_WALLET));
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("no_trustline");
+    expect(await prisma.payoutJob.count({ where: { userId: user.id } })).toBe(0);
   });
 
   describe("P4a eligibility gates", () => {
@@ -310,24 +326,20 @@ describe("POST /api/me/withdraw", () => {
     expect(body.reason).toBe("test ban");
   });
 
-  it("returns 403 when the user's wallet is banned", async () => {
-    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n, walletAddress: G_WALLET });
+  it("returns 403 when the destination wallet is banned", async () => {
+    const user = await createUser({ pendingBalanceUnits: 5000000000000000000n });
     await prisma.bannedIdentity.create({
-      data: {
-        identifierType: "WALLET",
-        identifierValue: user.walletAddress!, // case-preserved StrKey
-        reason: "wallet ban",
-      },
+      data: { identifierType: "WALLET", identifierValue: G_WALLET, reason: "wallet ban" },
     });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
 
-    const res = await POST(makeReq());
+    const res = await POST(makeReq(G_WALLET));
 
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toBe("identity_banned");
     expect(body.identifierType).toBe("WALLET");
-    expect(body.identifierValue).toBe(user.walletAddress!);
+    expect(body.identifierValue).toBe(G_WALLET);
   });
 
   it("returns 403 when the userId is banned", async () => {
@@ -366,36 +378,28 @@ describe("POST /api/me/withdraw", () => {
     expect(res.status).toBe(200);
   });
 
-  it("returns 403 when shared wallet has received from MAX_WALLET_ACCOUNT_COUNT accounts", async () => {
+  it("returns 403 when the destination wallet has received from too many accounts", async () => {
     const sharedWallet = G_SHARED;
     const users = await Promise.all(
       Array.from({ length: 3 }, (_, i) =>
-        createUser({
-          walletAddress: G_USERS[i],
-          pendingBalanceUnits: 5000000000000000000n,
-        }),
+        createUser({ walletAddress: G_USERS[i], pendingBalanceUnits: 5000000000000000000n }),
       ),
     );
-
     for (const user of users) {
       await prisma.payoutJob.create({
         data: {
           type: "WITHDRAWAL",
           userId: user.id,
           amountUnits: 1000000000000000000n,
-          destinationAddress: sharedWallet, // case-preserved StrKey
+          destinationAddress: sharedWallet,
           status: "done",
         },
       });
     }
-
-    const abuser = await createUser({
-      walletAddress: sharedWallet,
-      pendingBalanceUnits: 5000000000000000000n,
-    });
+    const abuser = await createUser({ pendingBalanceUnits: 5000000000000000000n });
     vi.mocked(getLabelerSession).mockResolvedValue(abuser.id);
 
-    const res = await POST(makeReq());
+    const res = await POST(makeReq(sharedWallet));
 
     expect(res.status).toBe(403);
     const body = await res.json();
@@ -430,13 +434,10 @@ describe("POST /api/me/withdraw", () => {
     // The new user links a valid Stellar `G…` (so it clears the StrKey + trustline
     // gates); the seeded 0x shared-wallet jobs are below the threshold, so the
     // shared-wallet gate passes and the withdrawal proceeds.
-    const newUser = await createUser({
-      walletAddress: G_WALLET,
-      pendingBalanceUnits: 5000000000000000000n,
-    });
+    const newUser = await createUser({ pendingBalanceUnits: 5000000000000000000n });
     vi.mocked(getLabelerSession).mockResolvedValue(newUser.id);
 
-    const res = await POST(makeReq());
+    const res = await POST(makeReq(G_WALLET));
 
     expect(res.status).toBe(200);
   });
@@ -464,13 +465,10 @@ describe("POST /api/me/withdraw", () => {
     });
 
     it("records a SHARED_WALLET flag when a shared wallet is blocked", async () => {
-      const sharedWallet = "0x0000000000000000000000000000000000000ccc";
+      const sharedWallet = G_SHARED;
       const users = await Promise.all(
         Array.from({ length: 3 }, (_, i) =>
-          createUser({
-            walletAddress: `0x0000000000000000000000000000000000000${i}c`,
-            pendingBalanceUnits: 5000000000000000000n,
-          }),
+          createUser({ walletAddress: G_USERS[i], pendingBalanceUnits: 5000000000000000000n }),
         ),
       );
       for (const u of users) {
@@ -479,18 +477,15 @@ describe("POST /api/me/withdraw", () => {
             type: "WITHDRAWAL",
             userId: u.id,
             amountUnits: 1000000000000000000n,
-            destinationAddress: sharedWallet.toLowerCase(),
+            destinationAddress: sharedWallet,
             status: "done",
           },
         });
       }
-      const abuser = await createUser({
-        walletAddress: sharedWallet,
-        pendingBalanceUnits: 5000000000000000000n,
-      });
+      const abuser = await createUser({ pendingBalanceUnits: 5000000000000000000n });
       vi.mocked(getLabelerSession).mockResolvedValue(abuser.id);
 
-      const res = await POST(makeReq());
+      const res = await POST(makeReq(sharedWallet));
       expect(res.status).toBe(403);
 
       const flags = await prisma.flaggedWithdrawal.findMany({ where: { userId: abuser.id } });
