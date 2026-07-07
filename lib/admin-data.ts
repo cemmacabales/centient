@@ -1,22 +1,8 @@
-import * as Sentry from "@sentry/nextjs";
-import { createPublicClient, erc20Abi, formatUnits, http } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
 import prisma from "./prisma";
 import { normalizeReason } from "./quality";
-import {
-  REWARD_TOKEN_ADDRESS,
-  REWARD_TOKEN_SYMBOL,
-  activeChain,
-  activeRpcUrl,
-} from "./constants";
+import { REWARD_TOKEN_SYMBOL } from "./constants";
 import { unitsToUsdcDisplay } from "./stellar/config";
-
-// The legacy hot wallet holds cUSD, an 18-decimal Celo ERC-20 read on-chain via
-// viem. Kept explicit and decoupled from the Stellar-valued REWARD_TOKEN_DECIMALS
-// (which ST-5 re-valued to USDC's 7) so the real balance formats correctly during
-// the migration window. This whole viem read is removed in the post-ST-5 closing
-// viem-removal step (see the note in lib/constants.ts).
-const CUSD_DECIMALS = 18;
+import { getWalletHealth } from "./stellar/balance";
 
 export interface DashboardTotals {
   totalSubmissions: number;
@@ -86,41 +72,14 @@ export interface DashboardActivity {
   createdAt: Date;
 }
 
+// The hot wallet is the pooled Stellar platform account that signs USDC payouts.
+// Read its address + USDC float from the same source the wallet-health alert uses
+// (getWalletHealth), so the ops card and the threshold warning can never disagree.
+// getWalletHealth already returns display-formatted values and "—" sentinels when
+// the account is unconfigured or Horizon is unreachable.
 async function hotWallet(): Promise<{ address: string; balance: string }> {
-  const key = process.env.PAYOUT_PRIVATE_KEY;
-  if (!key) {
-    return { address: "—", balance: "—" };
-  }
-  try {
-    const account = privateKeyToAccount(key as `0x${string}`);
-    const client = createPublicClient({ chain: activeChain(), transport: http(activeRpcUrl()) });
-    const raw = await client.readContract({
-      address: REWARD_TOKEN_ADDRESS,
-      abi: erc20Abi,
-      functionName: "balanceOf",
-      args: [account.address],
-    });
-    return {
-      address: account.address,
-      // raw is an 18-decimal cUSD balance — format with the EVM token's own
-      // decimals, NOT the Stellar-valued REWARD_TOKEN_DECIMALS (7), which would
-      // overstate the balance by 10^11 on the ops-facing status-health page.
-      balance: formatUnits(raw, CUSD_DECIMALS),
-    };
-  } catch (err) {
-    const account = (() => {
-      try {
-        return privateKeyToAccount(key as `0x${string}`).address;
-      } catch {
-        return "—";
-      }
-    })();
-    console.error("[admin] hot wallet balance lookup failed", err);
-    Sentry.captureException(err, {
-      extra: { context: "hot-wallet-balance" },
-    });
-    return { address: account, balance: "—" };
-  }
+  const health = await getWalletHealth();
+  return { address: health.address, balance: health.usdcBalance };
 }
 
 export async function getDashboardTotals(): Promise<DashboardTotals> {
