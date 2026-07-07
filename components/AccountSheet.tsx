@@ -6,6 +6,16 @@ import { truncateAddress } from "@/lib/wallet";
 import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 import { isValidStellarAddress } from "@/lib/stellar/signature";
 
+// Withdrawal statuses that are still in flight — while any withdrawal is in one of
+// these, the account sheet polls so the chip advances live. Terminal states
+// (confirmed, failed, cancelled) stop the polling.
+const ACTIVE_WITHDRAWAL_STATUSES = new Set([
+  "pending",
+  "queued",
+  "processing",
+  "sent",
+]);
+
 function formatTokenBalance(unitsStr: string): string {
   try {
     return unitsToUsdcDisplay(BigInt(unitsStr));
@@ -134,6 +144,24 @@ export default function AccountSheet({
       .catch(() => setWithdrawalData(null))
       .finally(() => setLoadingWithdrawal(false));
   }, [open]);
+
+  // Live-poll while a withdrawal is still moving through the payout pipeline so the
+  // status chip advances queued → processing → sent → confirmed without a reload.
+  // Stops once every withdrawal has settled to a terminal state.
+  useEffect(() => {
+    if (!open || !withdrawalData) return;
+    const hasActive = withdrawalData.withdrawals.some((w) =>
+      ACTIVE_WITHDRAWAL_STATUSES.has(w.status),
+    );
+    if (!hasActive) return;
+    const id = setInterval(() => {
+      fetch("/api/me/withdraw")
+        .then((r) => (r.ok ? r.json() : Promise.reject()))
+        .then((data) => setWithdrawalData(data))
+        .catch(() => {});
+    }, 3000);
+    return () => clearInterval(id);
+  }, [open, withdrawalData]);
 
   if (!open) return null;
 
