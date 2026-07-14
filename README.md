@@ -197,7 +197,7 @@ sequenceDiagram
         API-->>L: 4xx (invalid_reason / rate_limited / ...)
     else passes
         opt gold task
-            API->>API: compare to goldAnswer; ban/cooldown on repeated fails
+            API->>API: compare to goldAnswer, ban/cooldown on repeated fails
         end
         API->>DB: create Submission (payoutStatus = accrued)
         API->>DB: checkAndDebit(campaign balance) reward + platform fee
