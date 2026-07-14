@@ -87,10 +87,11 @@ flowchart TB
     subgraph app [Next.js 16 App - Railway]
         UI[React 19 UI<br/>App Router]
         API[API Routes<br/>submit / me / withdraw / admin]
-        subgraph workers [In-process background loops]
-            PW[Payout Worker<br/>claims PayoutJobs]
-            RC[Reconciler<br/>confirms tx receipts]
-        end
+    end
+
+    subgraph workers [In-process background loops]
+        PW[Payout Worker<br/>claims PayoutJobs]
+        RC[Reconciler<br/>confirms tx receipts]
     end
 
     subgraph data [State]
@@ -104,7 +105,10 @@ flowchart TB
         LW[Labeler wallet<br/>G... address]
     end
 
-    L & C & A --> UI --> API
+    L --> UI
+    C --> UI
+    A --> UI
+    UI --> API
     API --> PG
     API --> RD
     PW --> PG
@@ -113,7 +117,7 @@ flowchart TB
     RC -->|tx lookup| HZ
     HZ --> HW
     HW -->|USDC| LW
-    L -.->|Freighter / Albedo| LW
+    L -.-> LW
 
     style stellar fill:#f0f4ff
     style workers fill:#fff4e6
