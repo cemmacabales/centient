@@ -353,6 +353,11 @@ on [stellar.expert](https://stellar.expert).
 └── docs/                   # Feature + migration design specs
 ```
 
+## Supporting Links
+
+DEMO VIDEO - https://drive.google.com/drive/folders/1vpdG9uDyfMjMibSOdVLZG1SMn10hgl6j?usp=sharing
+PITCH DECK -  https://drive.google.com/drive/folders/1fum1zUZkCSWnntNUm6weRn_5XIyK-ovE?usp=sharing
+
 ## License
 
 MIT
