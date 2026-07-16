@@ -17,11 +17,15 @@ rewarding for anyone with an internet connection — no bank account required.
 ## DEMO ACCOUNTS
 
 User (Labeler)
+
 demo@centient.work
+
 Demo!123
 
 Admin (Issuer) - https://centient.work/admin/login
+
 admin@centient.work
+
 GoCent!123
 
 ## Tech Stack
