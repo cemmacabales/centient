@@ -67,8 +67,8 @@ async function creditUserTotals(walletAddress: string, amount: bigint): Promise<
  *
  *   1. re-check eligibility under a per-wallet advisory lock,
  *   2. broadcast the transfer,
- *   3. persist payoutTxHash + "sent" in a single atomic update that cannot
- *      partially apply, so a later failure can never strand the txHash.
+ *   3. persist payoutTxHash, "sent", and the PayoutJob accounting tuple in one
+ *      transaction after the transfer has been accepted.
  */
 export async function reprocessPayoutWithNonceSafety(submissionId: string): Promise<void> {
   const submission = await prisma.submission.findUnique({ where: { id: submissionId } });
@@ -143,17 +143,42 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
     throw err;
   }
 
-  // Step 3: persist the on-chain result atomically the instant payReward returns.
-  // A single update cannot partially apply, so a later failure can never strand
-  // the txHash and cause the next run to re-send.
-  await prisma.submission.update({
-    where: { id: submissionId },
-    data: {
-      payoutStatus: "sent",
-      payoutTxHash: txHash,
-      lastRetriedAt: new Date(),
-    },
-  });
+  // Step 3: persist the on-chain result and its accounting record atomically.
+  const broadcastAt = new Date();
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.submission.update({
+        where: { id: submissionId },
+        data: { payoutStatus: "sent", payoutTxHash: txHash, lastRetriedAt: broadcastAt },
+      });
+      await tx.payoutJob.upsert({
+        where: { submissionId },
+        create: {
+          type: "SUBMISSION_PAYOUT",
+          submissionId,
+          amountUnits: amount,
+          txHash,
+          broadcastAt,
+          status: "done",
+          completedAt: broadcastAt,
+        },
+        update: {
+          amountUnits: amount,
+          txHash,
+          broadcastAt,
+          status: "done",
+          completedAt: broadcastAt,
+          lastError: null,
+        },
+      });
+    });
+  } catch (err) {
+    console.error(
+      "[payout-service] accepted payment persistence failed:",
+      err instanceof Error ? err.constructor.name : typeof err,
+    );
+    return;
+  }
 
   await creditUserTotals(walletAddress, amount);
 }

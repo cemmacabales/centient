@@ -97,11 +97,14 @@ describe("Lump-sum withdrawal handling", () => {
 
     vi.mocked(payReward).mockResolvedValueOnce("0x1234");
 
+    const beforeBroadcast = new Date();
     await processJob(job.id, null, user.id, amountUnits, "WITHDRAWAL");
 
-    const updatedJob = await prisma.payoutJob.findUnique({ where: { id: job.id } });
-    expect(updatedJob?.status).toBe("processing");
-    expect(updatedJob?.txHash).toBe("0x1234");
+    const updatedJob = await prisma.payoutJob.findUniqueOrThrow({ where: { id: job.id } });
+    expect(updatedJob.status).toBe("processing");
+    expect(updatedJob.txHash).toBe("0x1234");
+    expect(updatedJob.amountUnits).toBe(amountUnits);
+    expect(updatedJob.broadcastAt?.getTime()).toBeGreaterThanOrEqual(beforeBroadcast.getTime());
 
     const updatedUser = await prisma.user.findUnique({ where: { id: user.id } });
     expect(updatedUser?.pendingBalanceUnits).toBe(0n);

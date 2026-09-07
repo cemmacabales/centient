@@ -176,12 +176,15 @@ async function processWithdrawalJob(
       kind: "payout_job",
       id: jobId,
     });
+    const broadcastAt = new Date();
 
     await prisma.payoutJob.update({
       where: { id: jobId },
       data: {
         txHash,
-        workerHeartbeatAt: new Date(),
+        amountUnits,
+        broadcastAt,
+        workerHeartbeatAt: broadcastAt,
       },
     });
 
@@ -346,8 +349,14 @@ async function processSubmissionPayout(
       kind: "submission",
       id: submissionId,
     });
+    const broadcastAt = new Date();
 
     await prisma.$transaction(async (tx) => {
+      await tx.payoutJob.update({
+        where: { id: jobId },
+        data: { txHash, amountUnits: amount, broadcastAt },
+      });
+
       await tx.submission.update({
         where: { id: submissionId },
         data: { payoutStatus: "sent", payoutTxHash: txHash },
