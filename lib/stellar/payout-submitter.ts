@@ -1,0 +1,218 @@
+// Sequence-safe submission of multisig payouts (issue #7).
+//
+// This is the network-facing half of the payout service. It replaces the
+// single-key broadcast in `client.payUsdc` for contributor payouts: every payout
+// leaves here as a fee-bumped envelope carrying two independent signatures, ours
+// and the co-signing policy service's (issue #8).
+//
+// Sequence safety. The multisig payout account has exactly one sequence number,
+// so account-load and submit must not interleave across concurrent payouts. The
+// whole build → sign → co-sign → submit cycle runs inside one mutex, which is
+// this module's single owner of that critical section — the same ownership rule
+// `payUsdc` documents for its own `seqMutex`, moved up to the layer that now
+// spans two co-signer round trips. Holding the lock across those round trips is
+// deliberate: a slow co-signer serializes payouts, which is correct, where a
+// released lock would hand two payouts the same sequence number.
+import { BASE_FEE, Keypair, type Asset, type Transaction } from "@stellar/stellar-sdk";
+import { Mutex } from "async-mutex";
+import { StellarPaymentError, resultCodes } from "./client";
+import { server, usdcAsset } from "./config";
+import { buildMultisigFeeBump } from "./multisig-payout";
+import { assertPayoutAmountUnits, assertPayoutDestination } from "./payout-amount";
+import {
+  applyCoSignature,
+  assertPayoutFullySigned,
+  buildPayoutPayment,
+  signAsPlatform,
+  type PayoutCoSigner,
+} from "./payout-envelope";
+
+export type PayoutEnvironment = Readonly<Record<string, string | undefined>>;
+
+/** The payout account and the two independent identities that must both sign. */
+export interface PayoutSignerConfig {
+  payoutAccount: string;
+  /** Our own signing key — signature #1, held in this process. */
+  platformSigner: Keypair;
+  /** The co-signing service's key — signature #2. We hold only the public half. */
+  coSignerPublicKey: string;
+}
+
+/** One payout to settle, in exact integer units. */
+export interface PayoutRequest {
+  submissionId: string;
+  destination: string;
+  amountUnits: bigint;
+}
+
+/** Read one required environment value without applying an unsafe default. */
+function requireEnv(env: PayoutEnvironment, name: string): string {
+  const value = env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+/**
+ * Read the payout signing identities. The co-signer's key must differ from our
+ * own: two signatures from one party is not a 2-of-3, and a misconfiguration
+ * that pointed both at the same key would silently restore single-key control.
+ */
+export function parsePayoutSignerConfig(
+  env: PayoutEnvironment = process.env,
+): PayoutSignerConfig {
+  const payoutAccount = requireEnv(env, "STELLAR_PLATFORM_ACCOUNT").trim();
+  assertPayoutDestination(payoutAccount, "STELLAR_PLATFORM_ACCOUNT");
+  const platformSigner = Keypair.fromSecret(
+    requireEnv(env, "STELLAR_OPS_SIGNER_SECRET").trim(),
+  );
+  const coSignerPublicKey = requireEnv(env, "STELLAR_POLICY_SIGNER_PUBLIC").trim();
+  assertPayoutDestination(coSignerPublicKey, "STELLAR_POLICY_SIGNER_PUBLIC");
+
+  if (coSignerPublicKey === platformSigner.publicKey()) {
+    throw new Error(
+      "STELLAR_POLICY_SIGNER_PUBLIC must be independent of STELLAR_OPS_SIGNER_SECRET — two signatures from one key is not a 2-of-3",
+    );
+  }
+  return { payoutAccount, platformSigner, coSignerPublicKey };
+}
+
+/**
+ * Build, dual-sign, and submit one payout against the account's current
+ * sequence. Called only from inside the mutex, and re-entered whole on a stale
+ * sequence: a rebuilt envelope has a new hash, so both stages are co-signed
+ * again rather than carrying signatures over.
+ */
+async function buildCoSignSubmit(
+  request: PayoutRequest,
+  config: PayoutSignerConfig,
+  asset: Asset,
+  coSigner: PayoutCoSigner,
+): Promise<{ hash: string }> {
+  const srv = server();
+  const account = await srv.loadAccount(config.payoutAccount);
+  const fee = await srv.fetchBaseFee().catch(() => Number(BASE_FEE));
+  const requiredSigners = [
+    config.platformSigner.publicKey(),
+    config.coSignerPublicKey,
+  ] as const;
+
+  const payment: Transaction = buildPayoutPayment({
+    sourceAccount: account,
+    destination: request.destination,
+    asset,
+    amountUnits: request.amountUnits,
+    fee: String(fee),
+  });
+  signAsPlatform(payment, config.platformSigner);
+  applyCoSignature(
+    payment,
+    await coSigner.signPayout({
+      stage: "payment",
+      xdr: payment.toXDR(),
+      destination: request.destination,
+      amountUnits: request.amountUnits,
+      submissionId: request.submissionId,
+    }),
+    config.coSignerPublicKey,
+  );
+  assertPayoutFullySigned(payment, requiredSigners);
+
+  // Centient pays the XLM fee from the payout account, so the recipient can hold
+  // and spend zero XLM — the property issue #6 proved on testnet.
+  const feeBump = buildMultisigFeeBump({
+    feeSource: config.payoutAccount,
+    baseFee: String(fee),
+    innerTransaction: payment,
+    requiredSignerPublicKeys: requiredSigners,
+  });
+  signAsPlatform(feeBump, config.platformSigner);
+  applyCoSignature(
+    feeBump,
+    await coSigner.signPayout({
+      stage: "fee_bump",
+      xdr: feeBump.toXDR(),
+      destination: request.destination,
+      amountUnits: request.amountUnits,
+      submissionId: request.submissionId,
+    }),
+    config.coSignerPublicKey,
+  );
+  assertPayoutFullySigned(feeBump, requiredSigners);
+
+  const res = await srv.submitTransaction(feeBump);
+  return { hash: res.hash };
+}
+
+/** The single owner of account-load + submit for the payout account. */
+const payoutSeqMutex = new Mutex();
+
+/**
+ * Settle one payout as a two-signature, fee-bumped USDC payment. Returns the
+ * submitted transaction hash.
+ *
+ * Failure modes match the rail's existing contract so callers need no new
+ * branches: `op_no_trust` (recipient holds no USDC trustline) and
+ * `op_no_destination` (recipient unfunded) are permanent and must be marked
+ * failed, never retried. A stale sequence is rebuilt and resubmitted once here;
+ * sustained contention surfaces as a *retryable* error so the worker requeues
+ * with its own backoff rather than spinning inside the lock.
+ *
+ * A co-signer that refuses, or answers with the wrong key or a signature that
+ * does not verify, aborts before submission — there is no path from here to a
+ * single-signature payout.
+ */
+export async function submitMultisigPayout(
+  request: PayoutRequest,
+  {
+    coSigner,
+    config,
+    asset,
+  }: { coSigner: PayoutCoSigner; config?: PayoutSignerConfig; asset?: Asset },
+): Promise<{ hash: string }> {
+  // Validate before taking the lock or touching Horizon: an unpayable request
+  // should never occupy the payout account's critical section.
+  assertPayoutDestination(request.destination);
+  assertPayoutAmountUnits(request.amountUnits);
+  const resolved = config ?? parsePayoutSignerConfig();
+  const payAsset = asset ?? usdcAsset();
+
+  return payoutSeqMutex.runExclusive(async () => {
+    try {
+      return await buildCoSignSubmit(request, resolved, payAsset, coSigner);
+    } catch (err) {
+      const codes = resultCodes(err);
+
+      if (codes.operations?.includes("op_no_destination")) {
+        throw new StellarPaymentError(
+          `submitMultisigPayout: destination ${request.destination} does not exist or is unfunded (op_no_destination)`,
+          "op_no_destination",
+          false,
+        );
+      }
+      if (codes.operations?.includes("op_no_trust")) {
+        throw new StellarPaymentError(
+          `submitMultisigPayout: destination ${request.destination} has no USDC trustline (op_no_trust)`,
+          "op_no_trust",
+          false,
+        );
+      }
+
+      if (codes.transaction === "tx_bad_seq") {
+        try {
+          return await buildCoSignSubmit(request, resolved, payAsset, coSigner);
+        } catch (retryErr) {
+          if (resultCodes(retryErr).transaction === "tx_bad_seq") {
+            throw new StellarPaymentError(
+              `submitMultisigPayout: submission ${request.submissionId} — sustained sequence contention (tx_bad_seq after one rebuild); requeue`,
+              "tx_bad_seq",
+              true,
+            );
+          }
+          throw retryErr;
+        }
+      }
+
+      throw err;
+    }
+  });
+}

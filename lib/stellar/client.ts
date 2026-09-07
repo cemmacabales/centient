@@ -60,7 +60,7 @@ function platformKeypair(): Keypair {
 }
 
 /** Horizon error → `{ transaction, operations }` result codes (ST-0 #290 shapes). */
-function resultCodes(err: unknown): { transaction?: string; operations?: string[] } {
+export function resultCodes(err: unknown): { transaction?: string; operations?: string[] } {
   const extras = (err as { response?: { data?: { extras?: { result_codes?: unknown } } } })
     ?.response?.data?.extras?.result_codes;
   return (extras as { transaction?: string; operations?: string[] }) ?? {};

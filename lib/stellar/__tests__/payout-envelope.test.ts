@@ -1,6 +1,6 @@
 import { Account, Asset, Keypair, Transaction } from "@stellar/stellar-sdk";
 import { beforeEach, describe, expect, it } from "vitest";
-import { buildUsdcPaymentTx } from "../multisig-payout";
+import { buildMultisigFeeBump } from "../multisig-payout";
 import {
   applyCoSignature,
   assertPayoutFullySigned,
@@ -198,5 +198,57 @@ describe("assertPayoutFullySigned", () => {
     expect(() =>
       assertPayoutFullySigned(dualSigned(), [platform.publicKey(), platform.publicKey()]),
     ).toThrow(/distinct/i);
+  });
+});
+
+describe("fee-bump envelopes", () => {
+  it("merges and verifies a co-signature on a fee-bump envelope", () => {
+    const inner = buildPayoutPayment({
+      sourceAccount: hotAccount(),
+      destination,
+      asset: usdc,
+      amountUnits: 1n,
+    });
+    signAsPlatform(inner, platform);
+    applyCoSignature(inner, coSignatureOver(inner, coSigner), coSigner.publicKey());
+
+    const feeBump = buildMultisigFeeBump({
+      feeSource: platform.publicKey(),
+      innerTransaction: inner,
+      requiredSignerPublicKeys: [platform.publicKey(), coSigner.publicKey()],
+    });
+    signAsPlatform(feeBump, platform);
+    applyCoSignature(
+      feeBump,
+      { publicKey: coSigner.publicKey(), signature: coSigner.sign(feeBump.hash()).toString("base64") },
+      coSigner.publicKey(),
+    );
+
+    expect(feeBump.signatures).toHaveLength(2);
+    expect(() =>
+      assertPayoutFullySigned(feeBump, [platform.publicKey(), coSigner.publicKey()]),
+    ).not.toThrow();
+  });
+
+  it("rejects a fee-bump envelope the platform alone signed", () => {
+    const inner = buildPayoutPayment({
+      sourceAccount: hotAccount(),
+      destination,
+      asset: usdc,
+      amountUnits: 1n,
+    });
+    signAsPlatform(inner, platform);
+    applyCoSignature(inner, coSignatureOver(inner, coSigner), coSigner.publicKey());
+
+    const feeBump = buildMultisigFeeBump({
+      feeSource: platform.publicKey(),
+      innerTransaction: inner,
+      requiredSignerPublicKeys: [platform.publicKey(), coSigner.publicKey()],
+    });
+    signAsPlatform(feeBump, platform);
+
+    expect(() =>
+      assertPayoutFullySigned(feeBump, [platform.publicKey(), coSigner.publicKey()]),
+    ).toThrow(/missing a valid required signer/i);
   });
 });
