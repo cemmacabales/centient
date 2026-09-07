@@ -12,8 +12,13 @@ vi.mock("../config", async (importOriginal) => {
   return { ...actual, server: vi.fn(), usdcAsset: () => usdc };
 });
 
+vi.mock("../client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../client")>();
+  return { ...actual, getTxStatus: vi.fn() };
+});
+
 import { server } from "../config";
-import { StellarPaymentError } from "../client";
+import { StellarPaymentError, getTxStatus } from "../client";
 import type { PayoutCoSignRequest, PayoutCoSigner } from "../payout-envelope";
 import {
   parsePayoutSignerConfig,
@@ -22,6 +27,8 @@ import {
 } from "../payout-submitter";
 
 const mockedServer = vi.mocked(server);
+const mockedGetTxStatus = vi.mocked(getTxStatus);
+/** Resolve after `ms`, used to make the fake Horizon slow enough to interleave. */
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const config: PayoutSignerConfig = {
@@ -44,6 +51,7 @@ function honestCoSigner(signer = coSignerKp): PayoutCoSigner {
   };
 }
 
+/** A Horizon rejection carrying result codes — a definite verdict, not an ambiguous one. */
 function horizonError(result_codes: { transaction?: string; operations?: string[] }) {
   return { response: { data: { extras: { result_codes } } } };
 }
@@ -76,6 +84,7 @@ function makeHorizon(opts: { submitTransaction?: ReturnType<typeof vi.fn> } = {}
   };
 }
 
+/** One payout request against a fresh destination. */
 function request(submissionId: string, amountUnits = 25_000_000n) {
   return {
     reference: { kind: "submission" as const, id: submissionId },
@@ -87,6 +96,7 @@ function request(submissionId: string, amountUnits = 25_000_000n) {
 beforeEach(() => {
   process.env.STELLAR_NETWORK = "testnet";
   mockedServer.mockReset();
+  mockedGetTxStatus.mockReset();
 });
 
 describe("parsePayoutSignerConfig", () => {
@@ -314,6 +324,91 @@ describe("submitMultisigPayout", () => {
     expect(err).toBeInstanceOf(StellarPaymentError);
     expect(err.code).toBe("tx_bad_seq");
     expect(err.retryable).toBe(true);
+  });
+
+  it("does not rebuild when the submit outcome is ambiguous", async () => {
+    // A timeout carries no Horizon result codes, so the transaction may well have
+    // been accepted. Rebuilding here is what double-pays.
+    const submitted: FeeBumpTransaction[] = [];
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async (tx: FeeBumpTransaction) => {
+        submitted.push(tx);
+        throw new Error("socket hang up");
+      }),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+    mockedGetTxStatus.mockResolvedValue("confirmed");
+    const coSigner = honestCoSigner();
+
+    const result = await submitMultisigPayout(request("s1"), { coSigner, config });
+
+    expect(horizon.server.submitTransaction).toHaveBeenCalledTimes(1);
+    // Two stages, one attempt — a rebuild would have made it four.
+    expect(coSigner.signPayout).toHaveBeenCalledTimes(2);
+    expect(result.hash).toBe(submitted[0].hash().toString("hex"));
+  });
+
+  it("resolves an ambiguous submit that actually settled by its envelope hash", async () => {
+    const submitted: FeeBumpTransaction[] = [];
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async (tx: FeeBumpTransaction) => {
+        submitted.push(tx);
+        throw new Error("504 Gateway Timeout");
+      }),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+    mockedGetTxStatus.mockResolvedValue("confirmed");
+
+    const result = await submitMultisigPayout(request("s1"), {
+      coSigner: honestCoSigner(),
+      config,
+    });
+
+    expect(mockedGetTxStatus).toHaveBeenCalledWith(submitted[0].hash().toString("hex"));
+    expect(result.hash).toBe(submitted[0].hash().toString("hex"));
+  });
+
+  it("treats an ambiguous submit Horizon reports as failed as non-retryable", async () => {
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async () => {
+        throw new Error("socket hang up");
+      }),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+    mockedGetTxStatus.mockResolvedValue("failed");
+
+    const err = await submitMultisigPayout(request("s1"), {
+      coSigner: honestCoSigner(),
+      config,
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(StellarPaymentError);
+    expect(err.retryable).toBe(false);
+  });
+
+  it("withholds retry until the envelope can no longer be included", async () => {
+    // While the envelope is still inside its time bounds, an absent transaction
+    // may yet be included, so a retry would risk a second settlement.
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async () => {
+        throw new Error("socket hang up");
+      }),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+    mockedGetTxStatus.mockResolvedValue("not_found");
+
+    const err = await submitMultisigPayout(request("s1"), {
+      coSigner: honestCoSigner(),
+      config,
+      timeoutSeconds: 1,
+      ambiguousPollIntervalMs: 10,
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(StellarPaymentError);
+    expect(err.code).toBe("ambiguous_submit");
+    // Only safe to requeue because the envelope's time bounds have expired.
+    expect(err.retryable).toBe(true);
+    expect(mockedGetTxStatus.mock.calls.length).toBeGreaterThan(1);
   });
 
   it("rejects a non-positive amount before contacting Horizon", async () => {
