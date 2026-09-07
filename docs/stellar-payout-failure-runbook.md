@@ -5,13 +5,20 @@ to what the system does automatically and what a human should do. The rail sends
 USDC (Circle's Stellar asset) from one pooled platform account; recipients are
 `G…` StrKey addresses that must hold a **USDC trustline** to receive.
 
+Since E1-3 (#7) the reward path settles through the **two-signature multisig
+payout service**, not the single-key `payUsdc` broadcast. The failure modes below
+are unchanged, but the signing and sequence behavior now lives in
+`stellar/payout-submitter.ts` — see
+[the payout service runbook](./stellar-multisig-payout-service.md), which also
+covers the co-signer failure modes this table does not.
+
 ## Failure modes at a glance
 
 | Horizon code | Meaning | Retryable? | Automatic behavior | Support action |
 |---|---|---|---|---|
 | `op_no_trust` | Recipient `G…` exists but holds **no USDC trustline** | **No** | Payout marked **failed**, balance **refunded**, job retry budget consumed (no requeue). Surfaced to Sentry. | Tell the labeler to run **"Set up USDC payouts (free)"** (the sponsored-trustline flow, ST-4e) in their wallet, then re-withdraw. Their balance is intact. |
 | `op_no_destination` | Recipient `G…` **doesn't exist / is unfunded** (never created on-chain) | **No** | Same as `op_no_trust`: failed + refunded + budget consumed. | The address was never created on-chain. The sponsored flow (ST-4e) creates + funds the account's base reserve. Have them complete "Set up USDC payouts", then re-withdraw. Double-check they linked the correct `G…`. |
-| `tx_bad_seq` | Stale sequence number on the **platform** account (concurrency) | **Yes** | `payUsdc` reloads the account + resubmits **once** in-call. If it still fails, it's classified retryable → the **job requeues** (backoff via the job queue, up to 3 attempts). | None normally — self-heals. If a job is stuck requeuing, check for a rogue second process submitting from the same platform key (sequence contention). |
+| `tx_bad_seq` | Stale sequence number on the **payout** account (concurrency) | **Yes** | `submitMultisigPayout` rebuilds and resubmits **once** in-call, re-collecting both signatures because the rebuilt envelope has a new hash. If it still fails, it's classified retryable → the **job requeues** (backoff via the job queue, up to 3 attempts). | None normally — self-heals. If a job is stuck requeuing, check for a rogue second process submitting from the same platform key (sequence contention). |
 | `op_low_reserve` | **Platform** account lacks XLM to fund a sponsored reserve (trustline flow) | **No** | Sponsored-trustline submit fails with a clear error (→ 400 at the route). | Top up the platform account's **XLM** (fees + base/trustline reserves). See wallet-health below. |
 | `invalid_sponsor_tx` | A sponsored-trustline XDR was malformed / tampered / wrong shape | **No** | Rejected at the route (400) before submit. | Client-side/abuse signal — the co-signed envelope didn't match the platform-built shape. No money moved. |
 | Timeout / Horizon 5xx / network | Submit or status read didn't complete | **Yes (soft)** | If the **submit** never returned a hash, the job requeues — no hash means no confirmed broadcast, so no double-pay on retry. If a broadcast tx isn't yet visible, the reconciler sees `not_found` (404) and **leaves it `sent`/`processing`** without burning a retry, re-checking next pass (~5s finality). | None normally. Persistent Horizon unavailability pages via wallet-health only indirectly; check Horizon status if many jobs stall. |
@@ -36,7 +43,7 @@ between linking and payout.
 ## No double-submit guarantee
 
 - A payout's tx hash is persisted (`payoutTxHash` / `PayoutJob.txHash`) **only after**
-  `payUsdc` returns a hash. A submit that never returns a hash (timeout/error) leaves
+  `submitMultisigPayout` returns a hash. A submit that never returns a hash (timeout/error) leaves
   the job with no hash → the worker requeues and re-submits with a fresh sequence.
 - Once a hash exists, the **reconciler** owns the outcome: it polls Horizon and moves
   `sent → confirmed` (or `failed`). A `not_found` (404) is treated as *still pending*
