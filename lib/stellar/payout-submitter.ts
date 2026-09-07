@@ -13,9 +13,15 @@
 // spans two co-signer round trips. Holding the lock across those round trips is
 // deliberate: a slow co-signer serializes payouts, which is correct, where a
 // released lock would hand two payouts the same sequence number.
-import { BASE_FEE, Keypair, type Asset, type Transaction } from "@stellar/stellar-sdk";
+import {
+  BASE_FEE,
+  Keypair,
+  type Asset,
+  type FeeBumpTransaction,
+  type Transaction,
+} from "@stellar/stellar-sdk";
 import { Mutex } from "async-mutex";
-import { StellarPaymentError, resultCodes } from "./client";
+import { StellarPaymentError, getTxStatus, resultCodes } from "./client";
 import { server, usdcAsset } from "./config";
 import { buildMultisigFeeBump } from "./multisig-payout";
 import { assertPayoutAmountUnits, assertPayoutDestination } from "./payout-amount";
@@ -39,11 +45,88 @@ export interface PayoutSignerConfig {
   coSignerPublicKey: string;
 }
 
+/** How long to wait between Horizon lookups while an outcome is unknown. */
+const DEFAULT_AMBIGUOUS_POLL_INTERVAL_MS = 2_000;
+
+/** Resolve after `ms`, used to space out Horizon lookups while an outcome is unknown. */
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /** One payout to settle, in exact integer units. */
 export interface PayoutRequest {
   reference: PayoutReference;
   destination: string;
   amountUnits: bigint;
+}
+
+/**
+ * Did Horizon give a definite verdict? A rejection carrying result codes means the
+ * transaction was evaluated and never applied, so rebuilding is safe. Anything
+ * without them — a timeout, a dropped socket, a 5xx after acceptance — leaves the
+ * outcome genuinely unknown.
+ */
+function isDefiniteRejection(err: unknown): boolean {
+  const codes = resultCodes(err);
+  return Boolean(codes.transaction || codes.operations?.length);
+}
+
+/**
+ * Unix milliseconds after which `feeBump` can never be included in a ledger. A
+ * fee bump inherits the inner transaction's time bounds, and this deadline is
+ * what makes a retry provably safe rather than merely probably safe.
+ */
+function envelopeExpiryMs(feeBump: FeeBumpTransaction): number | null {
+  const maxTime = feeBump.innerTransaction.timeBounds?.maxTime;
+  if (!maxTime || maxTime === "0") return null;
+  return Number(maxTime) * 1000;
+}
+
+/**
+ * Settle an unknown submit outcome by identity rather than by guessing.
+ *
+ * The envelope hash is known before submission, so an ambiguous failure never has
+ * to be resolved by rebuilding — we ask Horizon what happened to that exact
+ * transaction. Polling continues until the transaction is found, or until its
+ * time bounds expire and it can no longer be included by anyone. Only then is a
+ * rebuild safe, and only then is the failure reported as retryable.
+ *
+ * An envelope with no time bounds cannot be proven dead, so it is reported as
+ * non-retryable and left for manual reconciliation rather than risking a second
+ * settlement.
+ */
+async function resolveAmbiguousSubmit(
+  envelopeHash: string,
+  feeBump: FeeBumpTransaction,
+  request: PayoutRequest,
+  pollIntervalMs: number,
+): Promise<{ hash: string }> {
+  const expiresAt = envelopeExpiryMs(feeBump);
+
+  for (;;) {
+    const status = await getTxStatus(envelopeHash);
+    if (status === "confirmed") return { hash: envelopeHash };
+    if (status === "failed") {
+      throw new StellarPaymentError(
+        `submitMultisigPayout: ${request.reference.kind} ${request.reference.id} — transaction ${envelopeHash} was included and failed`,
+        "tx_failed",
+        false,
+      );
+    }
+    if (expiresAt === null) {
+      throw new StellarPaymentError(
+        `submitMultisigPayout: ${request.reference.kind} ${request.reference.id} — submit outcome unknown for ${envelopeHash} and the envelope has no time bounds; reconcile manually before reissuing`,
+        "ambiguous_submit",
+        false,
+      );
+    }
+    if (Date.now() > expiresAt) {
+      throw new StellarPaymentError(
+        `submitMultisigPayout: ${request.reference.kind} ${request.reference.id} — ${envelopeHash} never appeared and its time bounds have expired; safe to rebuild`,
+        "ambiguous_submit",
+        true,
+      );
+    }
+    await delay(pollIntervalMs);
+  }
 }
 
 /** Read one required environment value without applying an unsafe default. */
@@ -88,6 +171,8 @@ async function buildCoSignSubmit(
   config: PayoutSignerConfig,
   asset: Asset,
   coSigner: PayoutCoSigner,
+  timeoutSeconds: number | undefined,
+  pollIntervalMs: number,
 ): Promise<{ hash: string }> {
   const srv = server();
   const account = await srv.loadAccount(config.payoutAccount);
@@ -103,6 +188,7 @@ async function buildCoSignSubmit(
     asset,
     amountUnits: request.amountUnits,
     fee: String(fee),
+    ...(timeoutSeconds === undefined ? {} : { timeoutSeconds }),
   });
   signAsPlatform(payment, config.platformSigner);
   applyCoSignature(
@@ -140,8 +226,16 @@ async function buildCoSignSubmit(
   );
   assertPayoutFullySigned(feeBump, requiredSigners);
 
-  const res = await srv.submitTransaction(feeBump);
-  return { hash: res.hash };
+  // Known before submission, which is what makes an unknown outcome recoverable:
+  // the transaction can be identified afterwards without rebuilding it.
+  const envelopeHash = feeBump.hash().toString("hex");
+  try {
+    const res = await srv.submitTransaction(feeBump);
+    return { hash: res.hash };
+  } catch (err) {
+    if (isDefiniteRejection(err)) throw err;
+    return resolveAmbiguousSubmit(envelopeHash, feeBump, request, pollIntervalMs);
+  }
 }
 
 /**
@@ -180,7 +274,15 @@ export async function submitMultisigPayout(
     coSigner,
     config,
     asset,
-  }: { coSigner: PayoutCoSigner; config?: PayoutSignerConfig; asset?: Asset },
+    timeoutSeconds,
+    ambiguousPollIntervalMs = DEFAULT_AMBIGUOUS_POLL_INTERVAL_MS,
+  }: {
+    coSigner: PayoutCoSigner;
+    config?: PayoutSignerConfig;
+    asset?: Asset;
+    timeoutSeconds?: number;
+    ambiguousPollIntervalMs?: number;
+  },
 ): Promise<{ hash: string }> {
   // Validate before taking the lock or touching Horizon: an unpayable request
   // should never occupy the payout account's critical section.
@@ -191,7 +293,14 @@ export async function submitMultisigPayout(
 
   return payoutSeqMutex.runExclusive(async () => {
     try {
-      return await buildCoSignSubmit(request, resolved, payAsset, coSigner);
+      return await buildCoSignSubmit(
+        request,
+        resolved,
+        payAsset,
+        coSigner,
+        timeoutSeconds,
+        ambiguousPollIntervalMs,
+      );
     } catch (err) {
       const codes = resultCodes(err);
 
@@ -212,7 +321,14 @@ export async function submitMultisigPayout(
 
       if (codes.transaction === "tx_bad_seq") {
         try {
-          return await buildCoSignSubmit(request, resolved, payAsset, coSigner);
+          return await buildCoSignSubmit(
+        request,
+        resolved,
+        payAsset,
+        coSigner,
+        timeoutSeconds,
+        ambiguousPollIntervalMs,
+      );
         } catch (retryErr) {
           if (resultCodes(retryErr).transaction === "tx_bad_seq") {
             throw new StellarPaymentError(
