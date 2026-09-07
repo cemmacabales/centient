@@ -1,14 +1,31 @@
 import { requireRoleForPage } from "@/lib/admin-auth";
 import { getHealthSnapshot, isStuckPending } from "@/lib/admin-data";
-import { getWalletHealth } from "@/lib/stellar/balance";
+import { getHealthMonitorSnapshot } from "@/lib/health-monitor";
 import StatCard from "@/components/admin/StatCard";
 
 export const dynamic = "force-dynamic";
 
+function unitsToFourDecimalUsdc(units: string | null): string {
+  if (units === null) return "—";
+  const value = BigInt(units);
+  const whole = value / 10_000_000n;
+  const fraction = (value % 10_000_000n).toString().padStart(7, "0").slice(0, 4);
+  return `${whole}.${fraction}`;
+}
+
+function reserveStatusLabel(status: string): string {
+  const words = status.replaceAll("_", " ");
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+}
+
 export default async function AdminStatusHealthPage() {
   await requireRoleForPage("SUPER_ADMIN");
 
-  const [snap, walletHealth] = await Promise.all([getHealthSnapshot(), getWalletHealth()]);
+  const [snap, railHealth] = await Promise.all([
+    getHealthSnapshot(),
+    getHealthMonitorSnapshot(),
+  ]);
+  const walletHealth = railHealth.wallet;
   const stuck = snap.pendingOldestAt ? isStuckPending(snap.pendingOldestAt) : false;
   const stuckAgeMs = snap.pendingOldestAt
     ? Date.now() - snap.pendingOldestAt.getTime()
@@ -25,7 +42,8 @@ export default async function AdminStatusHealthPage() {
           Status
         </h1>
         <p className="mt-2 font-body text-sm text-on-surface-variant">
-          Task pool, payout queue, and hot-wallet health at a glance. Refreshes on every page load.
+          Wallet funding, payout anomalies, reserve readiness, and queue health. Refreshes on every
+          page load.
         </p>
       </header>
 
@@ -49,17 +67,20 @@ export default async function AdminStatusHealthPage() {
         </div>
       )}
 
-      {!walletHealth.healthy && (
+      {railHealth.alerts.length > 0 && (
         <div className="rounded-2xl border border-error/40 bg-error-container p-4 text-on-error-container">
           <div className="flex items-start gap-3">
             <span className="material-symbols-outlined text-[24px]" aria-hidden="true">
               account_balance_wallet
             </span>
             <div>
-              <div className="font-headline text-sm font-bold">Hot-wallet threshold breached</div>
-              <ul className="mt-1 font-body text-sm">
-                {[...walletHealth.warnings, ...walletHealth.pages].map((w, i) => (
-                  <li key={i}>{w}</li>
+              <div className="font-headline text-sm font-bold">Rail health needs attention</div>
+              <ul className="mt-2 space-y-1 font-body text-sm">
+                {railHealth.alerts.map((alert) => (
+                  <li key={alert.key}>
+                    <span className="font-semibold">{alert.title}</span>
+                    {alert.lines[0] ? ` — ${alert.lines[0]}` : ""}
+                  </li>
                 ))}
               </ul>
               <a
@@ -82,40 +103,76 @@ export default async function AdminStatusHealthPage() {
           <StatCard
             label="Hot-wallet address"
             value={
-              snap.hotWalletAddress === "—"
+              walletHealth.address === "—"
                 ? "—"
-                : `${snap.hotWalletAddress.slice(0, 6)}…${snap.hotWalletAddress.slice(-4)}`
+                : `${walletHealth.address.slice(0, 6)}…${walletHealth.address.slice(-4)}`
             }
             subline={
-              snap.hotWalletAddress === "—"
-                ? "PAYOUT_PRIVATE_KEY not set"
-                : "Server-side signer for payReward"
+              walletHealth.address === "—"
+                ? "Stellar wallet not configured"
+                : "Stellar platform hot wallet"
             }
           />
           <StatCard
             label={`${snap.rewardSymbol} balance`}
             value={
-              snap.hotWalletBalance === "—"
+              walletHealth.usdcBalance === "—"
                 ? "—"
-                : `${snap.hotWalletBalance} ${snap.rewardSymbol}`
+                : `${walletHealth.usdcBalance} ${snap.rewardSymbol}`
             }
             subline={
-              snap.hotWalletBalance === "—"
-                ? "RPC lookup failed or wallet not configured"
+              walletHealth.usdcBalance === "—"
+                ? "Horizon lookup failed or wallet not configured"
                 : `Warning: <${walletHealth.thresholds.warnUsdc} | Page: <${walletHealth.thresholds.pageUsdc}`
             }
           />
           <StatCard
             label="XLM (fees/reserve) balance"
             value={
-              walletHealth.xlmBalance === "—"
+              walletHealth.availableXlmBalance === "—"
                 ? "—"
-                : `${walletHealth.xlmBalance} XLM`
+                : `${walletHealth.availableXlmBalance} XLM spendable`
             }
             subline={
-              walletHealth.xlmBalance === "—"
+              walletHealth.availableXlmBalance === "—"
                 ? "Horizon lookup failed"
-                : `Warning: <${walletHealth.thresholds.warnXlm} | Page: <${walletHealth.thresholds.pageXlm}`
+                : `${walletHealth.xlmBalance} XLM total; ${walletHealth.sponsoredReserveXlm} reserved · Warning: <${walletHealth.thresholds.warnXlm} | Page: <${walletHealth.thresholds.pageXlm}`
+            }
+          />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="mb-3 font-label text-xs font-bold uppercase tracking-[0.2em] text-outline">
+          Rail alerts
+        </h2>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            label="Payout activity"
+            value={`${railHealth.metrics.payoutCount} payouts`}
+            subline={`${unitsToFourDecimalUsdc(railHealth.metrics.payoutVolumeUnits)} USDC in ${railHealth.thresholds.payoutWindowMinutes} min`}
+          />
+          <StatCard
+            label="Daily payout cap"
+            value={`${railHealth.metrics.dailyCapPercent}% used`}
+            subline={`${unitsToFourDecimalUsdc(railHealth.metrics.dailySpentUnits)} of ${unitsToFourDecimalUsdc(railHealth.metrics.dailyCapUnits)} USDC`}
+          />
+          <StatCard
+            label="Permanent failures"
+            value={`${railHealth.metrics.failedPayoutCount} failures`}
+            subline={`Last ${railHealth.thresholds.failureWindowMinutes} min · Alert at ${railHealth.thresholds.failureCountThreshold}`}
+          />
+          <StatCard
+            label="Cold reserve"
+            value={reserveStatusLabel(railHealth.metrics.reserveStatus)}
+            subline={
+              railHealth.metrics.coldBalanceUnits === null
+                ? "Reserve monitoring not configured"
+                : `${unitsToFourDecimalUsdc(railHealth.metrics.coldBalanceUnits)} USDC reserve${
+                    railHealth.metrics.refillDueSince
+                      ? ` · Due since ${new Date(railHealth.metrics.refillDueSince).toLocaleString()}`
+                      : ""
+                  }`
             }
           />
         </div>

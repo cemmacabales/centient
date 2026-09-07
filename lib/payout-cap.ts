@@ -1,10 +1,10 @@
 import prisma from "./prisma";
-import { redis } from "./redis";
-import { REWARD_TOKEN_DECIMALS } from "./constants";
+import {
+  sendDedupedDiscordAlert,
+  type HealthAlertDelivery,
+} from "./health-alert";
 
-const DEFAULT_DAILY_CAP_UNITS = 2_000_000_000n; // 200 XLM (200 * 10^7 units)
-const DISCORD_ALERT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
-const DISCORD_ALERT_REDIS_KEY = "t2p:cap_alert:last_sent";
+const DEFAULT_DAILY_CAP_UNITS = 2_000_000_000n; // 200 USDC (200 * 10^7 units)
 
 export class PayoutCapError extends Error {
   readonly code = "daily_cap_reached";
@@ -68,45 +68,27 @@ export async function checkPayoutCap(amount: bigint): Promise<{
   return { allowed: true, current, cap, remaining };
 }
 
-export async function maybeSendCapAlert(): Promise<void> {
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
-  if (!webhookUrl) return;
-
+export async function maybeSendCapAlert(): Promise<HealthAlertDelivery | "not-triggered"> {
   const cap = getDailyPayoutCapUnits();
-  if (cap === 0n) return;
+  if (cap === 0n) return "not-triggered";
 
   const current = await getRolling24hPayoutSum();
   const pct = Number((current * 10000n) / cap) / 100; // two-decimal precision
-  if (pct < 80) return;
+  const configuredThreshold = Number(process.env.HEALTH_CAP_PERCENT_THRESHOLD ?? "80");
+  const threshold =
+    Number.isFinite(configuredThreshold) && configuredThreshold > 0 && configuredThreshold <= 100
+      ? configuredThreshold
+      : 80;
+  if (pct < threshold) return "not-triggered";
 
-  try {
-    const lastSent = await redis.get(DISCORD_ALERT_REDIS_KEY);
-    if (lastSent) {
-      const elapsed = Date.now() - parseInt(lastSent, 10);
-      if (elapsed < DISCORD_ALERT_COOLDOWN_MS) return;
-    }
-
-    const message = [
-      `Daily payout cap alert — **${pct}%** consumed`,
-      `Current 24h spend: **${current}** units`,
-      `Cap: **${cap}** units`,
-      `Remaining: **${cap - current}** units`,
-      `Token decimals: ${REWARD_TOKEN_DECIMALS}`,
-    ].join("\n");
-
-    const res = await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: message }),
-    });
-
-    if (!res.ok) {
-      console.error(`[payout-cap] Discord webhook returned ${res.status}`);
-      return;
-    }
-
-    await redis.set(DISCORD_ALERT_REDIS_KEY, String(Date.now()), "PX", DISCORD_ALERT_COOLDOWN_MS);
-  } catch (err) {
-    console.error("[payout-cap] Discord alert failed", err);
-  }
+  return sendDedupedDiscordAlert({
+    key: "payout-cap",
+    severity: pct >= 100 ? "PAGE" : "WARN",
+    title: "Daily payout cap is approaching",
+    lines: [
+      `${pct}% consumed`,
+      `${current} of ${cap} units spent`,
+      `${cap > current ? cap - current : 0n} units remain`,
+    ],
+  });
 }
