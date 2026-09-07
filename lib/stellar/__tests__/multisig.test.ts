@@ -122,6 +122,23 @@ describe("evaluateMultisig", () => {
     expect(result.reasons.some((r) => /independent Ed25519 signer/i.test(r))).toBe(true);
   });
 
+  it("rejects an extra active hash signer on an otherwise exact 2-of-3", () => {
+    const acct = configuredAccount();
+    acct.signers.push({
+      key: "XHASH00000000000000000000000000000000000000000000000000000",
+      weight: 2,
+      type: "sha256_hash",
+    });
+
+    const result = evaluateMultisig(acct, signerSet);
+
+    expect(result.satisfiesDod).toBe(false);
+    expect(result.matchesTarget).toBe(false);
+    expect(result.reasons.some((reason) => /unexpected active signer/i.test(reason))).toBe(
+      true,
+    );
+  });
+
   it("fails DoD when a configured co-signer key is absent from the account (missing/typoed env)", () => {
     // Two independent signers are present, but neither is the configured POLICY
     // key — a typoed STELLAR_POLICY_SIGNER_PUBLIC must fail, not pass on "any 2".
