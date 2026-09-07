@@ -62,6 +62,20 @@ export interface MultisigEvaluation {
   reasons: string[];
 }
 
+/** Return every enabled signer outside the configured master/ops/policy set. */
+export function findUnexpectedActiveSigners(
+  account: AccountLike,
+  { masterPublic, opsPublic, policyPublic }: SignerSet,
+): AccountLike["signers"] {
+  const expectedSignerKeys = new Set([masterPublic, opsPublic, policyPublic]);
+  return account.signers.filter(
+    (signer) =>
+      signer.weight > 0 &&
+      (!StrKey.isValidEd25519PublicKey(signer.key) ||
+        !expectedSignerKeys.has(signer.key)),
+  );
+}
+
 /**
  * Evaluate a Horizon account record against the payout multisig requirements.
  *
@@ -83,6 +97,12 @@ export function evaluateMultisig(
   const keySigners = account.signers.filter(
     (s) => s.weight > 0 && StrKey.isValidEd25519PublicKey(s.key),
   );
+  const activeSigners = account.signers.filter((signer) => signer.weight > 0);
+  const unexpectedActiveSigners = findUnexpectedActiveSigners(account, {
+    masterPublic,
+    opsPublic,
+    policyPublic,
+  });
   const weightOf = (key: string) =>
     keySigners.find((s) => s.key === key)?.weight ?? 0;
 
@@ -113,6 +133,11 @@ export function evaluateMultisig(
   if (policyWeight <= 0) {
     reasons.push(`configured policy signer ${policyPublic || "(unset)"} is not an active signer`);
   }
+  for (const signer of unexpectedActiveSigners) {
+    reasons.push(
+      `unexpected active signer ${signer.key} (${signer.type ?? "unknown type"})`,
+    );
+  }
 
   const satisfiesDod = reasons.length === 0;
 
@@ -123,7 +148,8 @@ export function evaluateMultisig(
     high === TARGET_MULTISIG.high &&
     opsWeight === TARGET_MULTISIG.cosignerWeight &&
     policyWeight === TARGET_MULTISIG.cosignerWeight &&
-    nonMasterSigners.length === 2;
+    nonMasterSigners.length === 2 &&
+    activeSigners.length === 3;
 
   return { satisfiesDod, matchesTarget, reasons };
 }
