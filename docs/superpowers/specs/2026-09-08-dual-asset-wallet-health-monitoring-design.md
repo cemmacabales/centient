@@ -33,9 +33,10 @@ The migration backfills historical rows:
 - Submission payout jobs copy a missing amount/hash from their linked
   `Submission` before the timestamp backfill.
 
-Rolling count, volume, and cap calculations include only jobs with a non-null
-transaction hash, amount, and `broadcastAt` inside the requested window. This
-prevents queued and permanently failed attempts from inflating spend.
+Rolling count, volume, and cap calculations include only `processing` or `done`
+jobs with a non-null transaction hash, amount, and `broadcastAt` inside the
+requested window. This prevents queued and permanently failed attempts from
+inflating spend.
 
 Issue #11 corrects the cap's accounting source but does not introduce a new
 cross-process cap-reservation protocol. It preserves the current process-local
