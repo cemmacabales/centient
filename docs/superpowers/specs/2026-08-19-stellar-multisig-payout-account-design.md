@@ -58,7 +58,7 @@ Pure helpers so the scripts and unit tests share one source of truth:
 Depends on: `@stellar/stellar-sdk`, `lib/stellar/config.ts`
 (`networkPassphrase`, `server`, `explorerUrl`).
 
-### `scripts/stellar-multisig-setup.mjs` — idempotent configurator
+### `scripts/stellar-multisig-setup.ts` — idempotent configurator
 
 1. Load master keypair from `STELLAR_PLATFORM_SECRET`. If absent, generate a
    fresh testnet keypair and print it (store in secrets, never commit).
@@ -73,7 +73,7 @@ Depends on: `@stellar/stellar-sdk`, `lib/stellar/config.ts`
 5. Otherwise build the `setOptions` tx via `buildSetOptionsTx`, sign with the
    master key, submit, and print the tx hash + stellar.expert link.
 
-### `scripts/stellar-multisig-verify.mjs` — read-only on-chain assertion
+### `scripts/stellar-multisig-verify.ts` — read-only on-chain assertion
 
 Loads the account from Horizon, runs `evaluateMultisig`, prints the signer set +
 thresholds and the stellar.expert account link, and exits non-zero if

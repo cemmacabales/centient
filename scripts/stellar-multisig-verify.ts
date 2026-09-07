@@ -37,10 +37,20 @@ function resolveAccountId(): string {
   );
 }
 
+/** Require a co-signer public key from env — the verifier asserts the intended
+ *  2-of-3, so a missing/typoed key must fail loudly rather than pass on "any 2". */
+function requireSignerPublic(envVar: string): string {
+  const value = process.env[envVar]?.trim();
+  if (!value || !StrKey.isValidEd25519PublicKey(value)) {
+    throw new Error(`${envVar} must be set to a valid Stellar public key (G…) to verify the payout multisig, got "${value ?? ""}"`);
+  }
+  return value;
+}
+
 async function main() {
   const accountId = resolveAccountId();
-  const opsPublic = process.env.STELLAR_OPS_SIGNER_PUBLIC?.trim() ?? "";
-  const policyPublic = process.env.STELLAR_POLICY_SIGNER_PUBLIC?.trim() ?? "";
+  const opsPublic = requireSignerPublic("STELLAR_OPS_SIGNER_PUBLIC");
+  const policyPublic = requireSignerPublic("STELLAR_POLICY_SIGNER_PUBLIC");
 
   const account = (await server().loadAccount(accountId)) as unknown as AccountLike;
 
@@ -55,7 +65,11 @@ async function main() {
     log(`  ${s.key}  weight=${s.weight}  (${role})`);
   }
 
-  const { satisfiesDod, reasons } = evaluateMultisig(account, { opsPublic, policyPublic });
+  const { satisfiesDod, reasons } = evaluateMultisig(account, {
+    masterPublic: accountId,
+    opsPublic,
+    policyPublic,
+  });
 
   log("");
   if (satisfiesDod) {

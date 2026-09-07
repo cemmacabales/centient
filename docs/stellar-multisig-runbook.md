@@ -19,7 +19,8 @@ Thresholds: **low = 2, med = 2, high = 2**.
 Because every signer has weight 1 and the payment (med/high) threshold is 2, any
 **2 of the 3** keys can authorize a payment and **no single key — the master
 included — can**. The account survives loss of any one key: the remaining two
-can still sign (and can re-run `set-options` to rotate the lost key).
+can still sign (and can co-sign a new `set-options` to rotate the lost key — see
+[Recovery / rotation](#recovery--rotation)).
 
 ## Key custody
 
@@ -39,13 +40,18 @@ Idempotent — safe to re-run; it no-ops once the account already matches the ta
 # Testnet, generating throwaway keys (prints secrets once — store them):
 STELLAR_NETWORK=testnet pnpm stellar:multisig:setup
 
-# Reusing existing keys (e.g. re-applying after a key rotation):
+# Initial setup with pre-provisioned keys (from the secrets store):
 STELLAR_NETWORK=testnet \
 STELLAR_PLATFORM_SECRET=S… \
 STELLAR_OPS_SIGNER_PUBLIC=G… \
 STELLAR_POLICY_SIGNER_PUBLIC=G… \
   pnpm stellar:multisig:setup
 ```
+
+> **Setup is for the *initial* configuration only.** It signs with the master key
+> alone, which works only while the account is still single-key (the master can
+> meet the pre-config high threshold). Once the 2-of-3 is in place, changing the
+> signer set is a 2-signature operation — see [Recovery / rotation](#recovery--rotation).
 
 The script applies one `setOptions` transaction: add ops signer (w=1), add policy
 signer (w=1), set `masterWeight=1`, set `low/med/high=2`. It prints the tx hash
@@ -77,10 +83,21 @@ You can also read it directly:
 
 ## Recovery / rotation
 
-Any **2 of the 3** keys can sign a new `setOptions` to add a replacement signer
-and remove a lost/compromised one (set its weight to 0). Re-run
-`pnpm stellar:multisig:setup` with the surviving master secret and the new signer
-public keys, then `pnpm stellar:multisig:verify`.
+Rotating a signer changes the account via `setOptions`, which is a
+**high-threshold** operation — so on the configured account it requires
+**2 of the 3** signatures, exactly like a payment. The single-master
+`stellar:multisig:setup` script **cannot** perform a rotation: it signs with the
+master key only (weight 1 < threshold 2), so submitting a real change would fail
+with `tx_bad_auth`. (Re-running it against an already-configured account just
+prints `already configured` and no-ops.)
+
+To rotate a lost/compromised key:
+
+1. Build one `setOptions` transaction that adds the replacement signer (weight 1)
+   and sets the outgoing signer's weight to 0.
+2. Have **any 2 of the 3** current keys sign it (e.g. the surviving master plus
+   one co-signer), collecting signatures the same way as a payout (issue #3).
+3. Submit, then run `pnpm stellar:multisig:verify` to assert the new signer set.
 
 ## Testnet proof (Definition of Done)
 

@@ -29,15 +29,19 @@ export const TARGET_MULTISIG = {
   cosignerWeight: 1,
 } as const;
 
-/** The two independent co-signer public keys (G…) added alongside the master. */
+/**
+ * The account's own (master) key plus the two independent co-signer public keys
+ * (all G…). `masterPublic` is passed explicitly rather than read off the Horizon
+ * record so master identification never depends on the record's `.id` field.
+ */
 export interface SignerSet {
+  masterPublic: string;
   opsPublic: string;
   policyPublic: string;
 }
 
 /** Minimal shape of a Horizon account record that {@link evaluateMultisig} reads. */
 export interface AccountLike {
-  id: string;
   signers: ReadonlyArray<{ key: string; weight: number; type?: string }>;
   thresholds: {
     low_threshold: number;
@@ -61,29 +65,39 @@ export interface MultisigEvaluation {
 /**
  * Evaluate a Horizon account record against the payout multisig requirements.
  *
- * `satisfiesDod` is the security gate: med ≥ 2 AND high ≥ 2 AND ≥ 2 non-master
- * signers with weight > 0 AND master weight < med threshold. `matchesTarget` is
+ * `satisfiesDod` is the security gate: low/med/high all ≥ 2 AND ≥ 2 independent
+ * Ed25519 co-signers with weight > 0 AND the configured ops & policy keys are
+ * actually active signers AND master weight < med threshold. `matchesTarget` is
  * the stricter check the setup script uses to decide whether it can no-op.
  */
 export function evaluateMultisig(
   account: AccountLike,
-  { opsPublic, policyPublic }: SignerSet,
+  { masterPublic, opsPublic, policyPublic }: SignerSet,
 ): MultisigEvaluation {
   const { med_threshold: med, high_threshold: high, low_threshold: low } =
     account.thresholds;
 
-  const masterWeight =
-    account.signers.find((s) => s.key === account.id)?.weight ?? 0;
-  const nonMasterSigners = account.signers.filter(
-    (s) => s.key !== account.id && s.weight > 0,
+  // Only Ed25519 public-key signers (G…) are independent co-signers a party can
+  // sign arbitrary payments with. `preauth_tx` / `sha256_hash` "signers" are not
+  // keys, so they must not count toward the ≥ 2 independent-signer requirement.
+  const keySigners = account.signers.filter(
+    (s) => s.weight > 0 && StrKey.isValidEd25519PublicKey(s.key),
   );
+  const weightOf = (key: string) =>
+    keySigners.find((s) => s.key === key)?.weight ?? 0;
+
+  const masterWeight = weightOf(masterPublic);
+  const opsWeight = weightOf(opsPublic);
+  const policyWeight = weightOf(policyPublic);
+  const nonMasterSigners = keySigners.filter((s) => s.key !== masterPublic);
 
   const reasons: string[] = [];
+  if (low < 2) reasons.push(`low threshold ${low} < 2`);
   if (med < 2) reasons.push(`med threshold ${med} < 2 (payment needs ≥ 2 signatures)`);
   if (high < 2) reasons.push(`high threshold ${high} < 2`);
   if (nonMasterSigners.length < 2) {
     reasons.push(
-      `only ${nonMasterSigners.length} independent signer(s); need ≥ 2`,
+      `only ${nonMasterSigners.length} independent Ed25519 signer(s); need ≥ 2`,
     );
   }
   if (masterWeight >= med) {
@@ -91,12 +105,17 @@ export function evaluateMultisig(
       `master weight ${masterWeight} ≥ med threshold ${med} — master alone can pay`,
     );
   }
+  // Assert the *intended* topology, not just "any two signers": a missing or
+  // typoed STELLAR_OPS/POLICY_SIGNER_PUBLIC must fail rather than silently pass.
+  if (opsWeight <= 0) {
+    reasons.push(`configured ops signer ${opsPublic || "(unset)"} is not an active signer`);
+  }
+  if (policyWeight <= 0) {
+    reasons.push(`configured policy signer ${policyPublic || "(unset)"} is not an active signer`);
+  }
 
   const satisfiesDod = reasons.length === 0;
 
-  const opsWeight = account.signers.find((s) => s.key === opsPublic)?.weight ?? 0;
-  const policyWeight =
-    account.signers.find((s) => s.key === policyPublic)?.weight ?? 0;
   const matchesTarget =
     masterWeight === TARGET_MULTISIG.masterWeight &&
     low === TARGET_MULTISIG.low &&
@@ -115,7 +134,9 @@ export function evaluateMultisig(
  * lower the master weight to 1, and set low/med/high thresholds to 2.
  *
  * The caller signs with the master key and submits. Validates both signer keys
- * are well-formed G… public keys so a typo can't silently add a bad signer.
+ * are well-formed G… public keys, and that ops, policy, and master are three
+ * distinct keys — so a typo or copy-paste can't silently collapse the intended
+ * 2-of-3 into a weaker 2-of-2 (or hand two of the three signatures to one party).
  */
 export function buildSetOptionsTx({
   account,
@@ -135,6 +156,13 @@ export function buildSetOptionsTx({
     if (!StrKey.isValidEd25519PublicKey(key)) {
       throw new Error(`${label} signer must be a valid Stellar public key (G…), got "${key}"`);
     }
+  }
+  const masterPublic = masterKey.publicKey();
+  if (opsPublic === policyPublic) {
+    throw new Error("ops and policy signers must be different keys — the same key twice is a 2-of-2, not a 2-of-3");
+  }
+  if (opsPublic === masterPublic || policyPublic === masterPublic) {
+    throw new Error("ops and policy co-signers must each differ from the master key");
   }
 
   return new TransactionBuilder(account, {

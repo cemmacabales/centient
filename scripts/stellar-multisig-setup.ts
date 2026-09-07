@@ -104,6 +104,7 @@ async function main() {
 
   const account = await server().loadAccount(master.publicKey());
   const evaluation = evaluateMultisig(account as unknown as AccountLike, {
+    masterPublic: master.publicKey(),
     opsPublic,
     policyPublic,
   });
