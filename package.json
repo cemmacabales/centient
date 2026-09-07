@@ -16,6 +16,7 @@
     "payout": "tsx lib/payout-worker.ts",
     "stellar:multisig:setup": "tsx scripts/stellar-multisig-setup.ts",
     "stellar:multisig:verify": "tsx scripts/stellar-multisig-verify.ts",
+    "stellar:multisig:payout-spike": "tsx scripts/stellar-multisig-payout-spike.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "db:migrate": "prisma migrate dev",
