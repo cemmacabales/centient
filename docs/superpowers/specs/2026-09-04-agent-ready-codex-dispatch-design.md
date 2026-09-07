@@ -129,9 +129,10 @@ security- and behavior-critical contract:
 - `develop` base, `codex/issue-<number>` branch convention, verification
   requirement, `Closes` linkage, and no-merge instruction.
 
-Also parse the workflow with Ruby's built-in YAML parser using YAML 1.2-safe
-handling or validate it with an available action workflow linter. Run the
-focused test first, then the complete test suite and typecheck.
+Also parse the workflow with Ruby's built-in YAML parser as a syntax check,
+while relying on the focused test for GitHub-specific `on` semantics because
+Ruby 2.6 interprets YAML 1.1. Run the focused test first, then the complete test
+suite and typecheck.
 
 ## Documentation
 
