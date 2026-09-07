@@ -25,35 +25,64 @@ describe("agent-ready Codex dispatch workflow", () => {
     );
   });
 
-  it("uses least privilege and the maintainer token without an OpenAI key", () => {
+  it("keeps the workflow token read-only and uses the maintainer token without an OpenAI key", () => {
     const workflow = readWorkflow();
 
     expect(workflow).toMatch(/permissions:\n  contents: read\n  issues: read/);
     expect(workflow).toContain("secrets.CODEX_TRIGGER_TOKEN");
     expect(workflow).not.toContain("OPENAI_API_KEY");
+    expect(workflow).toContain("github.rest.users.getAuthenticated");
+    expect(workflow).toContain(
+      'authenticatedUser.data.login !== "cemmacabales"',
+    );
+    expect(workflow).toContain('authenticatedUser.data.type !== "User"');
+    expect(workflow).toContain("CODEX_TRIGGER_TOKEN must belong to cemmacabales");
   });
 
-  it("deduplicates one label event while allowing a later re-label", () => {
+  it("deduplicates one label event on both the issue and pull request", () => {
     const workflow = readWorkflow();
 
     expect(workflow).toContain("context.runId");
     expect(workflow).toContain("agent-ready-dispatch:");
-    expect(workflow).toContain("comments.some(");
+    expect(workflow).toContain("issueComments.some(");
+    expect(workflow).toContain("pullRequestComments.some(");
     expect(workflow).toContain(
       'comment.user?.login === "cemmacabales"',
     );
     expect(workflow).toContain('comment.user?.type === "User"');
   });
 
-  it("delegates the required branch, verification, PR, and authorship contract", () => {
+  it("creates a maintainer-authored dispatch branch and draft pull request", () => {
     const workflow = readWorkflow();
 
     expect(workflow).toContain("codex/issue-${issueNumber}");
-    expect(workflow).toContain("target `develop`");
+    expect(workflow).toContain("github.rest.git.createBlob");
+    expect(workflow).toContain("github.rest.git.createTree");
+    expect(workflow).toContain("github.rest.git.createCommit");
+    expect(workflow).toContain("github.rest.git.createRef");
+    expect(workflow).toContain('name: "cemmacabales"');
+    expect(workflow).toContain('email: "carlmacabales31@gmail.com"');
+    expect(workflow).toContain("github.rest.pulls.create");
+    expect(workflow).toContain('base: "develop"');
+    expect(workflow).toContain("draft: true");
+    expect(workflow).toContain("Closes #${issueNumber}");
+    expect(workflow).toContain(
+      'pullRequest.user?.login === "cemmacabales"',
+    );
+    expect(workflow).toContain(
+      "Refusing to reuse an untrusted or orphaned branch",
+    );
+  });
+
+  it("dispatches Codex from the pull request with the implementation contract", () => {
+    const workflow = readWorkflow();
+
+    expect(workflow).toContain("issue_number: pullRequest.number");
+    expect(workflow).toContain("@codex implement GitHub issue #${issueNumber}");
+    expect(workflow).toContain("Remove \\`${dispatchPath}\\` before finishing");
     expect(workflow).toContain("npm test");
     expect(workflow).toContain("npm run typecheck");
     expect(workflow).toContain("npm run build");
-    expect(workflow).toContain("Closes #${issueNumber}");
     expect(workflow).toContain(
       "cemmacabales <carlmacabales31@gmail.com>",
     );

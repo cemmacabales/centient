@@ -50,6 +50,15 @@ jobs:
                 per_page: 100,
               },
             );
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                per_page: 100,
+              },
+            );
 
             const invalidCommits = commits.filter(({ commit }) =>
               commit.author?.name !== requiredIdentity.name ||
@@ -66,6 +75,11 @@ jobs:
             ].join("\n");
             const pullRequestHasAttribution =
               prohibitedAttribution.test(pullRequestText);
+            const dispatchFiles = files.filter(
+              ({ filename, status }) =>
+                status !== "removed" &&
+                /^\.github\/codex-dispatch\/issue-\d+\.md$/.test(filename),
+            );
 
             const failures = [];
 
@@ -87,6 +101,12 @@ jobs:
 
             if (pullRequestHasAttribution) {
               failures.push("Pull request attribution is not allowed.");
+            }
+
+            if (dispatchFiles.length > 0) {
+              failures.push(
+                "Temporary Codex dispatch files must be removed before review.",
+              );
             }
 
             const finalState = failures.length > 0 ? "failure" : "success";
