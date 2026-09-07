@@ -6,9 +6,8 @@ type WalletBalanceAlertInput = Pick<
   | "address"
   | "assetStatus"
   | "availableXlmBalance"
-  | "sponsoredReserveXlm"
   | "usdcBalance"
-> & {
+> & Partial<Pick<WalletHealth, "minimumBalanceXlm" | "nativeSellingLiabilitiesXlm">> & {
   // HealthMonitorInput is extended with this field in Task 5. Keep the existing
   // subset callers valid while direct wallet reads always supply a real state.
   monitoringStatus?: WalletMonitoringStatus;
@@ -45,7 +44,9 @@ export function walletBalanceAlerts(health: WalletBalanceAlertInput): HealthAler
       lines: [
         isUsdc
           ? `${health.usdcBalance} USDC remains in the reward float`
-          : `${health.availableXlmBalance} XLM is spendable (${health.sponsoredReserveXlm} XLM reserved)`,
+          : health.minimumBalanceXlm !== undefined && health.nativeSellingLiabilitiesXlm !== undefined
+            ? `${health.availableXlmBalance} XLM is spendable (${health.minimumBalanceXlm} XLM minimum balance; ${health.nativeSellingLiabilitiesXlm} XLM selling liabilities)`
+            : `${health.availableXlmBalance} XLM is spendable`,
         `Platform wallet: ${health.address}`,
       ],
     });
