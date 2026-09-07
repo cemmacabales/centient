@@ -46,18 +46,20 @@ between linking and payout.
   `submitMultisigPayout` returns a hash. A submit that returns a definite rejection
   (the transaction was never applied) leaves the job with no hash → the worker
   requeues and re-submits with a fresh sequence, which is safe.
-- ⚠️ **An *ambiguous* submit is not covered.** If Horizon accepted the transaction but
-  the response was lost — a client timeout, a dropped connection, a 5xx after
-  acceptance — the job records no hash even though the payment settled. The requeue
-  then rebuilds against the *advanced* sequence and can settle a second time. No
-  amount of sequence locking prevents this: the ambiguity is in the response, not
-  the ordering. Closing it requires persisting the signed envelope's hash **before**
-  submitting and reconciling that hash against Horizon before any reissue. That is
-  not implemented today and predates the multisig service (`payUsdc` had the same
-  window).
-- **Operationally:** if a payout job errors with a timeout rather than a Horizon result
-  code, do not assume it did not pay. Check the payout account's recent transactions
-  for the destination and amount before re-running it.
+- **An *ambiguous* submit is resolved by identity, never by rebuilding.** If Horizon
+  accepted the transaction but the response was lost — a client timeout, a dropped
+  connection, a 5xx after acceptance — `submitMultisigPayout` does **not** rebuild.
+  The envelope hash is computed *before* submission, so the service polls Horizon
+  for that exact transaction until it is found, or until the envelope's time bounds
+  expire and it can no longer be included by anyone. A payout that actually settled
+  returns its real hash; a rebuild is only permitted once the original envelope is
+  provably dead. This closes the double-settlement window that `payUsdc` had.
+- **Residual:** if the process dies between submitting and resolving, the in-memory
+  hash is lost and the job requeues without it. Surviving that requires persisting
+  the hash before submit; see the payout service runbook.
+- **Operationally:** a payout that fails with `ambiguous_submit` and `retryable: false`
+  needs a human. Check the payout account's recent transactions for the destination
+  and amount before re-running it.
 - Once a hash exists, the **reconciler** owns the outcome: it polls Horizon and moves
   `sent → confirmed` (or `failed`). A `not_found` (404) is treated as *still pending*
   (Horizon read-lag before ledger inclusion), so the payout stays `sent` and is not

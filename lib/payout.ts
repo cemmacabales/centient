@@ -76,10 +76,16 @@ export async function waitForTx(
   return { status: status === "confirmed" ? "success" : "reverted", transactionHash: hash };
 }
 
+/** The default per-submission reward, in exact integer units. */
 export function rewardInUnits(): bigint {
   return usdcToUnits(REWARD_AMOUNT);
 }
 
+/**
+ * The reward a submission actually earns: the task's own amount when set, else the
+ * campaign's, else the platform default. Zero and null are treated as unset so a
+ * missing override can never silently pay nothing.
+ */
 export function resolveRewardUnits(
   taskRewardUnits: bigint | null,
   campaignRewardUnits: bigint | null,

@@ -90,12 +90,24 @@ second process can interleave.
 | `op_no_trust` — recipient holds no USDC trustline | **No** | Permanent failure, surfaced unchanged to the worker, which marks the payout failed and refunds. See the failure runbook. |
 | `op_no_destination` — recipient unfunded | **No** | Same as above. |
 | `tx_bad_seq` — stale sequence | **Yes** | Rebuilt and resubmitted **once**. The rebuild re-enters the whole cycle, including both co-signatures, because a rebuilt envelope has a new hash. Sustained contention is classified retryable so the worker requeues with its own backoff instead of spinning inside the lock. |
+| Ambiguous submit (timeout, dropped socket, post-acceptance 5xx) | **Only once provably dead** | No rebuild. The envelope hash is known before submission, so Horizon is polled for that exact transaction until it resolves, or until the envelope's time bounds expire. A payout that settled returns its real hash. Expiry yields `ambiguous_submit` marked retryable, because the envelope can no longer be included. |
+| Ambiguous submit on an envelope with no time bounds | **No** | Cannot be proven dead, so it is reported non-retryable for manual reconciliation rather than risking a second settlement. |
 | Co-signer refuses | **No** | Nothing is submitted. The payout fails with the co-signer's reason. |
 | Co-signer answers with the wrong key | **No** | Rejected before submission. Indicates a configuration or transport fault — check `STELLAR_POLICY_SIGNER_PUBLIC`. |
 | Co-signer signature does not verify | **No** | Rejected before submission. Indicates envelope tampering or a signer/network-passphrase mismatch. |
 | No co-signer configured | **No** | `payReward` throws before building anything. There is no single-signature fallback. |
 
-Nothing in this table can produce a submitted single-signature payout.
+Nothing in this table can produce a submitted single-signature payout, and nothing
+in it rebuilds a payout whose first envelope might still settle.
+
+### Residual: process death mid-submit
+
+The envelope hash that makes ambiguity recoverable lives in memory for the duration
+of the call. If the process dies between `submitTransaction` and the resolution
+loop, that identity is lost and the job requeues without it — the one remaining
+path to a double settlement. Closing it requires persisting the hash before
+submitting and reconciling it before any reissue, which is a payout state-machine
+change rather than a submitter change.
 
 ## Configuration
 
