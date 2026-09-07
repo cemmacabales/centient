@@ -13,9 +13,12 @@ import { sendDedupedDiscordAlert } from "../health-alert";
 import { walletBalanceAlerts } from "../wallet-balance-alerts";
 import { server } from "./config";
 
-/** XLM reserve locked per sponsored reserve unit (Horizon num_sponsoring counts an
- * account-creation sponsorship as multiple units). */
+/**
+ * @deprecated Reserve requirements are read from Horizon's latest ledger. This
+ * export remains for existing callers until they move to `baseReserveXlm`.
+ */
 export const TRUSTLINE_RESERVE_XLM = 0.5;
+const STROOPS_PER_XLM = 10_000_000n;
 
 /** Balance line as returned by Horizon `account.balances[]` (subset we read). */
 interface HorizonBalanceLine {
@@ -23,6 +26,7 @@ interface HorizonBalanceLine {
   asset_code?: string;
   asset_issuer?: string;
   balance: string;
+  selling_liabilities?: string;
 }
 
 function platformPublicKey(): string | null {
@@ -52,15 +56,26 @@ export interface BalanceThresholds {
 
 export interface WalletHealth {
   address: string;
+  monitoringStatus: WalletMonitoringStatus;
   /** USDC payout float. */
   usdcBalance: string;
   /** XLM held for fees + base/trustline reserves. */
   xlmBalance: string;
-  /** XLM available after subtracting sponsored reserve liabilities. */
+  /** XLM available after native selling liabilities and protocol reserves. */
   availableXlmBalance: string;
+  /** Live network reserve, rendered for operators. */
+  baseReserveXlm: string;
+  /** Protocol-required minimum account balance, rendered for operators. */
+  minimumBalanceXlm: string;
+  /** Native XLM committed to offers, rendered for operators. */
+  nativeSellingLiabilitiesXlm: string;
+  /** Account entries that consume reserve units. */
+  numSubentries: number;
   /** Count of trustlines the platform is sponsoring (Horizon num_sponsoring). */
   numSponsoring: number;
-  /** XLM locked by those sponsorships (0.5 × numSponsoring), informational. */
+  /** Reserve units sponsored by another account (Horizon num_sponsored). */
+  numSponsored: number;
+  /** Live-reserve cost attributable to outgoing sponsorships, informational. */
   sponsoredReserveXlm: string;
   rewardTokenSymbol: string;
   healthy: boolean;
@@ -74,6 +89,60 @@ export interface WalletHealth {
 }
 
 export type BalanceStatus = "healthy" | "warn" | "page" | "unknown";
+export type WalletMonitoringStatus = "healthy" | "unconfigured" | "error";
+
+export interface SpendableXlmInput {
+  totalStroops: bigint;
+  sellingLiabilitiesStroops: bigint;
+  baseReserveStroops: bigint;
+  subentryCount: number;
+  numSponsoring: number;
+  numSponsored: number;
+}
+
+/** Convert Horizon's non-negative, seven-decimal XLM strings into stroops. */
+export function xlmToStroops(xlm: string): bigint {
+  const match = /^(\d+)(?:\.(\d{1,7}))?$/.exec(xlm.trim());
+  if (!match) {
+    throw new Error(`Invalid Horizon XLM amount: ${xlm}`);
+  }
+  return BigInt(match[1]) * STROOPS_PER_XLM + BigInt((match[2] ?? "").padEnd(7, "0"));
+}
+
+function stroopsToDisplay(stroops: bigint): string {
+  if (stroops < 0n) throw new Error("XLM stroops must be non-negative");
+  const whole = stroops / STROOPS_PER_XLM;
+  const fraction = (stroops % STROOPS_PER_XLM).toString().padStart(7, "0");
+  return `${whole}.${fraction.slice(0, 4)}`;
+}
+
+function countFromHorizon(value: unknown, name: string): number {
+  if (value === undefined) return 0;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return value;
+  throw new Error(`Invalid Horizon ${name}`);
+}
+
+function baseReserveStroopsFromLedger(value: unknown): bigint {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
+    return BigInt(value);
+  }
+  if (typeof value === "string" && /^[1-9]\d*$/.test(value)) return BigInt(value);
+  throw new Error("Invalid Horizon base_reserve_in_stroops");
+}
+
+export function calculateSpendableXlm({
+  totalStroops,
+  sellingLiabilitiesStroops,
+  baseReserveStroops,
+  subentryCount,
+  numSponsoring,
+  numSponsored,
+}: SpendableXlmInput): { minimumBalanceStroops: bigint; spendableStroops: bigint } {
+  const reserveUnits = Math.max(0, 2 + subentryCount + numSponsoring - numSponsored);
+  const minimumBalanceStroops = baseReserveStroops * BigInt(reserveUnits);
+  const raw = totalStroops - sellingLiabilitiesStroops - minimumBalanceStroops;
+  return { minimumBalanceStroops, spendableStroops: raw > 0n ? raw : 0n };
+}
 
 export function parseBalanceThresholds(): BalanceThresholds {
   return {
@@ -166,11 +235,17 @@ export async function getWalletHealth(): Promise<WalletHealth> {
   if (!address) {
     return {
       address: "—",
+      monitoringStatus: "unconfigured",
       usdcBalance: "—",
       xlmBalance: "—",
       availableXlmBalance: "—",
+      baseReserveXlm: "—",
+      minimumBalanceXlm: "—",
+      nativeSellingLiabilitiesXlm: "—",
+      numSubentries: 0,
       numSponsoring: 0,
-      sponsoredReserveXlm: "0.0000",
+      numSponsored: 0,
+      sponsoredReserveXlm: "—",
       rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
       healthy: false,
       warnings: ["STELLAR_PLATFORM_SECRET not configured"],
@@ -180,35 +255,67 @@ export async function getWalletHealth(): Promise<WalletHealth> {
     };
   }
 
-  let xlm = 0;
+  let totalStroops: bigint;
+  let sellingLiabilitiesStroops: bigint;
+  let baseReserveStroops: bigint;
   let usdc = 0;
+  let numSubentries = 0;
   let numSponsoring = 0;
+  let numSponsored = 0;
   try {
-    const account = await server().loadAccount(address);
-    ({ xlm, usdc } = extractBalances(account.balances as HorizonBalanceLine[]));
-    numSponsoring = Number((account as { num_sponsoring?: number }).num_sponsoring ?? 0);
+    const horizon = server();
+    const [account, ledgerPage] = await Promise.all([
+      horizon.loadAccount(address),
+      horizon.ledgers().order("desc").limit(1).call(),
+    ]);
+    const native = (account.balances as HorizonBalanceLine[]).find(
+      (balance) => balance.asset_type === "native",
+    );
+    const latestLedger = ledgerPage.records[0];
+    if (!native || !latestLedger) throw new Error("Horizon account or latest ledger is incomplete");
+
+    ({ usdc } = extractBalances(account.balances as HorizonBalanceLine[]));
+    totalStroops = xlmToStroops(native.balance);
+    sellingLiabilitiesStroops = xlmToStroops(native.selling_liabilities ?? "0");
+    baseReserveStroops = baseReserveStroopsFromLedger(latestLedger.base_reserve_in_stroops);
+    numSubentries = countFromHorizon(account.subentry_count, "subentry_count");
+    numSponsoring = countFromHorizon(account.num_sponsoring, "num_sponsoring");
+    numSponsored = countFromHorizon(account.num_sponsored, "num_sponsored");
   } catch {
     return {
       address,
+      monitoringStatus: "error",
       usdcBalance: "—",
       xlmBalance: "—",
       availableXlmBalance: "—",
+      baseReserveXlm: "—",
+      minimumBalanceXlm: "—",
+      nativeSellingLiabilitiesXlm: "—",
+      numSubentries: 0,
       numSponsoring: 0,
-      sponsoredReserveXlm: "0.0000",
+      numSponsored: 0,
+      sponsoredReserveXlm: "—",
       rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
       healthy: false,
-      warnings: ["STELLAR_PLATFORM_SECRET not configured or Horizon unavailable"],
+      warnings: ["Horizon wallet monitoring unavailable"],
       pages: [],
       assetStatus: { usdc: "unknown", xlm: "unknown" },
       thresholds,
     };
   }
 
-  // Sponsored reserves are locked on the platform account — subtract them so the
-  // XLM floor reflects *available* fee XLM, not reserves the platform can't spend
-  // (ST-4e #314). USDC float is unaffected.
-  const sponsoredReserveXlm = TRUSTLINE_RESERVE_XLM * numSponsoring;
-  const availableXlm = xlm - sponsoredReserveXlm;
+  const { minimumBalanceStroops, spendableStroops } = calculateSpendableXlm({
+    totalStroops,
+    sellingLiabilitiesStroops,
+    baseReserveStroops,
+    subentryCount: numSubentries,
+    numSponsoring,
+    numSponsored,
+  });
+  // Preserved until callers consume minimumBalanceXlm directly. Unlike the old
+  // constant estimate, this is derived from the same live reserve used above.
+  const sponsoredReserveStroops = baseReserveStroops * BigInt(numSponsoring);
+  const availableXlm = Number(spendableStroops) / Number(STROOPS_PER_XLM);
 
   const { healthy, warnings, pages, assetStatus } = evaluateThresholds(
     availableXlm,
@@ -218,11 +325,17 @@ export async function getWalletHealth(): Promise<WalletHealth> {
 
   return {
     address,
+    monitoringStatus: "healthy",
     usdcBalance: usdc.toFixed(4),
-    xlmBalance: xlm.toFixed(4),
-    availableXlmBalance: availableXlm.toFixed(4),
+    xlmBalance: stroopsToDisplay(totalStroops),
+    availableXlmBalance: stroopsToDisplay(spendableStroops),
+    baseReserveXlm: stroopsToDisplay(baseReserveStroops),
+    minimumBalanceXlm: stroopsToDisplay(minimumBalanceStroops),
+    nativeSellingLiabilitiesXlm: stroopsToDisplay(sellingLiabilitiesStroops),
+    numSubentries,
     numSponsoring,
-    sponsoredReserveXlm: sponsoredReserveXlm.toFixed(4),
+    numSponsored,
+    sponsoredReserveXlm: stroopsToDisplay(sponsoredReserveStroops),
     rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
     healthy,
     warnings,
