@@ -49,6 +49,7 @@ const seqMutex = new Mutex();
 
 let _platformKeypair: Keypair | null = null;
 
+/** The platform signing key from `STELLAR_PLATFORM_SECRET`, memoized after first use. */
 function platformKeypair(): Keypair {
   if (_platformKeypair) return _platformKeypair;
   const secret = process.env.STELLAR_PLATFORM_SECRET;
@@ -66,6 +67,11 @@ export function resultCodes(err: unknown): { transaction?: string; operations?: 
   return (extras as { transaction?: string; operations?: string[] }) ?? {};
 }
 
+/**
+ * Build, sign, and submit one single-key USDC payment against the platform
+ * account's current sequence. Called only from inside `seqMutex`, and re-entered
+ * whole on a stale sequence so the reload picks up the current one.
+ */
 async function buildSignSubmit(
   kp: Keypair,
   to: string,
