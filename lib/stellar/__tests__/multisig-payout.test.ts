@@ -156,6 +156,32 @@ describe("fee bump", () => {
     verifySignatures(feeBump, [source, cosigner]);
   });
 
+  it("accepts two valid required signers whose 4-byte signature hints collide", () => {
+    const source = Keypair.fromSecret(
+      "SCCWCBKRPZIXX2WBQE7ROHQJZFRD5JKEGCHX5XUI2JCYVVJMXUB5LBB2",
+    );
+    const cosigner = Keypair.fromSecret(
+      "SDXU2G5LKV4W7FQ4AUC6HDLA6NB3OY4W5JARKHHIVSBM65I5H4EPGWVC",
+    );
+    expect(source.signatureHint()).toEqual(cosigner.signatureHint());
+
+    const inner = buildUsdcPaymentTx({
+      sourceAccount: new Account(source.publicKey(), "12"),
+      destination: Keypair.random().publicKey(),
+      asset: usdc,
+      amountUnits: 1n,
+    });
+    addIndependentSignatures(inner, [source, cosigner]);
+
+    expect(() =>
+      buildMultisigFeeBump({
+        feeSource: source.publicKey(),
+        innerTransaction: inner,
+        requiredSignerPublicKeys: [source.publicKey(), cosigner.publicKey()],
+      }),
+    ).not.toThrow();
+  });
+
   it("refuses to wrap an under-signed payment", () => {
     const source = Keypair.random();
     const inner = buildUsdcPaymentTx({

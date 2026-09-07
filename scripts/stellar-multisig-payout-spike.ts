@@ -40,6 +40,7 @@ import { buildSponsoredRecipientTx } from "../lib/stellar/sponsored-recipient";
 const DEFAULT_PAYOUT_AMOUNT = "1";
 const TX_TIMEOUT_SECONDS = 180;
 const CIRCLE_FAUCET = "https://faucet.circle.com/?allow=true";
+const STELLAR_DECIMAL_SCALE = 10_000_000n;
 const log = (...values: unknown[]) => console.log(...values);
 type AccountResponse = Awaited<ReturnType<ReturnType<typeof server>["loadAccount"]>>;
 
@@ -71,7 +72,15 @@ function assetBalanceUnits(
 
 function nativeBalanceUnits(account: AccountResponse): bigint {
   const line = account.balances.find((balance) => balance.asset_type === "native");
-  return line ? usdcToUnits(line.balance) : 0n;
+  if (!line) return 0n;
+
+  const match = /^(\d+)(?:\.(\d{1,7}))?$/.exec(line.balance.trim());
+  if (!match) {
+    throw new Error(`invalid Stellar native balance "${line.balance}"`);
+  }
+  const whole = BigInt(match[1]);
+  const fraction = BigInt((match[2] ?? "").padEnd(7, "0"));
+  return whole * STELLAR_DECIMAL_SCALE + fraction;
 }
 
 async function ensurePayoutTrustline({
