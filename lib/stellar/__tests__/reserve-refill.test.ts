@@ -10,6 +10,7 @@ import {
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   addReserveRefillSignature,
+  assertReserveRefillStillPermitted,
   buildReserveRefillTransaction,
   extractAssetBalanceUnits,
   loadReserveRefillStatus,
@@ -802,7 +803,8 @@ describe("reserve refill submission", () => {
       signedXdr: fixture.transaction.toXDR(),
       policy: fixture.policy,
       asset: fixture.asset,
-      expectedAmountUnits: fixture.amountUnits,
+      hotBalanceUnits: 250_000_000n,
+      coldBalanceUnits: 2_000_000_000n,
       nowSeconds: Math.floor(Date.now() / 1000),
       log(message) {
         events.push(`log:${message}`);
@@ -830,7 +832,8 @@ describe("reserve refill submission", () => {
         signedXdr: fixture.transaction.toXDR(),
         policy: fixture.policy,
         asset: fixture.asset,
-        expectedAmountUnits: fixture.amountUnits,
+        hotBalanceUnits: 250_000_000n,
+        coldBalanceUnits: 2_000_000_000n,
         nowSeconds: Math.floor(Date.now() / 1000),
         log() {},
         async submit() {
@@ -851,7 +854,8 @@ describe("reserve refill submission", () => {
         signedXdr: fixture.transaction.toXDR(),
         policy: fixture.policy,
         asset: fixture.asset,
-        expectedAmountUnits: fixture.amountUnits,
+        hotBalanceUnits: 250_000_000n,
+        coldBalanceUnits: 2_000_000_000n,
         nowSeconds: Math.floor(Date.now() / 1000),
         log() {},
         async submit() {
@@ -861,6 +865,123 @@ describe("reserve refill submission", () => {
       }),
     ).rejects.toThrow(/connection dropped/i);
     expect(submitCalls).toBe(1);
+  });
+  it("still submits after payouts drained the hot wallet during signing", async () => {
+    // Regression: the amount is fixed when the custodians sign it. A payout
+    // landing inside the 15-minute ceremony must not invalidate their
+    // signatures — only the two policy invariants have to still hold.
+    const fixture = transactionFixture();
+    addReserveRefillSignature(fixture.transaction, fixture.cold, fixture.policy);
+    addReserveRefillSignature(fixture.transaction, fixture.ops, fixture.policy);
+    const hash = fixture.transaction.hash().toString("hex");
+
+    await expect(
+      submitReserveRefill({
+        signedXdr: fixture.transaction.toXDR(),
+        policy: fixture.policy,
+        asset: fixture.asset,
+        // Prepared at 250000000; payouts since took it to 100000000.
+        hotBalanceUnits: 100_000_000n,
+        coldBalanceUnits: 2_000_000_000n,
+        nowSeconds: Math.floor(Date.now() / 1000),
+        log() {},
+        async submit() {
+          return { hash };
+        },
+      }),
+    ).resolves.toEqual({ hash });
+  });
+
+  it("rejects a signed amount that would lift the hot float above target", async () => {
+    const fixture = transactionFixture();
+    addReserveRefillSignature(fixture.transaction, fixture.cold, fixture.policy);
+    addReserveRefillSignature(fixture.transaction, fixture.ops, fixture.policy);
+    let submitCalls = 0;
+
+    await expect(
+      submitReserveRefill({
+        signedXdr: fixture.transaction.toXDR(),
+        policy: fixture.policy,
+        asset: fixture.asset,
+        // 400000000 + 750000000 exceeds the 1000000000 float cap.
+        hotBalanceUnits: 400_000_000n,
+        coldBalanceUnits: 2_000_000_000n,
+        nowSeconds: Math.floor(Date.now() / 1000),
+        log() {},
+        async submit() {
+          submitCalls += 1;
+          return { hash: "" };
+        },
+      }),
+    ).rejects.toThrow(/above its target/i);
+    expect(submitCalls).toBe(0);
+  });
+
+  it("rejects a signed amount that would breach the cold retained floor", async () => {
+    const fixture = transactionFixture();
+    addReserveRefillSignature(fixture.transaction, fixture.cold, fixture.policy);
+    addReserveRefillSignature(fixture.transaction, fixture.ops, fixture.policy);
+    let submitCalls = 0;
+
+    await expect(
+      submitReserveRefill({
+        signedXdr: fixture.transaction.toXDR(),
+        policy: fixture.policy,
+        asset: fixture.asset,
+        hotBalanceUnits: 250_000_000n,
+        // 1000000000 - 750000000 leaves less than the 500000000 floor.
+        coldBalanceUnits: 1_000_000_000n,
+        nowSeconds: Math.floor(Date.now() / 1000),
+        log() {},
+        async submit() {
+          submitCalls += 1;
+          return { hash: "" };
+        },
+      }),
+    ).rejects.toThrow(/retained floor/i);
+    expect(submitCalls).toBe(0);
+  });
+});
+
+describe("reserve refill live-balance invariants", () => {
+  const policy = parseReserveRefillPolicy(policyFixture().env);
+
+  it("permits an exact top-up to the target and an under-sized refill", () => {
+    expect(() =>
+      assertReserveRefillStillPermitted({
+        policy,
+        amountUnits: 750_000_000n,
+        hotBalanceUnits: 250_000_000n,
+        coldBalanceUnits: 1_250_000_000n,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertReserveRefillStillPermitted({
+        policy,
+        amountUnits: 1n,
+        hotBalanceUnits: 0n,
+        coldBalanceUnits: 500_000_001n,
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects one unit over either bound", () => {
+    expect(() =>
+      assertReserveRefillStillPermitted({
+        policy,
+        amountUnits: 750_000_001n,
+        hotBalanceUnits: 250_000_000n,
+        coldBalanceUnits: 2_000_000_000n,
+      }),
+    ).toThrow(/above its target/i);
+    expect(() =>
+      assertReserveRefillStillPermitted({
+        policy,
+        amountUnits: 750_000_000n,
+        hotBalanceUnits: 250_000_000n,
+        coldBalanceUnits: 1_249_999_999n,
+      }),
+    ).toThrow(/retained floor/i);
   });
 });
 

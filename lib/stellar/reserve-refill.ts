@@ -423,12 +423,64 @@ export function addReserveRefillSignature(
   return transaction;
 }
 
+/**
+ * Read the amount the custodians actually signed. The envelope is fully
+ * re-validated by {@link validateReserveRefillTransaction} immediately after;
+ * these two guards exist only so the amount can be read safely first.
+ */
+function readSignedRefillAmountUnits(transaction: Transaction): bigint {
+  if (transaction.operations.length !== 1) {
+    throw new Error("reserve refill must contain exactly one operation");
+  }
+  const operation = transaction.operations[0];
+  if (operation.type !== "payment") {
+    throw new Error("reserve refill operation must be a payment");
+  }
+  return stellarAmountToUnits(operation.amount);
+}
+
+/**
+ * Confirm live balances still permit the exact amount two custodians signed.
+ *
+ * The ceremony spans up to {@link MAX_RESERVE_REFILL_LIFETIME_SECONDS} and the
+ * hot wallet keeps paying out throughout it, so the signed amount is
+ * deliberately NOT required to equal a freshly derived
+ * `targetUnits - hotBalanceUnits`. Re-deriving it would invalidate both
+ * signatures on every payout and leave the refill unable to complete under
+ * exactly the load that triggered it. What must still hold are the two policy
+ * invariants themselves: a refill can never lift the hot float above its cap,
+ * and can never pull the cold reserve below its retained floor.
+ */
+export function assertReserveRefillStillPermitted({
+  policy,
+  amountUnits,
+  hotBalanceUnits,
+  coldBalanceUnits,
+}: {
+  policy: ReserveRefillPolicy;
+  amountUnits: bigint;
+  hotBalanceUnits: bigint;
+  coldBalanceUnits: bigint;
+}): void {
+  if (hotBalanceUnits + amountUnits > policy.targetUnits) {
+    throw new Error(
+      `reserve refill would raise the hot float above its target; hot=${hotBalanceUnits} amount=${amountUnits} target=${policy.targetUnits}`,
+    );
+  }
+  if (coldBalanceUnits - amountUnits < policy.minRetainUnits) {
+    throw new Error(
+      `reserve refill would pull the cold reserve below its retained floor; cold=${coldBalanceUnits} amount=${amountUnits} floor=${policy.minRetainUnits}`,
+    );
+  }
+}
+
 /** Validate and submit one signed refill envelope without automatic retries. */
 export async function submitReserveRefill({
   signedXdr,
   policy,
   asset,
-  expectedAmountUnits,
+  hotBalanceUnits,
+  coldBalanceUnits,
   nowSeconds,
   submit,
   log,
@@ -436,23 +488,32 @@ export async function submitReserveRefill({
   signedXdr: string;
   policy: ReserveRefillPolicy;
   asset: Asset;
-  expectedAmountUnits: bigint;
+  hotBalanceUnits: bigint;
+  coldBalanceUnits: bigint;
   nowSeconds: number;
   submit: (transaction: Transaction) => Promise<{ hash: string }>;
   log: (message: string) => void;
 }): Promise<{ hash: string }> {
   const decoded = TransactionBuilder.fromXDR(signedXdr, networkPassphrase());
+  if (decoded instanceof FeeBumpTransaction) {
+    throw new Error("reserve refill must not use a fee-bump envelope");
+  }
+
+  const amountUnits = readSignedRefillAmountUnits(decoded);
   validateReserveRefillTransaction({
     transaction: decoded,
     policy,
     asset,
-    expectedAmountUnits,
+    expectedAmountUnits: amountUnits,
     nowSeconds,
     requireSignatures: true,
   });
-  if (decoded instanceof FeeBumpTransaction) {
-    throw new Error("reserve refill must not use a fee-bump envelope");
-  }
+  assertReserveRefillStillPermitted({
+    policy,
+    amountUnits,
+    hotBalanceUnits,
+    coldBalanceUnits,
+  });
 
   const hash = decoded.hash().toString("hex");
   log(`reserve refill hash: ${hash}`);
