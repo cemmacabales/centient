@@ -8,7 +8,13 @@ import {
   TransactionBuilder,
   type Transaction,
 } from "@stellar/stellar-sdk";
-import { explorerUrl, networkPassphrase, unitsToUsdcString } from "./config";
+import {
+  explorerUrl,
+  networkPassphrase,
+  server,
+  unitsToUsdcString,
+  usdcAsset,
+} from "./config";
 
 type SourceAccount = ConstructorParameters<typeof TransactionBuilder>[0];
 
@@ -45,6 +51,9 @@ export type ReserveRefillPlan =
       hotBalanceUnits: bigint;
       coldBalanceUnits: bigint;
     };
+
+export const MAX_RESERVE_REFILL_FEE_STROOPS = 10_000n;
+export const MAX_RESERVE_REFILL_LIFETIME_SECONDS = 180;
 
 export interface HorizonBalanceLine {
   asset_type: string;
@@ -85,15 +94,42 @@ export function parseReserveRefillPolicy(
     "STELLAR_COLD_POLICY_SIGNER_PUBLIC",
   );
 
-  const platformSecret = requireEnv(env, "STELLAR_PLATFORM_SECRET").trim();
-  let hotAccount: string;
-  try {
-    hotAccount = Keypair.fromSecret(platformSecret).publicKey();
-  } catch {
+  const explicitHotAccount = env.STELLAR_PLATFORM_ACCOUNT?.trim();
+  if (
+    explicitHotAccount &&
+    !StrKey.isValidEd25519PublicKey(explicitHotAccount)
+  ) {
     throw new Error(
-      "STELLAR_PLATFORM_SECRET must be a valid Stellar secret seed (S…)",
+      "STELLAR_PLATFORM_ACCOUNT must be a valid Stellar public key (G…)",
     );
   }
+
+  const platformSecret = env.STELLAR_PLATFORM_SECRET?.trim();
+  let hotAccountFromSecret: string | undefined;
+  if (platformSecret) {
+    try {
+      hotAccountFromSecret = Keypair.fromSecret(platformSecret).publicKey();
+    } catch {
+      throw new Error(
+        "STELLAR_PLATFORM_SECRET must be a valid Stellar secret seed (S…)",
+      );
+    }
+  }
+  if (!explicitHotAccount && !hotAccountFromSecret) {
+    throw new Error(
+      "STELLAR_PLATFORM_ACCOUNT or STELLAR_PLATFORM_SECRET is required",
+    );
+  }
+  if (
+    explicitHotAccount &&
+    hotAccountFromSecret &&
+    explicitHotAccount !== hotAccountFromSecret
+  ) {
+    throw new Error(
+      "STELLAR_PLATFORM_ACCOUNT must match the account derived from STELLAR_PLATFORM_SECRET",
+    );
+  }
+  const hotAccount = explicitHotAccount ?? hotAccountFromSecret!;
 
   const identities = [coldAccount, hotAccount, opsPublic, policyPublic];
   if (new Set(identities).size !== identities.length) {
@@ -123,6 +159,17 @@ export function parseReserveRefillPolicy(
     targetUnits,
     minRetainUnits,
   };
+}
+
+/** Parse the exact operator-approved refill amount for an offline signer. */
+export function parseReserveRefillExpectedAmountUnits(
+  env: ReserveRefillEnvironment = process.env,
+): bigint {
+  const amountUnits = requireUnits(env, "STELLAR_RESERVE_REFILL_AMOUNT_UNITS");
+  if (amountUnits <= 0n) {
+    throw new Error("STELLAR_RESERVE_REFILL_AMOUNT_UNITS must be positive");
+  }
+  return amountUnits;
 }
 
 /** Convert a non-negative Stellar decimal with at most seven places to units. */
@@ -211,9 +258,13 @@ export function buildReserveRefillTransaction({
   if (!/^\d+$/.test(fee) || BigInt(fee) <= 0n) {
     throw new Error(`reserve refill fee must be a positive stroop string; got "${fee}"`);
   }
-  if (!Number.isInteger(timeoutSeconds) || timeoutSeconds <= 0) {
+  if (
+    !Number.isInteger(timeoutSeconds) ||
+    timeoutSeconds <= 0 ||
+    timeoutSeconds > MAX_RESERVE_REFILL_LIFETIME_SECONDS
+  ) {
     throw new Error(
-      `reserve refill timeoutSeconds must be a positive integer; got ${timeoutSeconds}`,
+      `reserve refill timeoutSeconds must be an integer from 1 to ${MAX_RESERVE_REFILL_LIFETIME_SECONDS}; got ${timeoutSeconds}`,
     );
   }
 
@@ -232,8 +283,6 @@ export function buildReserveRefillTransaction({
     .build();
 }
 
-export const MAX_RESERVE_REFILL_FEE_STROOPS = 10_000n;
-
 /** Enforce the exact refill envelope before either signing or submission. */
 export function validateReserveRefillTransaction({
   transaction,
@@ -250,6 +299,11 @@ export function validateReserveRefillTransaction({
   nowSeconds: number;
   requireSignatures: boolean;
 }): void {
+  if (expectedAmountUnits <= 0n || expectedAmountUnits > policy.targetUnits) {
+    throw new Error(
+      "reserve refill expected amount must be positive and no greater than target",
+    );
+  }
   if (transaction instanceof FeeBumpTransaction) {
     throw new Error("reserve refill must not use a fee-bump envelope");
   }
@@ -258,6 +312,9 @@ export function validateReserveRefillTransaction({
   }
   if (transaction.operations.length !== 1) {
     throw new Error("reserve refill must contain exactly one operation");
+  }
+  if (transaction.memo.type !== "none") {
+    throw new Error("reserve refill must not contain a memo");
   }
 
   const operation = transaction.operations[0];
@@ -290,6 +347,7 @@ export function validateReserveRefillTransaction({
     );
   }
 
+  const minTime = Number(transaction.timeBounds?.minTime ?? 0);
   const maxTime = Number(transaction.timeBounds?.maxTime ?? 0);
   if (!Number.isSafeInteger(maxTime) || maxTime <= 0) {
     throw new Error("reserve refill transaction must have a finite maximum time");
@@ -297,8 +355,16 @@ export function validateReserveRefillTransaction({
   if (!Number.isSafeInteger(nowSeconds) || nowSeconds < 0) {
     throw new Error("reserve refill validation time must be a non-negative integer");
   }
+  if (!Number.isSafeInteger(minTime) || minTime > nowSeconds) {
+    throw new Error("reserve refill transaction start time must not be in the future");
+  }
   if (maxTime < nowSeconds) {
     throw new Error("reserve refill transaction is expired");
+  }
+  if (maxTime > nowSeconds + MAX_RESERVE_REFILL_LIFETIME_SECONDS) {
+    throw new Error(
+      `reserve refill transaction must expire within ${MAX_RESERVE_REFILL_LIFETIME_SECONDS} seconds`,
+    );
   }
 
   const transactionHash = transaction.hash();
@@ -394,4 +460,31 @@ export async function submitReserveRefill({
     );
   }
   return { hash };
+}
+
+/** Read both configured accounts and evaluate the current refill policy. */
+export async function loadReserveRefillStatus({
+  env = process.env,
+  asset = usdcAsset(),
+  loadAccount = async (accountId: string) => {
+    const account = await server().loadAccount(accountId);
+    return {
+      balances: account.balances as unknown as readonly HorizonBalanceLine[],
+    };
+  },
+}: {
+  env?: ReserveRefillEnvironment;
+  asset?: Asset;
+  loadAccount?: (
+    accountId: string,
+  ) => Promise<{ balances: readonly HorizonBalanceLine[] }>;
+} = {}): Promise<ReserveRefillPlan> {
+  const policy = parseReserveRefillPolicy(env);
+  const [hotAccount, coldAccount] = await Promise.all([
+    loadAccount(policy.hotAccount),
+    loadAccount(policy.coldAccount),
+  ]);
+  const hotBalanceUnits = extractAssetBalanceUnits(hotAccount.balances, asset);
+  const coldBalanceUnits = extractAssetBalanceUnits(coldAccount.balances, asset);
+  return planReserveRefill(policy, hotBalanceUnits, coldBalanceUnits);
 }

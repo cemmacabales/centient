@@ -28,14 +28,17 @@ The refill policy uses exact 7-decimal Stellar units (`bigint`) throughout:
 - `STELLAR_COLD_RESERVE_ACCOUNT`: cold reserve public key.
 - `STELLAR_COLD_OPS_SIGNER_PUBLIC`: operations co-signer.
 - `STELLAR_COLD_POLICY_SIGNER_PUBLIC`: policy co-signer.
+- `STELLAR_PLATFORM_ACCOUNT`: pinned hot destination public key. The deployed
+  app may instead derive it from `STELLAR_PLATFORM_SECRET`; when both are set,
+  they must identify the same account.
 - `STELLAR_HOT_FLOAT_TRIGGER_UNITS`: refill trigger, inclusive.
 - `STELLAR_HOT_FLOAT_TARGET_UNITS`: post-refill target; strictly greater than
   the trigger.
 - `STELLAR_COLD_MIN_RETAIN_UNITS`: reserve floor that a refill may never cross.
 
-The hot destination is derived from `STELLAR_PLATFORM_SECRET`, the same source
-used by the payout rail and wallet-health code. It is never accepted as a CLI
-argument, preventing an operator typo from redirecting a refill.
+The hot destination is pinned in policy rather than accepted as a CLI argument,
+preventing an operator typo from redirecting a refill. Offline custodians need
+only `STELLAR_PLATFORM_ACCOUNT`; they never receive the hot seed.
 
 The allowed signing set is the cold account's master public key plus the two
 configured co-signer public keys, matching the on-chain 2-of-3 topology. All
@@ -83,8 +86,8 @@ check. Fee bumping is unnecessary for an operator-controlled reserve account.
 
 The validator rejects extra operations, a different asset or issuer, a changed
 destination, an amount other than the current deterministic plan, excessive
-fees, absent/expired time bounds, unknown signatures, duplicate signer keys,
-and fewer than two valid allowed signatures. Stellar sequence numbers and time
+fees, absent/expired or overlong time bounds, a future start, unknown
+signatures, duplicate signer keys, and fewer than two valid allowed signatures. Stellar sequence numbers and time
 bounds make a successfully submitted envelope non-replayable.
 
 ## Scheduled detection and operator flow
@@ -104,10 +107,10 @@ sequence number. Instead, the operator CLI performs the lifecycle:
 1. `status` repeats the read-only plan.
 2. `prepare` reloads both accounts, requires `refill_required`, and prints an
    unsigned XDR plus its exact hash and human-readable summary.
-3. `sign` accepts an XDR and exactly one custodian seed in the process
-   environment, revalidates its unsigned shape, adds that signature, and prints
-   the new XDR. Each custodian runs this independently; no invocation sees two
-   seeds.
+3. `sign` accepts an XDR, the independently approved exact amount, and exactly
+   one custodian seed in the process environment. Without network access, it
+   revalidates the shape and amount, adds that signature, and prints the new
+   XDR. Each custodian runs this independently; no invocation sees two seeds.
 4. `submit` reloads balances, recomputes the plan, requires two valid configured
    signatures and an exact current amount, prints the hash first, and submits
    once. Unknown outcomes are reconciled by hash and never blindly retried.
@@ -117,9 +120,12 @@ sequence number. Instead, the operator CLI performs the lifecycle:
 The cold setup script reuses the repository's tested native 2-of-3 threshold
 builder with cold-specific environment names. On testnet it may friendbot-fund
 a new account, add the configured USDC trustline, and configure master, ops, and
-policy keys at weight 1 with low/medium/high thresholds of 2. It prints secrets
-only when generating throwaway testnet keys and warns operators to move them to
-separate secret stores; no seed is written to the repository.
+policy keys at weight 1 with low/medium/high thresholds of 2. Key generation
+requires an explicit disposable-testnet opt-in and is impossible on public
+network. Production requires pre-provisioned identities. Before any network
+mutation, setup proves the cold seed matches its configured public key and that
+the cold account differs from the hot wallet. No seed is written to the
+repository.
 
 The committed runbook records:
 

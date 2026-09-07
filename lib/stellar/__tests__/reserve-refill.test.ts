@@ -2,6 +2,7 @@ import {
   Account,
   Asset,
   Keypair,
+  Memo,
   Networks,
   Operation,
   TransactionBuilder,
@@ -11,6 +12,8 @@ import {
   addReserveRefillSignature,
   buildReserveRefillTransaction,
   extractAssetBalanceUnits,
+  loadReserveRefillStatus,
+  parseReserveRefillExpectedAmountUnits,
   parseReserveRefillPolicy,
   planReserveRefill,
   stellarAmountToUnits,
@@ -31,6 +34,7 @@ function policyFixture() {
     STELLAR_COLD_RESERVE_ACCOUNT: cold.publicKey(),
     STELLAR_COLD_OPS_SIGNER_PUBLIC: ops.publicKey(),
     STELLAR_COLD_POLICY_SIGNER_PUBLIC: policy.publicKey(),
+    STELLAR_PLATFORM_ACCOUNT: hot.publicKey(),
     STELLAR_PLATFORM_SECRET: hot.secret(),
     STELLAR_HOT_FLOAT_TRIGGER_UNITS: "250000000",
     STELLAR_HOT_FLOAT_TARGET_UNITS: "1000000000",
@@ -61,7 +65,6 @@ describe("reserve refill policy", () => {
     "STELLAR_COLD_RESERVE_ACCOUNT",
     "STELLAR_COLD_OPS_SIGNER_PUBLIC",
     "STELLAR_COLD_POLICY_SIGNER_PUBLIC",
-    "STELLAR_PLATFORM_SECRET",
     "STELLAR_HOT_FLOAT_TRIGGER_UNITS",
     "STELLAR_HOT_FLOAT_TARGET_UNITS",
     "STELLAR_COLD_MIN_RETAIN_UNITS",
@@ -70,6 +73,53 @@ describe("reserve refill policy", () => {
     delete env[name];
 
     expect(() => parseReserveRefillPolicy(env)).toThrow(name);
+  });
+
+  it("supports public-only hot configuration on an offline signing host", () => {
+    const { hot, env } = policyFixture();
+    delete env.STELLAR_PLATFORM_SECRET;
+
+    expect(parseReserveRefillPolicy(env).hotAccount).toBe(hot.publicKey());
+  });
+
+  it("parses an exact positive amount for an offline signer", () => {
+    expect(
+      parseReserveRefillExpectedAmountUnits({
+        STELLAR_RESERVE_REFILL_AMOUNT_UNITS: "750000000",
+      }),
+    ).toBe(750_000_000n);
+  });
+
+  it.each([undefined, "", "0", "-1", "1.5", " 1"])(
+    "rejects an unsafe offline signing amount %j",
+    (value) => {
+      expect(() =>
+        parseReserveRefillExpectedAmountUnits({
+          STELLAR_RESERVE_REFILL_AMOUNT_UNITS: value,
+        }),
+      ).toThrow(/STELLAR_RESERVE_REFILL_AMOUNT_UNITS/);
+    },
+  );
+
+  it("fails closed when neither hot account identity is configured", () => {
+    const { env } = policyFixture();
+    delete env.STELLAR_PLATFORM_ACCOUNT;
+    delete env.STELLAR_PLATFORM_SECRET;
+
+    expect(() => parseReserveRefillPolicy(env)).toThrow(
+      /STELLAR_PLATFORM_ACCOUNT.*STELLAR_PLATFORM_SECRET/,
+    );
+  });
+
+  it("rejects a public hot account that disagrees with the hot seed", () => {
+    const { env } = policyFixture();
+
+    expect(() =>
+      parseReserveRefillPolicy({
+        ...env,
+        STELLAR_PLATFORM_ACCOUNT: Keypair.random().publicKey(),
+      }),
+    ).toThrow(/must match/i);
   });
 
   it("rejects malformed account and signer public keys", () => {
@@ -100,23 +150,43 @@ describe("reserve refill policy", () => {
     ).toThrow(/STELLAR_PLATFORM_SECRET/);
   });
 
+  it("rejects a malformed explicit hot account", () => {
+    const { env } = policyFixture();
+
+    expect(() =>
+      parseReserveRefillPolicy({
+        ...env,
+        STELLAR_PLATFORM_ACCOUNT: "not-a-stellar-key",
+      }),
+    ).toThrow(/STELLAR_PLATFORM_ACCOUNT/);
+  });
+
   it.each([
     ["ops equals master", "STELLAR_COLD_OPS_SIGNER_PUBLIC", "cold"],
     ["policy equals master", "STELLAR_COLD_POLICY_SIGNER_PUBLIC", "cold"],
     ["policy equals ops", "STELLAR_COLD_POLICY_SIGNER_PUBLIC", "ops"],
-    ["hot equals cold", "STELLAR_PLATFORM_SECRET", "coldSecret"],
   ])("rejects overlapping identities: %s", (_label, field, replacement) => {
     const { cold, ops, env } = policyFixture();
     const value =
       replacement === "cold"
         ? cold.publicKey()
-        : replacement === "ops"
-          ? ops.publicKey()
-          : cold.secret();
+        : ops.publicKey();
 
     expect(() => parseReserveRefillPolicy({ ...env, [field]: value })).toThrow(
       /distinct/i,
     );
+  });
+
+  it("rejects a hot account reused as the cold account", () => {
+    const { cold, env } = policyFixture();
+
+    expect(() =>
+      parseReserveRefillPolicy({
+        ...env,
+        STELLAR_PLATFORM_ACCOUNT: cold.publicKey(),
+        STELLAR_PLATFORM_SECRET: cold.secret(),
+      }),
+    ).toThrow(/distinct/i);
   });
 
   it.each(["-1", "1.5", " 1", "1 ", "abc", ""])(
@@ -295,6 +365,24 @@ describe("reserve refill transaction builder", () => {
       ).toThrow(/amount/i);
     },
   );
+
+  it.each([0, -1, 1.5, 181])(
+    "rejects an unsafe transaction lifetime %s seconds",
+    (timeoutSeconds) => {
+      const fixture = policyFixture();
+      const policy = parseReserveRefillPolicy(fixture.env);
+
+      expect(() =>
+        buildReserveRefillTransaction({
+          sourceAccount: new Account(policy.coldAccount, "41"),
+          policy,
+          asset: new Asset("USDC", Keypair.random().publicKey()),
+          amountUnits: 1n,
+          timeoutSeconds,
+        }),
+      ).toThrow(/timeoutSeconds/);
+    },
+  );
 });
 
 function transactionFixture() {
@@ -445,6 +533,111 @@ describe("reserve refill transaction validation", () => {
         requireSignatures: true,
       }),
     ).toThrow(/two distinct/i);
+  });
+
+  it.each([0n, -1n, 1_000_000_001n])(
+    "rejects an unsafe expected amount %s even when the XDR matches",
+    (expectedAmountUnits) => {
+      const fixture = transactionFixture();
+
+      expect(() =>
+        validateReserveRefillTransaction({
+          transaction: fixture.transaction,
+          policy: fixture.policy,
+          asset: fixture.asset,
+          expectedAmountUnits,
+          nowSeconds: Math.floor(Date.now() / 1000),
+          requireSignatures: false,
+        }),
+      ).toThrow(/expected amount/i);
+    },
+  );
+
+  it("rejects a memo on an otherwise valid payment", () => {
+    const fixture = transactionFixture();
+    const transaction = new TransactionBuilder(
+      new Account(fixture.policy.coldAccount, "41"),
+      { fee: "200", networkPassphrase: Networks.TESTNET },
+    )
+      .addOperation(
+        Operation.payment({
+          destination: fixture.policy.hotAccount,
+          asset: fixture.asset,
+          amount: "75.0000000",
+        }),
+      )
+      .addMemo(Memo.text("not part of refill policy"))
+      .setTimeout(180)
+      .build();
+
+    expect(() =>
+      validateReserveRefillTransaction({
+        transaction,
+        policy: fixture.policy,
+        asset: fixture.asset,
+        expectedAmountUnits: fixture.amountUnits,
+        nowSeconds: Math.floor(Date.now() / 1000),
+        requireSignatures: false,
+      }),
+    ).toThrow(/memo/i);
+  });
+
+  it("rejects a transaction whose validity window starts in the future", () => {
+    const fixture = transactionFixture();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const transaction = new TransactionBuilder(
+      new Account(fixture.policy.coldAccount, "41"),
+      { fee: "200", networkPassphrase: Networks.TESTNET },
+    )
+      .addOperation(
+        Operation.payment({
+          destination: fixture.policy.hotAccount,
+          asset: fixture.asset,
+          amount: "75.0000000",
+        }),
+      )
+      .setTimebounds(nowSeconds + 30, nowSeconds + 180)
+      .build();
+
+    expect(() =>
+      validateReserveRefillTransaction({
+        transaction,
+        policy: fixture.policy,
+        asset: fixture.asset,
+        expectedAmountUnits: fixture.amountUnits,
+        nowSeconds,
+        requireSignatures: false,
+      }),
+    ).toThrow(/start time/i);
+  });
+
+  it("rejects an approval window longer than 180 seconds", () => {
+    const fixture = transactionFixture();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const transaction = new TransactionBuilder(
+      new Account(fixture.policy.coldAccount, "41"),
+      { fee: "200", networkPassphrase: Networks.TESTNET },
+    )
+      .addOperation(
+        Operation.payment({
+          destination: fixture.policy.hotAccount,
+          asset: fixture.asset,
+          amount: "75.0000000",
+        }),
+      )
+      .setTimebounds(0, nowSeconds + 181)
+      .build();
+
+    expect(() =>
+      validateReserveRefillTransaction({
+        transaction,
+        policy: fixture.policy,
+        asset: fixture.asset,
+        expectedAmountUnits: fixture.amountUnits,
+        nowSeconds,
+        requireSignatures: false,
+      }),
+    ).toThrow(/180 seconds/i);
   });
 
   it("rejects an extra signature from outside the configured signer set", () => {
@@ -653,5 +846,99 @@ describe("reserve refill submission", () => {
       }),
     ).rejects.toThrow(/connection dropped/i);
     expect(submitCalls).toBe(1);
+  });
+});
+
+describe("reserve refill status I/O", () => {
+  it("loads hot and cold USDC balances into the exact planner", async () => {
+    const fixture = policyFixture();
+    const asset = new Asset("USDC", Keypair.random().publicKey());
+    const accounts = new Map([
+      [
+        fixture.hot.publicKey(),
+        {
+          account_id: fixture.hot.publicKey(),
+          sequence: "10",
+          balances: [
+            { asset_type: "native", balance: "20.0000000" },
+            {
+              asset_type: "credit_alphanum4",
+              asset_code: "USDC",
+              asset_issuer: asset.getIssuer(),
+              balance: "25.0000000",
+            },
+          ],
+        },
+      ],
+      [
+        fixture.cold.publicKey(),
+        {
+          account_id: fixture.cold.publicKey(),
+          sequence: "20",
+          balances: [
+            { asset_type: "native", balance: "20.0000000" },
+            {
+              asset_type: "credit_alphanum4",
+              asset_code: "USDC",
+              asset_issuer: asset.getIssuer(),
+              balance: "200.0000000",
+            },
+          ],
+        },
+      ],
+    ]);
+
+    const result = await loadReserveRefillStatus({
+      env: fixture.env,
+      asset,
+      async loadAccount(accountId) {
+        const account = accounts.get(accountId);
+        if (!account) throw new Error(`unknown fixture account ${accountId}`);
+        return account;
+      },
+    });
+
+    expect(result).toEqual({
+      status: "refill_required",
+      amountUnits: 750_000_000n,
+      hotBalanceUnits: 250_000_000n,
+      coldBalanceUnits: 2_000_000_000n,
+      coldAfterUnits: 1_250_000_000n,
+    });
+  });
+
+  it("surfaces a missing cold USDC trustline as insufficient reserve", async () => {
+    const fixture = policyFixture();
+    const asset = new Asset("USDC", Keypair.random().publicKey());
+
+    const result = await loadReserveRefillStatus({
+      env: fixture.env,
+      asset,
+      async loadAccount(accountId) {
+        return {
+          account_id: accountId,
+          sequence: "10",
+          balances:
+            accountId === fixture.hot.publicKey()
+              ? [
+                  {
+                    asset_type: "credit_alphanum4",
+                    asset_code: "USDC",
+                    asset_issuer: asset.getIssuer(),
+                    balance: "25.0000000",
+                  },
+                ]
+              : [{ asset_type: "native", balance: "20.0000000" }],
+        };
+      },
+    });
+
+    expect(result).toEqual({
+      status: "insufficient_reserve",
+      requiredUnits: 750_000_000n,
+      availableUnits: 0n,
+      hotBalanceUnits: 250_000_000n,
+      coldBalanceUnits: 0n,
+    });
   });
 });

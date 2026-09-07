@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Use integer 7-decimal USDC units (`bigint`) from configuration through transaction construction; never use floating point for value decisions.
-- Derive the hot destination from `STELLAR_PLATFORM_SECRET`; never accept an arbitrary refill destination.
+- Pin the hot destination with `STELLAR_PLATFORM_ACCOUNT` or derive it from `STELLAR_PLATFORM_SECRET`; require both to match when both exist and never accept an arbitrary CLI destination.
 - No application, cron, or CLI invocation may receive two cold signer seeds.
 - Reject partial refills: restore the exact target or return `insufficient_reserve`.
 - A valid submission contains exactly one configured-USDC payment from cold to hot and at least two cryptographically valid signatures from the configured cold signer set.
@@ -42,8 +42,9 @@
 - [ ] **Step 1: Write failing policy tests**
 
 Add tests with deterministic keypairs and a literal environment object. The
-valid case must produce exact bigint fields and derive `hotAccount` from the
-platform seed. Individual tests must reject a missing cold account, invalid or
+  valid case must produce exact bigint fields and derive `hotAccount` from the
+  platform seed. A public-only hot identity must support offline signing, while
+  public and secret identities must match when both exist. Individual tests must reject a missing cold account, invalid or
 duplicate signer public keys, a cold account reused as a signer or hot account,
 non-integer/negative unit settings, a zero target, and `trigger >= target`.
 
@@ -68,7 +69,8 @@ Expected: FAIL because `reserve-refill.ts` and its exported parser do not exist.
 
 Use a helper that accepts only `/^\d+$/` and converts with `BigInt`. Validate
 every public key with `StrKey.isValidEd25519PublicKey`, derive the hot key with
-`Keypair.fromSecret`, and enforce pairwise-distinct cold, hot, ops, and policy
+`Keypair.fromSecret` when no public account is supplied, require a supplied
+public account to match a supplied secret, and enforce pairwise-distinct cold, hot, ops, and policy
 keys. Return a readonly tuple containing the cold master plus both configured
 co-signers, so any valid two match the on-chain 2-of-3 account.
 
@@ -323,15 +325,19 @@ Keep CLI parsing in `scripts/stellar-reserve-refill.ts`; all security decisions
 remain in the tested module. `status` prints the plan. `prepare` reloads status,
 requires `refill_required`, loads the cold account and base fee, builds/validates,
 and prints the unsigned XDR/hash. `sign` reads XDR from
-`STELLAR_RESERVE_REFILL_XDR` and one `STELLAR_COLD_SIGNER_SECRET`, validates the
-shape without requiring signatures, adds exactly that configured signature, and
-prints the XDR. `submit` reloads the current plan and passes the signed XDR to
+`STELLAR_RESERVE_REFILL_XDR`, the independently approved
+`STELLAR_RESERVE_REFILL_AMOUNT_UNITS`, and one `STELLAR_COLD_SIGNER_SECRET`.
+Without Horizon access it validates the shape and exact amount, adds exactly
+that configured signature, and prints the XDR. `submit` reloads the current plan and passes the signed XDR to
 `submitReserveRefill` with `server().submitTransaction`.
 
 The setup script uses cold-specific environment names, friendbot-funds only on
 testnet, creates the configured USDC trustline before raising thresholds, and
-reuses `buildSetOptionsTx`/`evaluateMultisig`. Generated throwaway secrets are
-printed for immediate transfer to separate stores and never written.
+reuses `buildSetOptionsTx`/`evaluateMultisig`. It rejects hot/cold identity
+reuse before network I/O. Generated throwaway secrets require explicit
+`STELLAR_ALLOW_TESTNET_KEY_GENERATION=true`, are impossible on public network,
+and are printed only for immediate transfer to separate stores; production
+requires pre-provisioned keys.
 
 - [ ] **Step 10: Document configuration and operations**
 
