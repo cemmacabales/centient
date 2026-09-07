@@ -7,6 +7,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
+/** Convert every bigint in a refill plan to a JSON-safe decimal string. */
 function serializePlan(plan: ReserveRefillPlan) {
   switch (plan.status) {
     case "healthy":
@@ -34,6 +35,7 @@ function serializePlan(plan: ReserveRefillPlan) {
   }
 }
 
+/** Authenticate a scheduled reserve check and return its non-mutating plan. */
 export async function POST(request: NextRequest) {
   const authError = authenticateCron(request);
   if (authError) return authError;

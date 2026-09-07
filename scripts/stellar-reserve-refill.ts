@@ -22,8 +22,10 @@ import {
   usdcAsset,
 } from "../lib/stellar/config";
 
+/** Emit operator-visible refill status and transaction evidence. */
 const log = (...values: unknown[]) => console.log(...values);
 
+/** Render an exact refill plan as human-readable JSON without bigint loss. */
 function serializePlan(plan: ReserveRefillPlan): string {
   return JSON.stringify(
     plan,
@@ -32,6 +34,7 @@ function serializePlan(plan: ReserveRefillPlan): string {
   );
 }
 
+/** Require a plan that can restore the target without crossing the cold floor. */
 function requireActionable(plan: ReserveRefillPlan) {
   if (plan.status !== "refill_required") {
     throw new Error(
@@ -41,6 +44,7 @@ function requireActionable(plan: ReserveRefillPlan) {
   return plan;
 }
 
+/** Read the unsigned or partially signed refill envelope from the environment. */
 function requireXdr(): string {
   const xdr = process.env.STELLAR_RESERVE_REFILL_XDR?.trim();
   if (!xdr) {
@@ -49,6 +53,7 @@ function requireXdr(): string {
   return xdr;
 }
 
+/** Execute one status, prepare, offline-sign, or submit operator command. */
 async function main() {
   const command = process.argv[2] ?? "status";
   const policy = parseReserveRefillPolicy();

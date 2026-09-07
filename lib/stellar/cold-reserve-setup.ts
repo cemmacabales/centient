@@ -11,6 +11,7 @@ import {
 type SetupEnvironment = Readonly<Record<string, string | undefined>>;
 type SetupLog = (...values: unknown[]) => void;
 
+/** Read an optional environment value and reject malformed public keys. */
 function optionalPublicKey(
   env: SetupEnvironment,
   name: string,
@@ -22,6 +23,7 @@ function optionalPublicKey(
   return value || undefined;
 }
 
+/** Read an optional environment value and reject malformed secret seeds. */
 function optionalSecret(
   env: SetupEnvironment,
   name: string,
@@ -35,6 +37,7 @@ function optionalSecret(
   }
 }
 
+/** Generate and surface one explicitly disposable testnet signing identity. */
 function generatedKey(
   label: string,
   publicEnvName: string,
