@@ -175,3 +175,57 @@ export function buildMultisigFeeBump({
     networkPassphrase(),
   );
 }
+
+export interface PayoutEvidence {
+  amountUnits: bigint;
+  recipientUsdcBeforeUnits: bigint;
+  recipientUsdcAfterUnits: bigint;
+  recipientXlmBeforeUnits: bigint;
+  recipientXlmAfterUnits: bigint;
+  expectedFeeAccount: string;
+  feeAccount: string;
+  innerSignatureCount: number;
+  outerSignatureCount: number;
+}
+
+/** Assert the issue #6 on-chain proof before the runner prints success. */
+export function verifyPayoutEvidence(evidence: PayoutEvidence): {
+  recipientUsdcIncreaseUnits: bigint;
+  recipientXlmSpentUnits: bigint;
+} {
+  const recipientUsdcIncreaseUnits =
+    evidence.recipientUsdcAfterUnits - evidence.recipientUsdcBeforeUnits;
+  const recipientXlmSpentUnits =
+    evidence.recipientXlmBeforeUnits - evidence.recipientXlmAfterUnits;
+
+  if (recipientUsdcIncreaseUnits !== evidence.amountUnits) {
+    throw new Error(
+      `recipient USDC increase ${recipientUsdcIncreaseUnits} does not equal payout ${evidence.amountUnits}`,
+    );
+  }
+  if (
+    evidence.recipientXlmBeforeUnits !== 0n ||
+    evidence.recipientXlmAfterUnits !== 0n
+  ) {
+    throw new Error(
+      `recipient must hold and spend zero XLM; before=${evidence.recipientXlmBeforeUnits}, after=${evidence.recipientXlmAfterUnits}`,
+    );
+  }
+  if (evidence.feeAccount !== evidence.expectedFeeAccount) {
+    throw new Error(
+      `fee account ${evidence.feeAccount} does not match expected Centient account ${evidence.expectedFeeAccount}`,
+    );
+  }
+  if (evidence.innerSignatureCount < 2) {
+    throw new Error(
+      `inner payment must carry at least 2 signatures, got ${evidence.innerSignatureCount}`,
+    );
+  }
+  if (evidence.outerSignatureCount < 2) {
+    throw new Error(
+      `fee-bump envelope must carry at least 2 signatures, got ${evidence.outerSignatureCount}`,
+    );
+  }
+
+  return { recipientUsdcIncreaseUnits, recipientXlmSpentUnits };
+}

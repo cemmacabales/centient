@@ -12,6 +12,7 @@ import {
   buildMultisigFeeBump,
   buildUsdcPaymentTx,
   minimumFeeBumpBaseFee,
+  verifyPayoutEvidence,
 } from "../multisig-payout";
 
 const USDC_ISSUER = Keypair.random().publicKey();
@@ -197,5 +198,37 @@ describe("fee bump", () => {
         ],
       }),
     ).toThrow(/required signer/i);
+  });
+});
+
+describe("verifyPayoutEvidence", () => {
+  const validEvidence = {
+    amountUnits: 10_000_000n,
+    recipientUsdcBeforeUnits: 0n,
+    recipientUsdcAfterUnits: 10_000_000n,
+    recipientXlmBeforeUnits: 0n,
+    recipientXlmAfterUnits: 0n,
+    expectedFeeAccount: Keypair.random().publicKey(),
+    feeAccount: "",
+    innerSignatureCount: 2,
+    outerSignatureCount: 2,
+  };
+  validEvidence.feeAccount = validEvidence.expectedFeeAccount;
+
+  it("accepts a full USDC increase with zero recipient XLM spend and dual signatures", () => {
+    expect(verifyPayoutEvidence(validEvidence)).toEqual({
+      recipientUsdcIncreaseUnits: 10_000_000n,
+      recipientXlmSpentUnits: 0n,
+    });
+  });
+
+  it.each([
+    ["short USDC delivery", { recipientUsdcAfterUnits: 9_999_999n }],
+    ["recipient XLM spend", { recipientXlmBeforeUnits: 1n }],
+    ["wrong fee account", { feeAccount: Keypair.random().publicKey() }],
+    ["under-signed inner transaction", { innerSignatureCount: 1 }],
+    ["under-signed fee bump", { outerSignatureCount: 1 }],
+  ])("rejects %s", (_label, override) => {
+    expect(() => verifyPayoutEvidence({ ...validEvidence, ...override })).toThrow();
   });
 });
