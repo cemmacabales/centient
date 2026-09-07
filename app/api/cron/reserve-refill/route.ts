@@ -47,8 +47,11 @@ export async function POST(request: NextRequest) {
           ? 202
           : 503;
     return NextResponse.json(serializePlan(plan), { status });
-  } catch {
-    console.error("[cron/reserve-refill] reserve check failed");
+  } catch (error) {
+    console.error(
+      "[cron/reserve-refill] reserve check failed",
+      error instanceof Error ? error.name : typeof error,
+    );
     return NextResponse.json(
       { error: "Reserve refill check failed" },
       { status: 500 },

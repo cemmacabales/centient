@@ -2,6 +2,7 @@ import { Keypair, StrKey } from "@stellar/stellar-sdk";
 import type { StellarNetwork } from "./config";
 import {
   evaluateMultisig,
+  findUnexpectedActiveSigners,
   type AccountLike,
   type MultisigEvaluation,
   type SignerSet,
@@ -169,4 +170,20 @@ export function assertColdReserveMultisig(
     );
   }
   return evaluation;
+}
+
+/** Refuse automatic setup when an existing signer needs explicit removal. */
+export function evaluateColdReserveSetupState(
+  account: AccountLike,
+  signerSet: SignerSet,
+): MultisigEvaluation {
+  const unexpected = findUnexpectedActiveSigners(account, signerSet);
+  if (unexpected.length > 0) {
+    throw new Error(
+      `cold reserve has unexpected active signer(s) ${unexpected
+        .map((signer) => signer.key)
+        .join(", ")}; use the authorized manual signer-removal recovery flow`,
+    );
+  }
+  return evaluateMultisig(account, signerSet);
 }

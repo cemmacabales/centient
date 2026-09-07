@@ -2,6 +2,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 import { describe, expect, it, vi } from "vitest";
 import {
   assertColdReserveMultisig,
+  evaluateColdReserveSetupState,
   resolveColdReserveSetupKeys,
 } from "../cold-reserve-setup";
 
@@ -146,5 +147,30 @@ describe("cold reserve setup key resolution", () => {
         },
       ),
     ).toThrow(/unexpected active signer/i);
+  });
+
+  it("aborts setup before mutation when an unexpected signer needs manual removal", () => {
+    const fixture = setupFixture();
+
+    expect(() =>
+      evaluateColdReserveSetupState(
+        {
+          thresholds: {
+            low_threshold: 1,
+            med_threshold: 1,
+            high_threshold: 1,
+          },
+          signers: [
+            { key: fixture.master.publicKey(), weight: 1 },
+            { key: `T${"0".repeat(55)}`, weight: 1, type: "preauth_tx" },
+          ],
+        },
+        {
+          masterPublic: fixture.master.publicKey(),
+          opsPublic: fixture.ops.publicKey(),
+          policyPublic: fixture.policy.publicKey(),
+        },
+      ),
+    ).toThrow(/manual signer-removal/i);
   });
 });

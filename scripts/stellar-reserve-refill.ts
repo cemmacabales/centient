@@ -92,15 +92,16 @@ async function main() {
     return;
   }
 
-  const plan = await loadReserveRefillStatus({ asset });
-
   if (command === "status") {
+    const plan = await loadReserveRefillStatus({ asset });
     log(serializePlan(plan));
     return;
   }
 
-  const actionable = requireActionable(plan);
   if (command === "prepare") {
+    const actionable = requireActionable(
+      await loadReserveRefillStatus({ asset }),
+    );
     const horizon = server();
     const [coldAccount, baseFee] = await Promise.all([
       horizon.loadAccount(policy.coldAccount),
@@ -133,6 +134,9 @@ async function main() {
   }
 
   if (command === "submit") {
+    const actionable = requireActionable(
+      await loadReserveRefillStatus({ asset }),
+    );
     const horizon = server();
     const result = await submitReserveRefill({
       signedXdr: requireXdr(),

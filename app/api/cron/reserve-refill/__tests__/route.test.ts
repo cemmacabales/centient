@@ -124,6 +124,10 @@ describe("/api/cron/reserve-refill", () => {
     expect(JSON.stringify(consoleError.mock.calls)).not.toContain(
       "SDO_NOT_LEAK_THIS",
     );
+    expect(consoleError).toHaveBeenCalledWith(
+      "[cron/reserve-refill] reserve check failed",
+      "Error",
+    );
     consoleError.mockRestore();
   });
 });

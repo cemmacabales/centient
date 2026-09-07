@@ -85,6 +85,11 @@ rejects a cold account that matches the configured hot wallet before making a
 network call. On public network it never funds an account or generates keys
 automatically.
 
+If the account already has any active signer outside the intended master, ops,
+and policy keys, setup aborts before creating a trustline or changing
+thresholds. Remove that signer only through an explicitly authorized manual
+recovery signed under the account's current policy, then rerun setup.
+
 After setup:
 
 1. Verify the three public keys and thresholds on stellar.expert.
@@ -117,7 +122,7 @@ Responses:
 - `500`: configuration or Horizon failed; inspect server logs and do not guess
   an amount.
 
-The cron does not generate XDR. A refill XDR expires after 180 seconds, so an
+The cron does not generate XDR. A refill XDR expires after 15 minutes, so an
 unattended scheduler must not create competing stale envelopes.
 
 ## Prepare the exact refill
@@ -172,7 +177,7 @@ Immediately before submission, the command reloads hot and cold balances and
 requires that the current plan still matches the XDR's exact amount. It rejects
 extra operations, operation-level source overrides, a different source,
 destination, asset, issuer, amount, fee above 10,000 stroops, a future start,
-an expiry more than 180 seconds away, missing/expired time bounds, unconfigured
+an expiry more than 15 minutes away, missing/expired time bounds, unconfigured
 signatures, duplicate identities, or fewer than two valid signatures.
 
 The signed hash and explorer link print before Horizon is called. The command
