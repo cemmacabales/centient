@@ -1,18 +1,33 @@
-import { Asset, Keypair } from "@stellar/stellar-sdk";
-import { describe, expect, it } from "vitest";
 import {
+  Account,
+  Asset,
+  Keypair,
+  Networks,
+  Operation,
+  TransactionBuilder,
+} from "@stellar/stellar-sdk";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  addReserveRefillSignature,
+  buildReserveRefillTransaction,
   extractAssetBalanceUnits,
   parseReserveRefillPolicy,
   planReserveRefill,
   stellarAmountToUnits,
+  submitReserveRefill,
+  validateReserveRefillTransaction,
 } from "../reserve-refill";
+
+beforeEach(() => {
+  process.env.STELLAR_NETWORK = "testnet";
+});
 
 function policyFixture() {
   const cold = Keypair.random();
   const hot = Keypair.random();
   const ops = Keypair.random();
   const policy = Keypair.random();
-  const env: NodeJS.ProcessEnv = {
+  const env: Record<string, string | undefined> = {
     STELLAR_COLD_RESERVE_ACCOUNT: cold.publicKey(),
     STELLAR_COLD_OPS_SIGNER_PUBLIC: ops.publicKey(),
     STELLAR_COLD_POLICY_SIGNER_PUBLIC: policy.publicKey(),
@@ -234,5 +249,409 @@ describe("reserve refill plan", () => {
       hotBalanceUnits: 250_000_000n,
       coldBalanceUnits: 1_000_000_000n,
     });
+  });
+});
+
+describe("reserve refill transaction builder", () => {
+  it("builds one time-bounded cold-to-hot USDC payment with exact units", () => {
+    const fixture = policyFixture();
+    const policy = parseReserveRefillPolicy(fixture.env);
+    const issuer = Keypair.random().publicKey();
+
+    const transaction = buildReserveRefillTransaction({
+      sourceAccount: new Account(policy.coldAccount, "41"),
+      policy,
+      asset: new Asset("USDC", issuer),
+      amountUnits: 12_345_678n,
+      fee: "200",
+    });
+
+    expect(transaction.source).toBe(policy.coldAccount);
+    expect(transaction.operations).toHaveLength(1);
+    expect(transaction.operations[0]).toMatchObject({
+      type: "payment",
+      destination: policy.hotAccount,
+      amount: "1.2345678",
+      asset: { code: "USDC", issuer },
+    });
+    expect((transaction.operations[0] as { source?: string }).source).toBeUndefined();
+    expect(transaction.fee).toBe("200");
+    expect(Number(transaction.timeBounds?.maxTime)).toBeGreaterThan(0);
+  });
+
+  it.each([0n, -1n, 1_000_000_001n])(
+    "rejects an unsafe refill amount %s",
+    (amountUnits) => {
+      const fixture = policyFixture();
+      const policy = parseReserveRefillPolicy(fixture.env);
+
+      expect(() =>
+        buildReserveRefillTransaction({
+          sourceAccount: new Account(policy.coldAccount, "41"),
+          policy,
+          asset: new Asset("USDC", Keypair.random().publicKey()),
+          amountUnits,
+        }),
+      ).toThrow(/amount/i);
+    },
+  );
+});
+
+function transactionFixture() {
+  const keys = policyFixture();
+  const policy = parseReserveRefillPolicy(keys.env);
+  const asset = new Asset("USDC", Keypair.random().publicKey());
+  const amountUnits = 750_000_000n;
+  const transaction = buildReserveRefillTransaction({
+    sourceAccount: new Account(policy.coldAccount, "41"),
+    policy,
+    asset,
+    amountUnits,
+    fee: "200",
+  });
+  return { ...keys, policy, asset, amountUnits, transaction };
+}
+
+function directPayment({
+  source,
+  destination,
+  asset,
+  amount = "75.0000000",
+  fee = "200",
+  operationSource,
+  secondOperation = false,
+  timeout = 180,
+}: {
+  source: string;
+  destination: string;
+  asset: Asset;
+  amount?: string;
+  fee?: string;
+  operationSource?: string;
+  secondOperation?: boolean;
+  timeout?: number;
+}) {
+  const builder = new TransactionBuilder(new Account(source, "41"), {
+    fee,
+    networkPassphrase: Networks.TESTNET,
+  }).addOperation(
+    Operation.payment({
+      source: operationSource,
+      destination,
+      asset,
+      amount,
+    }),
+  );
+  if (secondOperation) {
+    builder.addOperation(
+      Operation.payment({ destination, asset, amount: "0.0000001" }),
+    );
+  }
+  return builder.setTimeout(timeout).build();
+}
+
+describe("reserve refill transaction validation", () => {
+  it("accepts exactly one payment signed by any two configured cold identities", () => {
+    const fixture = transactionFixture();
+    addReserveRefillSignature(fixture.transaction, fixture.cold, fixture.policy);
+    addReserveRefillSignature(fixture.transaction, fixture.ops, fixture.policy);
+
+    expect(() =>
+      validateReserveRefillTransaction({
+        transaction: fixture.transaction,
+        policy: fixture.policy,
+        asset: fixture.asset,
+        expectedAmountUnits: fixture.amountUnits,
+        nowSeconds: Math.floor(Date.now() / 1000),
+        requireSignatures: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it("verifies configured identities even when two signature hints collide", () => {
+    const signerA = Keypair.fromSecret(
+      "SCCWCBKRPZIXX2WBQE7ROHQJZFRD5JKEGCHX5XUI2JCYVVJMXUB5LBB2",
+    );
+    const signerB = Keypair.fromSecret(
+      "SDXU2G5LKV4W7FQ4AUC6HDLA6NB3OY4W5JARKHHIVSBM65I5H4EPGWVC",
+    );
+    expect(signerA.signatureHint()).toEqual(signerB.signatureHint());
+    const hot = Keypair.random();
+    const third = Keypair.random();
+    const policy = parseReserveRefillPolicy({
+      STELLAR_COLD_RESERVE_ACCOUNT: signerA.publicKey(),
+      STELLAR_COLD_OPS_SIGNER_PUBLIC: signerB.publicKey(),
+      STELLAR_COLD_POLICY_SIGNER_PUBLIC: third.publicKey(),
+      STELLAR_PLATFORM_SECRET: hot.secret(),
+      STELLAR_HOT_FLOAT_TRIGGER_UNITS: "1",
+      STELLAR_HOT_FLOAT_TARGET_UNITS: "10",
+      STELLAR_COLD_MIN_RETAIN_UNITS: "1",
+    });
+    const asset = new Asset("USDC", Keypair.random().publicKey());
+    const transaction = buildReserveRefillTransaction({
+      sourceAccount: new Account(policy.coldAccount, "41"),
+      policy,
+      asset,
+      amountUnits: 5n,
+    });
+
+    addReserveRefillSignature(transaction, signerA, policy);
+    addReserveRefillSignature(transaction, signerB, policy);
+
+    expect(() =>
+      validateReserveRefillTransaction({
+        transaction,
+        policy,
+        asset,
+        expectedAmountUnits: 5n,
+        nowSeconds: Math.floor(Date.now() / 1000),
+        requireSignatures: true,
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects an unconfigured signer and a duplicate signature", () => {
+    const fixture = transactionFixture();
+
+    expect(() =>
+      addReserveRefillSignature(
+        fixture.transaction,
+        Keypair.random(),
+        fixture.policy,
+      ),
+    ).toThrow(/configured/i);
+
+    addReserveRefillSignature(fixture.transaction, fixture.cold, fixture.policy);
+    expect(() =>
+      addReserveRefillSignature(
+        fixture.transaction,
+        fixture.cold,
+        fixture.policy,
+      ),
+    ).toThrow(/already signed/i);
+  });
+
+  it("rejects fewer than two configured signatures", () => {
+    const fixture = transactionFixture();
+    addReserveRefillSignature(fixture.transaction, fixture.cold, fixture.policy);
+
+    expect(() =>
+      validateReserveRefillTransaction({
+        transaction: fixture.transaction,
+        policy: fixture.policy,
+        asset: fixture.asset,
+        expectedAmountUnits: fixture.amountUnits,
+        nowSeconds: Math.floor(Date.now() / 1000),
+        requireSignatures: true,
+      }),
+    ).toThrow(/two distinct/i);
+  });
+
+  it("rejects an extra signature from outside the configured signer set", () => {
+    const fixture = transactionFixture();
+    fixture.transaction.sign(fixture.cold, fixture.ops, Keypair.random());
+
+    expect(() =>
+      validateReserveRefillTransaction({
+        transaction: fixture.transaction,
+        policy: fixture.policy,
+        asset: fixture.asset,
+        expectedAmountUnits: fixture.amountUnits,
+        nowSeconds: Math.floor(Date.now() / 1000),
+        requireSignatures: true,
+      }),
+    ).toThrow(/unconfigured signature/i);
+  });
+
+  it.each([
+    ["wrong source", (f: ReturnType<typeof transactionFixture>) =>
+      directPayment({
+        source: Keypair.random().publicKey(),
+        destination: f.policy.hotAccount,
+        asset: f.asset,
+      })],
+    ["operation source override", (f: ReturnType<typeof transactionFixture>) =>
+      directPayment({
+        source: f.policy.coldAccount,
+        destination: f.policy.hotAccount,
+        asset: f.asset,
+        operationSource: Keypair.random().publicKey(),
+      })],
+    ["wrong destination", (f: ReturnType<typeof transactionFixture>) =>
+      directPayment({
+        source: f.policy.coldAccount,
+        destination: Keypair.random().publicKey(),
+        asset: f.asset,
+      })],
+    ["wrong asset issuer", (f: ReturnType<typeof transactionFixture>) =>
+      directPayment({
+        source: f.policy.coldAccount,
+        destination: f.policy.hotAccount,
+        asset: new Asset("USDC", Keypair.random().publicKey()),
+      })],
+    ["wrong amount", (f: ReturnType<typeof transactionFixture>) =>
+      directPayment({
+        source: f.policy.coldAccount,
+        destination: f.policy.hotAccount,
+        asset: f.asset,
+        amount: "74.9999999",
+      })],
+    ["multiple operations", (f: ReturnType<typeof transactionFixture>) =>
+      directPayment({
+        source: f.policy.coldAccount,
+        destination: f.policy.hotAccount,
+        asset: f.asset,
+        secondOperation: true,
+      })],
+    ["excessive fee", (f: ReturnType<typeof transactionFixture>) =>
+      directPayment({
+        source: f.policy.coldAccount,
+        destination: f.policy.hotAccount,
+        asset: f.asset,
+        fee: "10001",
+      })],
+    ["unbounded time", (f: ReturnType<typeof transactionFixture>) =>
+      directPayment({
+        source: f.policy.coldAccount,
+        destination: f.policy.hotAccount,
+        asset: f.asset,
+        timeout: 0,
+      })],
+  ])("rejects %s", (_label, makeTransaction) => {
+    const fixture = transactionFixture();
+
+    expect(() =>
+      validateReserveRefillTransaction({
+        transaction: makeTransaction(fixture),
+        policy: fixture.policy,
+        asset: fixture.asset,
+        expectedAmountUnits: fixture.amountUnits,
+        nowSeconds: Math.floor(Date.now() / 1000),
+        requireSignatures: false,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects fee-bump envelopes", () => {
+    const fixture = transactionFixture();
+    const feeBump = TransactionBuilder.buildFeeBumpTransaction(
+      fixture.policy.hotAccount,
+      "200",
+      fixture.transaction,
+      Networks.TESTNET,
+    );
+
+    expect(() =>
+      validateReserveRefillTransaction({
+        transaction: feeBump,
+        policy: fixture.policy,
+        asset: fixture.asset,
+        expectedAmountUnits: fixture.amountUnits,
+        nowSeconds: Math.floor(Date.now() / 1000),
+        requireSignatures: false,
+      }),
+    ).toThrow(/fee-bump/i);
+  });
+
+  it("rejects an expired transaction", () => {
+    const fixture = transactionFixture();
+    const expired = new TransactionBuilder(
+      new Account(fixture.policy.coldAccount, "41"),
+      { fee: "200", networkPassphrase: Networks.TESTNET },
+    )
+      .addOperation(
+        Operation.payment({
+          destination: fixture.policy.hotAccount,
+          asset: fixture.asset,
+          amount: "75.0000000",
+        }),
+      )
+      .setTimebounds(0, 1)
+      .build();
+
+    expect(() =>
+      validateReserveRefillTransaction({
+        transaction: expired,
+        policy: fixture.policy,
+        asset: fixture.asset,
+        expectedAmountUnits: fixture.amountUnits,
+        nowSeconds: 2,
+        requireSignatures: false,
+      }),
+    ).toThrow(/expired/i);
+  });
+});
+
+describe("reserve refill submission", () => {
+  it("logs the signed hash before submitting exactly once", async () => {
+    const fixture = transactionFixture();
+    addReserveRefillSignature(fixture.transaction, fixture.cold, fixture.policy);
+    addReserveRefillSignature(fixture.transaction, fixture.ops, fixture.policy);
+    const hash = fixture.transaction.hash().toString("hex");
+    const events: string[] = [];
+
+    const result = await submitReserveRefill({
+      signedXdr: fixture.transaction.toXDR(),
+      policy: fixture.policy,
+      asset: fixture.asset,
+      expectedAmountUnits: fixture.amountUnits,
+      nowSeconds: Math.floor(Date.now() / 1000),
+      log(message) {
+        events.push(`log:${message}`);
+      },
+      async submit(transaction) {
+        events.push(`submit:${transaction.hash().toString("hex")}`);
+        return { hash };
+      },
+    });
+
+    expect(result).toEqual({ hash });
+    expect(events).toHaveLength(3);
+    expect(events[0]).toContain(`hash: ${hash}`);
+    expect(events[1]).toContain(`/tx/${hash}`);
+    expect(events[2]).toBe(`submit:${hash}`);
+  });
+
+  it("rejects when Horizon echoes a different transaction hash", async () => {
+    const fixture = transactionFixture();
+    addReserveRefillSignature(fixture.transaction, fixture.cold, fixture.policy);
+    addReserveRefillSignature(fixture.transaction, fixture.ops, fixture.policy);
+
+    await expect(
+      submitReserveRefill({
+        signedXdr: fixture.transaction.toXDR(),
+        policy: fixture.policy,
+        asset: fixture.asset,
+        expectedAmountUnits: fixture.amountUnits,
+        nowSeconds: Math.floor(Date.now() / 1000),
+        log() {},
+        async submit() {
+          return { hash: "f".repeat(64) };
+        },
+      }),
+    ).rejects.toThrow(/different hash/i);
+  });
+
+  it("never retries an unknown submission outcome", async () => {
+    const fixture = transactionFixture();
+    addReserveRefillSignature(fixture.transaction, fixture.cold, fixture.policy);
+    addReserveRefillSignature(fixture.transaction, fixture.ops, fixture.policy);
+    let submitCalls = 0;
+
+    await expect(
+      submitReserveRefill({
+        signedXdr: fixture.transaction.toXDR(),
+        policy: fixture.policy,
+        asset: fixture.asset,
+        expectedAmountUnits: fixture.amountUnits,
+        nowSeconds: Math.floor(Date.now() / 1000),
+        log() {},
+        async submit() {
+          submitCalls += 1;
+          throw new Error("connection dropped after send");
+        },
+      }),
+    ).rejects.toThrow(/connection dropped/i);
+    expect(submitCalls).toBe(1);
   });
 });

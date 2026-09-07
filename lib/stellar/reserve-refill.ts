@@ -1,4 +1,16 @@
-import { type Asset, Keypair, StrKey } from "@stellar/stellar-sdk";
+import {
+  BASE_FEE,
+  type Asset,
+  FeeBumpTransaction,
+  Keypair,
+  Operation,
+  StrKey,
+  TransactionBuilder,
+  type Transaction,
+} from "@stellar/stellar-sdk";
+import { explorerUrl, networkPassphrase, unitsToUsdcString } from "./config";
+
+type SourceAccount = ConstructorParameters<typeof TransactionBuilder>[0];
 
 export interface ReserveRefillPolicy {
   coldAccount: string;
@@ -8,6 +20,10 @@ export interface ReserveRefillPolicy {
   targetUnits: bigint;
   minRetainUnits: bigint;
 }
+
+export type ReserveRefillEnvironment = Readonly<
+  Record<string, string | undefined>
+>;
 
 export type ReserveRefillPlan =
   | {
@@ -37,13 +53,13 @@ export interface HorizonBalanceLine {
   balance: string;
 }
 
-function requireEnv(env: NodeJS.ProcessEnv, name: string): string {
+function requireEnv(env: ReserveRefillEnvironment, name: string): string {
   const value = env[name];
   if (!value) throw new Error(`${name} is required`);
   return value;
 }
 
-function requirePublicKey(env: NodeJS.ProcessEnv, name: string): string {
+function requirePublicKey(env: ReserveRefillEnvironment, name: string): string {
   const value = requireEnv(env, name).trim();
   if (!StrKey.isValidEd25519PublicKey(value)) {
     throw new Error(`${name} must be a valid Stellar public key (G…)`);
@@ -51,7 +67,7 @@ function requirePublicKey(env: NodeJS.ProcessEnv, name: string): string {
   return value;
 }
 
-function requireUnits(env: NodeJS.ProcessEnv, name: string): bigint {
+function requireUnits(env: ReserveRefillEnvironment, name: string): bigint {
   const value = requireEnv(env, name);
   if (!/^\d+$/.test(value)) {
     throw new Error(`${name} must be a non-negative integer unit string`);
@@ -60,7 +76,7 @@ function requireUnits(env: NodeJS.ProcessEnv, name: string): bigint {
 }
 
 export function parseReserveRefillPolicy(
-  env: NodeJS.ProcessEnv = process.env,
+  env: ReserveRefillEnvironment = process.env,
 ): ReserveRefillPolicy {
   const coldAccount = requirePublicKey(env, "STELLAR_COLD_RESERVE_ACCOUNT");
   const opsPublic = requirePublicKey(env, "STELLAR_COLD_OPS_SIGNER_PUBLIC");
@@ -169,4 +185,213 @@ export function planReserveRefill(
     coldBalanceUnits,
     coldAfterUnits,
   };
+}
+
+/** Build the only transaction shape a cold reserve refill may use. */
+export function buildReserveRefillTransaction({
+  sourceAccount,
+  policy,
+  asset,
+  amountUnits,
+  fee = BASE_FEE,
+  timeoutSeconds = 180,
+}: {
+  sourceAccount: SourceAccount;
+  policy: ReserveRefillPolicy;
+  asset: Asset;
+  amountUnits: bigint;
+  fee?: string;
+  timeoutSeconds?: number;
+}): Transaction {
+  if (amountUnits <= 0n || amountUnits > policy.targetUnits) {
+    throw new Error(
+      `reserve refill amount must be positive and no greater than target; got ${amountUnits}`,
+    );
+  }
+  if (!/^\d+$/.test(fee) || BigInt(fee) <= 0n) {
+    throw new Error(`reserve refill fee must be a positive stroop string; got "${fee}"`);
+  }
+  if (!Number.isInteger(timeoutSeconds) || timeoutSeconds <= 0) {
+    throw new Error(
+      `reserve refill timeoutSeconds must be a positive integer; got ${timeoutSeconds}`,
+    );
+  }
+
+  return new TransactionBuilder(sourceAccount, {
+    fee,
+    networkPassphrase: networkPassphrase(),
+  })
+    .addOperation(
+      Operation.payment({
+        destination: policy.hotAccount,
+        asset,
+        amount: unitsToUsdcString(amountUnits),
+      }),
+    )
+    .setTimeout(timeoutSeconds)
+    .build();
+}
+
+export const MAX_RESERVE_REFILL_FEE_STROOPS = 10_000n;
+
+/** Enforce the exact refill envelope before either signing or submission. */
+export function validateReserveRefillTransaction({
+  transaction,
+  policy,
+  asset,
+  expectedAmountUnits,
+  nowSeconds,
+  requireSignatures,
+}: {
+  transaction: Transaction | FeeBumpTransaction;
+  policy: ReserveRefillPolicy;
+  asset: Asset;
+  expectedAmountUnits: bigint;
+  nowSeconds: number;
+  requireSignatures: boolean;
+}): void {
+  if (transaction instanceof FeeBumpTransaction) {
+    throw new Error("reserve refill must not use a fee-bump envelope");
+  }
+  if (transaction.source !== policy.coldAccount) {
+    throw new Error("reserve refill source does not match the cold reserve");
+  }
+  if (transaction.operations.length !== 1) {
+    throw new Error("reserve refill must contain exactly one operation");
+  }
+
+  const operation = transaction.operations[0];
+  if (operation.type !== "payment") {
+    throw new Error("reserve refill operation must be a payment");
+  }
+  if (operation.source !== undefined) {
+    throw new Error("reserve refill payment must not override its operation source");
+  }
+  if (operation.destination !== policy.hotAccount) {
+    throw new Error("reserve refill destination does not match the hot wallet");
+  }
+  if (
+    operation.asset.getCode() !== asset.getCode() ||
+    operation.asset.getIssuer() !== asset.getIssuer()
+  ) {
+    throw new Error("reserve refill asset does not match configured USDC");
+  }
+  if (operation.amount !== unitsToUsdcString(expectedAmountUnits)) {
+    throw new Error("reserve refill amount does not match the current exact plan");
+  }
+
+  if (!/^\d+$/.test(transaction.fee)) {
+    throw new Error("reserve refill fee is not an integer stroop string");
+  }
+  const fee = BigInt(transaction.fee);
+  if (fee <= 0n || fee > MAX_RESERVE_REFILL_FEE_STROOPS) {
+    throw new Error(
+      `reserve refill fee must be between 1 and ${MAX_RESERVE_REFILL_FEE_STROOPS} stroops`,
+    );
+  }
+
+  const maxTime = Number(transaction.timeBounds?.maxTime ?? 0);
+  if (!Number.isSafeInteger(maxTime) || maxTime <= 0) {
+    throw new Error("reserve refill transaction must have a finite maximum time");
+  }
+  if (!Number.isSafeInteger(nowSeconds) || nowSeconds < 0) {
+    throw new Error("reserve refill validation time must be a non-negative integer");
+  }
+  if (maxTime < nowSeconds) {
+    throw new Error("reserve refill transaction is expired");
+  }
+
+  const transactionHash = transaction.hash();
+  const validSignerKeys = new Set<string>();
+  for (const signature of transaction.signatures) {
+    const owner = policy.signerPublicKeys.find((publicKey) => {
+      const signer = Keypair.fromPublicKey(publicKey);
+      return (
+        signature.hint().equals(signer.signatureHint()) &&
+        signer.verify(transactionHash, signature.signature())
+      );
+    });
+    if (!owner) {
+      throw new Error("reserve refill contains an unconfigured signature");
+    }
+    if (validSignerKeys.has(owner)) {
+      throw new Error(`reserve refill contains a duplicate signature from ${owner}`);
+    }
+    validSignerKeys.add(owner);
+  }
+
+  if (requireSignatures && validSignerKeys.size < 2) {
+    throw new Error(
+      `reserve refill requires two distinct configured signatures; got ${validSignerKeys.size}`,
+    );
+  }
+}
+
+/** Add one configured custodian signature without accepting the same key twice. */
+export function addReserveRefillSignature(
+  transaction: Transaction,
+  signer: Keypair,
+  policy: ReserveRefillPolicy,
+): Transaction {
+  const publicKey = signer.publicKey();
+  if (!policy.signerPublicKeys.includes(publicKey)) {
+    throw new Error(`reserve refill signer ${publicKey} is not configured`);
+  }
+
+  const transactionHash = transaction.hash();
+  const alreadySigned = transaction.signatures.some(
+    (signature) =>
+      signature.hint().equals(signer.signatureHint()) &&
+      signer.verify(transactionHash, signature.signature()),
+  );
+  if (alreadySigned) {
+    throw new Error(`reserve refill is already signed by ${publicKey}`);
+  }
+
+  transaction.sign(signer);
+  return transaction;
+}
+
+/** Validate and submit one signed refill envelope without automatic retries. */
+export async function submitReserveRefill({
+  signedXdr,
+  policy,
+  asset,
+  expectedAmountUnits,
+  nowSeconds,
+  submit,
+  log,
+}: {
+  signedXdr: string;
+  policy: ReserveRefillPolicy;
+  asset: Asset;
+  expectedAmountUnits: bigint;
+  nowSeconds: number;
+  submit: (transaction: Transaction) => Promise<{ hash: string }>;
+  log: (message: string) => void;
+}): Promise<{ hash: string }> {
+  const decoded = TransactionBuilder.fromXDR(signedXdr, networkPassphrase());
+  validateReserveRefillTransaction({
+    transaction: decoded,
+    policy,
+    asset,
+    expectedAmountUnits,
+    nowSeconds,
+    requireSignatures: true,
+  });
+  if (decoded instanceof FeeBumpTransaction) {
+    throw new Error("reserve refill must not use a fee-bump envelope");
+  }
+
+  const hash = decoded.hash().toString("hex");
+  log(`reserve refill hash: ${hash}`);
+  log(`reserve refill explorer: ${explorerUrl()}/tx/${hash}`);
+
+  const result = await submit(decoded);
+  if (result.hash !== hash) {
+    throw new Error(
+      `Horizon returned a different hash; signed=${hash} returned=${result.hash}`,
+    );
+  }
+  return { hash };
 }
