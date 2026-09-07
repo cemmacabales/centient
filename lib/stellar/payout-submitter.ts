@@ -118,10 +118,10 @@ async function latestLedgerCloseMs(): Promise<number | null> {
  *
  * The envelope hash is known before submission, so an ambiguous failure never has
  * to be resolved by rebuilding — we ask Horizon what happened to that exact
- * transaction. Polling continues until the transaction is found, or until the
- * network's own clock has moved past its time bounds so it can no longer be
- * included by anyone. Only then is a rebuild safe, and only then is the failure
- * reported as retryable.
+ * transaction. Polling continues until the transaction is found, or until it is
+ * reported absent by a lookup made after the network's own clock moved past its
+ * time bounds, so it can no longer have been included by anyone. Only then is a
+ * rebuild safe, and only then is the failure reported as retryable.
  *
  * Everything short of that proof resolves non-retryably, for manual
  * reconciliation rather than a second settlement: an envelope with no time
@@ -137,6 +137,9 @@ async function resolveAmbiguousSubmit(
 ): Promise<{ hash: string }> {
   const expiresAt = envelopeExpiryMs(feeBump);
   const who = `${request.reference.kind} ${request.reference.id}`;
+  // Close time of a ledger observed past `expiresAt`, once we have seen one.
+  // Recorded rather than acted on immediately: see the ordering note below.
+  let expiredLedgerCloseMs: number | null = null;
 
   for (;;) {
     // A lookup that throws proves nothing — an unreachable Horizon is not
@@ -160,17 +163,30 @@ async function resolveAmbiguousSubmit(
       );
     }
 
-    // Retry is licensed by exactly one thing: Horizon saying the transaction is
-    // absent, as of a ledger that closed strictly after the envelope's maxTime.
-    // Strictly, because an envelope is still valid at a close time equal to it.
+    // Retry is licensed by exactly one thing: Horizon reporting the transaction
+    // absent in a lookup made *after* a ledger closed strictly past the
+    // envelope's maxTime. Strictly, because an envelope is still valid at a
+    // close time equal to it.
+    //
+    // The ordering carries the whole proof, so the two observations are never
+    // read out of order. An absence seen before that ledger proves nothing: the
+    // transaction may have been included in the gap between the two reads, still
+    // inside its bounds. So a post-expiry ledger is only *recorded* here, and the
+    // next pass's lookup — which necessarily runs after it — is what settles the
+    // question. By then Horizon has ingested every ledger up to that one, so a
+    // transaction included before maxTime would be visible; if it is still
+    // absent, it was never included and never can be.
     if (status === "not_found") {
-      const ledgerCloseMs = await latestLedgerCloseMs();
-      if (ledgerCloseMs !== null && ledgerCloseMs > expiresAt) {
+      if (expiredLedgerCloseMs !== null) {
         throw new StellarPaymentError(
-          `submitMultisigPayout: ${who} — ${envelopeHash} was absent as of ledger close ${new Date(ledgerCloseMs).toISOString()}, past its time bounds; safe to rebuild`,
+          `submitMultisigPayout: ${who} — ${envelopeHash} was still absent after ledger close ${new Date(expiredLedgerCloseMs).toISOString()}, past its time bounds; safe to rebuild`,
           "ambiguous_submit",
           true,
         );
+      }
+      const ledgerCloseMs = await latestLedgerCloseMs();
+      if (ledgerCloseMs !== null && ledgerCloseMs > expiresAt) {
+        expiredLedgerCloseMs = ledgerCloseMs;
       }
     }
 
