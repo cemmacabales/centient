@@ -1,7 +1,8 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
-const { mockAggregate } = vi.hoisted(() => ({
+const { mockAggregate, mockSendAlert } = vi.hoisted(() => ({
   mockAggregate: vi.fn(),
+  mockSendAlert: vi.fn(),
 }));
 
 vi.mock("../prisma", () => ({
@@ -20,10 +21,15 @@ vi.mock("../redis", () => ({
   },
 }));
 
+vi.mock("../health-alert", () => ({
+  sendDedupedDiscordAlert: mockSendAlert,
+}));
+
 import {
   getDailyPayoutCapUnits,
   getRolling24hPayoutSum,
   checkPayoutCap,
+  maybeSendCapAlert,
 } from "../payout-cap";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -145,5 +151,23 @@ describe("checkPayoutCap", () => {
     expect(result.current).toBe(0n);
     expect(result.cap).toBe(0n);
     expect(result.remaining).toBe(0n);
+  });
+});
+
+describe("maybeSendCapAlert", () => {
+  it("uses the shared payout-cap alert identity at 80 percent", async () => {
+    process.env.DAILY_PAYOUT_CAP_UNITS = "1000";
+    mockAggregate.mockResolvedValueOnce({ _sum: { payoutAmountUnits: 800n } });
+    mockSendAlert.mockResolvedValueOnce("sent");
+
+    const result = await maybeSendCapAlert();
+
+    expect(result).toBe("sent");
+    expect(mockSendAlert).toHaveBeenCalledWith({
+      key: "payout-cap",
+      severity: "WARN",
+      title: "Daily payout cap is approaching",
+      lines: ["80% consumed", "800 of 1000 units spent", "200 units remain"],
+    });
   });
 });

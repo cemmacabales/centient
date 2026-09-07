@@ -9,9 +9,9 @@
 // preserved from celo-balance; alerts say which asset crossed its threshold.
 import { Keypair } from "@stellar/stellar-sdk";
 import { REWARD_TOKEN_SYMBOL } from "../constants";
+import { sendDedupedDiscordAlert } from "../health-alert";
+import { walletBalanceAlerts } from "../wallet-balance-alerts";
 import { server } from "./config";
-
-const MAX_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
 
 /** XLM reserve locked per sponsored reserve unit (Horizon num_sponsoring counts an
  * account-creation sponsorship as multiple units). */
@@ -56,6 +56,8 @@ export interface WalletHealth {
   usdcBalance: string;
   /** XLM held for fees + base/trustline reserves. */
   xlmBalance: string;
+  /** XLM available after subtracting sponsored reserve liabilities. */
+  availableXlmBalance: string;
   /** Count of trustlines the platform is sponsoring (Horizon num_sponsoring). */
   numSponsoring: number;
   /** XLM locked by those sponsorships (0.5 × numSponsoring), informational. */
@@ -64,8 +66,14 @@ export interface WalletHealth {
   healthy: boolean;
   warnings: string[];
   pages: string[];
+  assetStatus: {
+    usdc: BalanceStatus;
+    xlm: BalanceStatus;
+  };
   thresholds: BalanceThresholds;
 }
+
+export type BalanceStatus = "healthy" | "warn" | "page" | "unknown";
 
 export function parseBalanceThresholds(): BalanceThresholds {
   return {
@@ -106,47 +114,49 @@ export function evaluateThresholds(
   xlmBalance: number,
   usdcBalance: number,
   thresholds: BalanceThresholds,
-): { healthy: boolean; warnings: string[]; pages: string[] } {
+): {
+  healthy: boolean;
+  warnings: string[];
+  pages: string[];
+  assetStatus: { usdc: BalanceStatus; xlm: BalanceStatus };
+} {
   const warnings: string[] = [];
   const pages: string[] = [];
+  const assetStatus: { usdc: BalanceStatus; xlm: BalanceStatus } = {
+    usdc: "healthy",
+    xlm: "healthy",
+  };
 
   if (usdcBalance <= thresholds.pageUsdc) {
+    assetStatus.usdc = "page";
     pages.push(
       `USDC float ${usdcBalance.toFixed(2)} USDC is below page threshold ${thresholds.pageUsdc} USDC`,
     );
   } else if (usdcBalance <= thresholds.warnUsdc) {
+    assetStatus.usdc = "warn";
     warnings.push(
       `USDC float ${usdcBalance.toFixed(2)} USDC is below warning threshold ${thresholds.warnUsdc} USDC`,
     );
   }
 
   if (xlmBalance <= thresholds.pageXlm) {
+    assetStatus.xlm = "page";
     pages.push(
       `XLM fee/reserve balance ${xlmBalance.toFixed(4)} XLM is below page threshold ${thresholds.pageXlm} XLM`,
     );
   } else if (xlmBalance <= thresholds.warnXlm) {
+    assetStatus.xlm = "warn";
     warnings.push(
       `XLM fee/reserve balance ${xlmBalance.toFixed(4)} XLM is below warning threshold ${thresholds.warnXlm} XLM`,
     );
   }
 
-  return { healthy: warnings.length === 0 && pages.length === 0, warnings, pages };
-}
-
-interface CachedAlert {
-  lastFiredAt: number;
-}
-
-const alertCooldowns: Record<string, CachedAlert> = {};
-
-export function shouldFireAlert(key: string): boolean {
-  const cached = alertCooldowns[key];
-  if (!cached) return true;
-  return Date.now() - cached.lastFiredAt > MAX_ALERT_COOLDOWN_MS;
-}
-
-export function recordAlertFired(key: string): void {
-  alertCooldowns[key] = { lastFiredAt: Date.now() };
+  return {
+    healthy: warnings.length === 0 && pages.length === 0,
+    warnings,
+    pages,
+    assetStatus,
+  };
 }
 
 export async function getWalletHealth(): Promise<WalletHealth> {
@@ -158,12 +168,14 @@ export async function getWalletHealth(): Promise<WalletHealth> {
       address: "—",
       usdcBalance: "—",
       xlmBalance: "—",
+      availableXlmBalance: "—",
       numSponsoring: 0,
       sponsoredReserveXlm: "0.0000",
       rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
       healthy: false,
       warnings: ["STELLAR_PLATFORM_SECRET not configured"],
       pages: [],
+      assetStatus: { usdc: "unknown", xlm: "unknown" },
       thresholds,
     };
   }
@@ -180,12 +192,14 @@ export async function getWalletHealth(): Promise<WalletHealth> {
       address,
       usdcBalance: "—",
       xlmBalance: "—",
+      availableXlmBalance: "—",
       numSponsoring: 0,
       sponsoredReserveXlm: "0.0000",
       rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
       healthy: false,
       warnings: ["STELLAR_PLATFORM_SECRET not configured or Horizon unavailable"],
       pages: [],
+      assetStatus: { usdc: "unknown", xlm: "unknown" },
       thresholds,
     };
   }
@@ -196,68 +210,31 @@ export async function getWalletHealth(): Promise<WalletHealth> {
   const sponsoredReserveXlm = TRUSTLINE_RESERVE_XLM * numSponsoring;
   const availableXlm = xlm - sponsoredReserveXlm;
 
-  const { healthy, warnings, pages } = evaluateThresholds(availableXlm, usdc, thresholds);
+  const { healthy, warnings, pages, assetStatus } = evaluateThresholds(
+    availableXlm,
+    usdc,
+    thresholds,
+  );
 
   return {
     address,
     usdcBalance: usdc.toFixed(4),
     xlmBalance: xlm.toFixed(4),
+    availableXlmBalance: availableXlm.toFixed(4),
     numSponsoring,
     sponsoredReserveXlm: sponsoredReserveXlm.toFixed(4),
     rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
     healthy,
     warnings,
     pages,
+    assetStatus,
     thresholds,
   };
 }
 
-export async function sendDiscordAlert(
-  health: WalletHealth,
-  severity: "WARN" | "PAGE",
-): Promise<void> {
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
-  if (!webhookUrl) return;
-
-  const color = severity === "PAGE" ? 0xe84118 : 0xf57c00;
-  const title = `⚠️ [${severity}] Platform wallet ${health.address.slice(0, 10)}…`;
-
-  const fields = [...health.warnings, ...health.pages].map((w) => ({
-    name: w,
-    value: "​",
-    inline: false,
-  }));
-
-  const payload = {
-    embeds: [
-      {
-        title,
-        color,
-        fields,
-        timestamp: new Date().toISOString(),
-      },
-    ],
-  };
-
-  const res = await fetch(webhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  if (!res.ok) {
-    console.error(`[stellar/balance] Discord webhook failed: ${res.status}`);
-  }
-}
-
 export async function checkAndAlert(): Promise<void> {
   const health = await getWalletHealth();
-  if (!health.healthy) {
-    const severity = health.pages.length > 0 ? "PAGE" : "WARN";
-    const key = `${health.address}:${severity}`;
-    if (shouldFireAlert(key)) {
-      await sendDiscordAlert(health, severity);
-      recordAlertFired(key);
-    }
+  for (const alert of walletBalanceAlerts(health)) {
+    await sendDedupedDiscordAlert(alert);
   }
 }

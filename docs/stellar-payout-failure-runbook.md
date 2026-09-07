@@ -95,18 +95,53 @@ between linking and payout.
 ## Wallet-health alerts (dual-asset)
 
 The pooled platform account is monitored on **two** balances (ST-3c), each with its
-own warn/page threshold and a 15-min alert cooldown:
+own warn/page threshold and a Redis-backed alert cooldown:
 
 - **USDC float** — funds withdrawals. Low float → payouts can't be funded.
   Env: `BALANCE_WARN_USDC` (default 50), `BALANCE_PAGE_USDC` (default 10).
 - **XLM fee/reserve floor** — pays every tx fee + base/trustline reserves. Low XLM →
   **no** payout can be submitted even with USDC on hand. Sponsored recipient
-  reserves (`0.5 × num_sponsoring`) are subtracted from the reported XLM so the
-  floor reflects *available* fee XLM, not locked reserves.
+  reserves (`0.5 × num_sponsoring`) are subtracted before threshold evaluation so
+  the floor reflects *spendable* fee XLM, not locked reserves. The status page
+  shows spendable, total, and sponsored-reserve XLM separately.
   Env: `BALANCE_WARN_XLM` (default 5), `BALANCE_PAGE_XLM` (default 2).
 
 Alerts go to `DISCORD_WEBHOOK_URL` and name which asset crossed which threshold.
-`/api/health/wallet` reports both balances live.
+The default cooldown is 15 minutes; override it with
+`HEALTH_ALERT_COOLDOWN_MS`. Each alert type and asset has its own Redis key, so a
+USDC page never suppresses an XLM page. A rejected Discord request releases its
+cooldown for retry. `/api/health/wallet` reports both balances live.
+
+## Rail anomaly monitoring
+
+Schedule an authenticated `POST /api/cron/wallet-health` request at least once per
+minute. It evaluates wallet balances together with payout activity, the rolling
+daily cap, permanent failures, and the cold-reserve refill plan. Use the same
+bearer-token convention as the other cron routes:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $CRON_SECRET" \
+  https://<deployment>/api/cron/wallet-health
+```
+
+The response includes the current metrics, active alerts, and whether each alert
+was sent, suppressed by cooldown, disabled, or failed. Configure anomaly policy
+with these environment values:
+
+- `HEALTH_PAYOUT_WINDOW_MINUTES` (default `60`)
+- `HEALTH_PAYOUT_COUNT_THRESHOLD` (default `100`)
+- `HEALTH_PAYOUT_VOLUME_UNITS_THRESHOLD` (default `1000000000`, or 100 USDC)
+- `HEALTH_FAILURE_WINDOW_MINUTES` (default `15`)
+- `HEALTH_FAILURE_COUNT_THRESHOLD` (default `3`)
+- `HEALTH_CAP_PERCENT_THRESHOLD` (default `80`)
+- `HEALTH_REFILL_OVERDUE_MINUTES` (default `30`)
+- `HEALTH_ALERT_COOLDOWN_MS` (default `900000`, or 15 minutes)
+
+The refill timer starts when a check first observes `refill_required` or
+`insufficient_reserve` and is cleared when the reserve plan returns to `healthy`.
+The timer is stored in Redis so restarts and multiple application instances do not
+reset or duplicate it.
 
 ## Daily payout cap
 

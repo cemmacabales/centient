@@ -8,7 +8,10 @@ import { Keypair } from "@stellar/stellar-sdk";
 const ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"; // Circle testnet USDC issuer
 const PLATFORM = Keypair.random();
 
-const { mockLoadAccount } = vi.hoisted(() => ({ mockLoadAccount: vi.fn() }));
+const { mockLoadAccount, mockSendAlert } = vi.hoisted(() => ({
+  mockLoadAccount: vi.fn(),
+  mockSendAlert: vi.fn(),
+}));
 
 vi.mock("../config", async (importActual) => {
   const actual = await importActual<typeof import("../config")>();
@@ -18,12 +21,15 @@ vi.mock("../config", async (importActual) => {
   };
 });
 
+vi.mock("../../health-alert", () => ({
+  sendDedupedDiscordAlert: mockSendAlert,
+}));
+
 import {
   extractBalances,
   evaluateThresholds,
   parseBalanceThresholds,
-  shouldFireAlert,
-  recordAlertFired,
+  checkAndAlert,
   getWalletHealth,
   TRUSTLINE_RESERVE_XLM,
 } from "../balance";
@@ -91,6 +97,8 @@ describe("evaluateThresholds", () => {
   it("pages on a low USDC float and names the float", () => {
     const r = evaluateThresholds(100, 5, t);
     expect(r.healthy).toBe(false);
+    expect(r.assetStatus.usdc).toBe("page");
+    expect(r.assetStatus.xlm).toBe("healthy");
     expect(r.pages.join(" ")).toMatch(/USDC/);
     expect(r.pages.join(" ")).toMatch(/float/i);
   });
@@ -98,6 +106,8 @@ describe("evaluateThresholds", () => {
   it("pages on a low XLM fee/reserve floor and names XLM", () => {
     const r = evaluateThresholds(1, 100, t);
     expect(r.healthy).toBe(false);
+    expect(r.assetStatus.usdc).toBe("healthy");
+    expect(r.assetStatus.xlm).toBe("page");
     expect(r.pages.join(" ")).toMatch(/XLM/);
     expect(r.pages.join(" ")).toMatch(/fee|reserve/i);
   });
@@ -109,13 +119,18 @@ describe("evaluateThresholds", () => {
   });
 });
 
-describe("alert cooldown", () => {
-  it("fires the first time and suppresses repeats within the window, per asset", () => {
-    expect(shouldFireAlert("addr:USDC:PAGE")).toBe(true);
-    recordAlertFired("addr:USDC:PAGE");
-    expect(shouldFireAlert("addr:USDC:PAGE")).toBe(false);
-    // A different asset's alert is independent.
-    expect(shouldFireAlert("addr:XLM:PAGE")).toBe(true);
+describe("checkAndAlert", () => {
+  it("sends distinct alerts when both the USDC and spendable XLM balances are low", async () => {
+    mockLoadAccount.mockResolvedValueOnce({ balances: balances("5.0000000", "1.0000000") });
+    mockSendAlert.mockResolvedValue("sent");
+
+    await checkAndAlert();
+
+    expect(mockSendAlert).toHaveBeenCalledTimes(2);
+    expect(mockSendAlert.mock.calls.map(([alert]) => alert.key)).toEqual([
+      "wallet-usdc-page",
+      "wallet-xlm-page",
+    ]);
   });
 });
 
@@ -128,6 +143,7 @@ describe("getWalletHealth", () => {
     expect(mockLoadAccount).toHaveBeenCalledWith(PLATFORM.publicKey());
     expect(health.usdcBalance).toBe("500.0000");
     expect(health.xlmBalance).toBe("100.0000");
+    expect(health.availableXlmBalance).toBe("100.0000");
     expect(health.healthy).toBe(true);
   });
 
