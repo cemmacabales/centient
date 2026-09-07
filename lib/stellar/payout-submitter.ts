@@ -144,7 +144,19 @@ async function buildCoSignSubmit(
   return { hash: res.hash };
 }
 
-/** The single owner of account-load + submit for the payout account. */
+/**
+ * The single owner of account-load + submit for the payout account.
+ *
+ * Process-local. It serializes concurrent payouts inside one Node process and
+ * nothing beyond it, so the deployment must run exactly one payout submitter — a
+ * second web instance, a standalone worker alongside the in-process one, or the
+ * retry cron running concurrently with the worker can all draw the same sequence.
+ * That collision costs throughput rather than correctness (the loser gets
+ * tx_bad_seq, rebuilds once, then fails retryably and requeues), but scaling this
+ * path horizontally needs a distributed lock spanning the whole cycle below, not
+ * just the submit. Inherited from payUsdc's seqMutex; see the payout service
+ * runbook.
+ */
 const payoutSeqMutex = new Mutex();
 
 /**

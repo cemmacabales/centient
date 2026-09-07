@@ -62,6 +62,27 @@ The regression test issues twelve simultaneous payouts and requires twelve
 distinct sequence numbers. With the mutex removed it fails with one distinct
 sequence across all twelve.
 
+### The lock is process-local — run exactly one submitter
+
+`payoutSeqMutex` is an in-process mutex. It serializes concurrent payouts inside
+one Node process and nothing beyond it. Anything that submits from
+`STELLAR_PLATFORM_ACCOUNT` in a *second* process — a horizontally scaled web
+instance, a standalone `npm run payout` worker alongside the in-process one, or
+`/api/cron/payout-retry` calling `reprocessPayoutWithNonceSafety` concurrently
+with the worker — can draw the same sequence number.
+
+That collision is not silent: the loser gets `tx_bad_seq`, rebuilds once, and on a
+second collision fails retryably so the job requeues. It costs throughput and
+retries rather than correctness. But it means **the deployment must run exactly
+one payout submitter**, and scaling the payout path horizontally requires a
+distributed lock spanning the whole load → build → co-sign → submit cycle, not
+just the submit.
+
+This constraint is inherited, not introduced: `payUsdc`'s `seqMutex` was equally
+process-local. It is recorded here because the multisig service holds its lock for
+longer — across two co-signer round trips — which widens the window in which a
+second process can interleave.
+
 ## Failure modes
 
 | Condition | Retryable? | Behavior |
