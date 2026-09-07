@@ -1,15 +1,15 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
-const { mockAggregate, mockSendAlert } = vi.hoisted(() => ({
-  mockAggregate: vi.fn(),
+const { mockPayoutJobAggregate, mockSendAlert } = vi.hoisted(() => ({
+  mockPayoutJobAggregate: vi.fn(),
   mockSendAlert: vi.fn(),
 }));
 
 vi.mock("../prisma", () => ({
   __esModule: true,
   default: {
-    submission: {
-      aggregate: mockAggregate,
+    payoutJob: {
+      aggregate: mockPayoutJobAggregate,
     },
   },
 }));
@@ -27,6 +27,7 @@ vi.mock("../health-alert", () => ({
 
 import {
   getDailyPayoutCapUnits,
+  getPayoutActivitySince,
   getRolling24hPayoutSum,
   checkPayoutCap,
   maybeSendCapAlert,
@@ -61,44 +62,68 @@ describe("getDailyPayoutCapUnits", () => {
   });
 });
 
-describe("getRolling24hPayoutSum", () => {
-  it("queries DB and returns sum", async () => {
-    mockAggregate.mockResolvedValueOnce({
-      _sum: { payoutAmountUnits: 50000000000000000n },
-      _count: null,
+describe("getPayoutActivitySince", () => {
+  it("derives broadcast payout activity from eligible payout jobs", async () => {
+    const since = new Date("2026-09-07T12:00:00.000Z");
+    mockPayoutJobAggregate.mockResolvedValueOnce({
+      _count: { _all: 2 },
+      _sum: { amountUnits: 750_000_000n },
       _avg: null,
       _min: null,
       _max: null,
     });
 
-    const sum = await getRolling24hPayoutSum();
-    expect(sum).toBe(50000000000000000n);
+    const result = await getPayoutActivitySince(since);
 
-    const callArgs = mockAggregate.mock.calls[0][0];
-    expect(callArgs.where.payoutStatus).toEqual({ in: ["sent", "confirmed"] });
-    expect(callArgs.where.createdAt.gte).toBeInstanceOf(Date);
+    expect(mockPayoutJobAggregate).toHaveBeenCalledWith({
+      _count: { _all: true },
+      _sum: { amountUnits: true },
+      where: {
+        status: { in: ["processing", "done"] },
+        broadcastAt: { gte: since },
+        txHash: { not: null },
+        amountUnits: { not: null },
+      },
+    });
+    expect(result).toEqual({ count: 2, volumeUnits: 750_000_000n });
   });
 
-  it("returns 0n when DB sum is null", async () => {
-    mockAggregate.mockResolvedValueOnce({
-      _sum: { payoutAmountUnits: null },
-      _count: null,
+  it("returns a zero volume when eligible jobs have no aggregate sum", async () => {
+    mockPayoutJobAggregate.mockResolvedValueOnce({
+      _count: { _all: 0 },
+      _sum: { amountUnits: null },
       _avg: null,
       _min: null,
       _max: null,
     });
 
-    const sum = await getRolling24hPayoutSum();
-    expect(sum).toBe(0n);
+    await expect(getPayoutActivitySince(new Date("2026-09-07T12:00:00.000Z"))).resolves.toEqual({
+      count: 0,
+      volumeUnits: 0n,
+    });
+  });
+});
+
+describe("getRolling24hPayoutSum", () => {
+  it("returns the volume from broadcast payout activity", async () => {
+    mockPayoutJobAggregate.mockResolvedValueOnce({
+      _count: { _all: 1 },
+      _sum: { amountUnits: 50_000_000_000_000_000n },
+      _avg: null,
+      _min: null,
+      _max: null,
+    });
+
+    await expect(getRolling24hPayoutSum()).resolves.toBe(50_000_000_000_000_000n);
   });
 });
 
 describe("checkPayoutCap", () => {
   it("allows payout when under cap", async () => {
     process.env.DAILY_PAYOUT_CAP_UNITS = "500000000000000000000";
-    mockAggregate.mockResolvedValueOnce({
-      _sum: { payoutAmountUnits: 100000000000000000000n },
-      _count: null,
+    mockPayoutJobAggregate.mockResolvedValueOnce({
+      _sum: { amountUnits: 100000000000000000000n },
+      _count: { _all: 1 },
       _avg: null,
       _min: null,
       _max: null,
@@ -112,9 +137,9 @@ describe("checkPayoutCap", () => {
 
   it("throws PayoutCapError when cap would be exceeded", async () => {
     process.env.DAILY_PAYOUT_CAP_UNITS = "200000000000000000000";
-    mockAggregate.mockResolvedValueOnce({
-      _sum: { payoutAmountUnits: 190000000000000000000n },
-      _count: null,
+    mockPayoutJobAggregate.mockResolvedValueOnce({
+      _sum: { amountUnits: 190000000000000000000n },
+      _count: { _all: 1 },
       _avg: null,
       _min: null,
       _max: null,
@@ -131,9 +156,9 @@ describe("checkPayoutCap", () => {
 
   it("allows payout exactly at cap", async () => {
     process.env.DAILY_PAYOUT_CAP_UNITS = "200000000000000000000";
-    mockAggregate.mockResolvedValueOnce({
-      _sum: { payoutAmountUnits: 150000000000000000000n },
-      _count: null,
+    mockPayoutJobAggregate.mockResolvedValueOnce({
+      _sum: { amountUnits: 150000000000000000000n },
+      _count: { _all: 1 },
       _avg: null,
       _min: null,
       _max: null,
@@ -157,7 +182,10 @@ describe("checkPayoutCap", () => {
 describe("maybeSendCapAlert", () => {
   it("uses the shared payout-cap alert identity at 80 percent", async () => {
     process.env.DAILY_PAYOUT_CAP_UNITS = "1000";
-    mockAggregate.mockResolvedValueOnce({ _sum: { payoutAmountUnits: 800n } });
+    mockPayoutJobAggregate.mockResolvedValueOnce({
+      _count: { _all: 1 },
+      _sum: { amountUnits: 800n },
+    });
     mockSendAlert.mockResolvedValueOnce("sent");
 
     const result = await maybeSendCapAlert();
