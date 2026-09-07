@@ -366,7 +366,7 @@ describe("reserve refill transaction builder", () => {
     },
   );
 
-  it.each([0, -1, 1.5, 181])(
+  it.each([0, -1, 1.5, 901])(
     "rejects an unsafe transaction lifetime %s seconds",
     (timeoutSeconds) => {
       const fixture = policyFixture();
@@ -383,6 +383,21 @@ describe("reserve refill transaction builder", () => {
       ).toThrow(/timeoutSeconds/);
     },
   );
+
+  it("allows the approved 15-minute two-custodian signing window", () => {
+    const fixture = policyFixture();
+    const policy = parseReserveRefillPolicy(fixture.env);
+
+    expect(() =>
+      buildReserveRefillTransaction({
+        sourceAccount: new Account(policy.coldAccount, "41"),
+        policy,
+        asset: new Asset("USDC", Keypair.random().publicKey()),
+        amountUnits: 1n,
+        timeoutSeconds: 900,
+      }),
+    ).not.toThrow();
+  });
 });
 
 function transactionFixture() {
@@ -611,7 +626,7 @@ describe("reserve refill transaction validation", () => {
     ).toThrow(/start time/i);
   });
 
-  it("rejects an approval window longer than 180 seconds", () => {
+  it("rejects an approval window longer than 15 minutes", () => {
     const fixture = transactionFixture();
     const nowSeconds = Math.floor(Date.now() / 1000);
     const transaction = new TransactionBuilder(
@@ -625,7 +640,7 @@ describe("reserve refill transaction validation", () => {
           amount: "75.0000000",
         }),
       )
-      .setTimebounds(0, nowSeconds + 181)
+      .setTimebounds(0, nowSeconds + 901)
       .build();
 
     expect(() =>
@@ -637,7 +652,7 @@ describe("reserve refill transaction validation", () => {
         nowSeconds,
         requireSignatures: false,
       }),
-    ).toThrow(/180 seconds/i);
+    ).toThrow(/900 seconds/i);
   });
 
   it("rejects an extra signature from outside the configured signer set", () => {

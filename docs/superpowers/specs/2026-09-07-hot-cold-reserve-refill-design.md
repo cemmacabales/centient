@@ -84,6 +84,11 @@ XLM for its base reserve, USDC trustline, and infrequent refill fees. The retain
 floor applies to USDC; the runbook separately specifies the minimum XLM health
 check. Fee bumping is unnecessary for an operator-controlled reserve account.
 
+The approved transaction lifetime is 15 minutes. The builder and validator use
+the same hard bound: long enough to move the XDR between two isolated custody
+hosts, but short enough that an unsubmitted signed approval cannot remain valid
+indefinitely.
+
 The validator rejects extra operations, a different asset or issuer, a changed
 destination, an amount other than the current deterministic plan, excessive
 fees, absent/expired or overlong time bounds, a future start, unknown
@@ -124,8 +129,9 @@ policy keys at weight 1 with low/medium/high thresholds of 2. Key generation
 requires an explicit disposable-testnet opt-in and is impossible on public
 network. Production requires pre-provisioned identities. Before any network
 mutation, setup proves the cold seed matches its configured public key and that
-the cold account differs from the hot wallet. No seed is written to the
-repository.
+the cold account differs from the hot wallet. Existing unexpected signers stop
+setup before trustline or threshold mutation and require an authorized manual
+signer-removal recovery. No seed is written to the repository.
 
 The committed runbook records:
 

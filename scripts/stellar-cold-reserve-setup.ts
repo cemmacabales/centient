@@ -14,11 +14,11 @@ import {
 } from "../lib/stellar/config";
 import {
   buildSetOptionsTx,
-  evaluateMultisig,
   type AccountLike,
 } from "../lib/stellar/multisig";
 import {
   assertColdReserveMultisig,
+  evaluateColdReserveSetupState,
   resolveColdReserveSetupKeys,
 } from "../lib/stellar/cold-reserve-setup";
 
@@ -106,13 +106,23 @@ async function main() {
     await friendbotFund(master.publicKey());
   }
 
-  await ensureUsdcTrustline(master);
-  const account = await server().loadAccount(master.publicKey());
-  const current = evaluateMultisig(account as unknown as AccountLike, {
+  const initialAccount = await server().loadAccount(master.publicKey());
+  evaluateColdReserveSetupState(initialAccount as unknown as AccountLike, {
     masterPublic: master.publicKey(),
     opsPublic,
     policyPublic,
   });
+
+  await ensureUsdcTrustline(master);
+  const account = await server().loadAccount(master.publicKey());
+  const current = evaluateColdReserveSetupState(
+    account as unknown as AccountLike,
+    {
+      masterPublic: master.publicKey(),
+      opsPublic,
+      policyPublic,
+    },
+  );
 
   if (!current.matchesTarget) {
     const transaction = buildSetOptionsTx({

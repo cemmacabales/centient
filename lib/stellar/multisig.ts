@@ -62,6 +62,20 @@ export interface MultisigEvaluation {
   reasons: string[];
 }
 
+/** Return every enabled signer outside the configured master/ops/policy set. */
+export function findUnexpectedActiveSigners(
+  account: AccountLike,
+  { masterPublic, opsPublic, policyPublic }: SignerSet,
+): AccountLike["signers"] {
+  const expectedSignerKeys = new Set([masterPublic, opsPublic, policyPublic]);
+  return account.signers.filter(
+    (signer) =>
+      signer.weight > 0 &&
+      (!StrKey.isValidEd25519PublicKey(signer.key) ||
+        !expectedSignerKeys.has(signer.key)),
+  );
+}
+
 /**
  * Evaluate a Horizon account record against the payout multisig requirements.
  *
@@ -84,12 +98,11 @@ export function evaluateMultisig(
     (s) => s.weight > 0 && StrKey.isValidEd25519PublicKey(s.key),
   );
   const activeSigners = account.signers.filter((signer) => signer.weight > 0);
-  const expectedSignerKeys = new Set([masterPublic, opsPublic, policyPublic]);
-  const unexpectedActiveSigners = activeSigners.filter(
-    (signer) =>
-      !StrKey.isValidEd25519PublicKey(signer.key) ||
-      !expectedSignerKeys.has(signer.key),
-  );
+  const unexpectedActiveSigners = findUnexpectedActiveSigners(account, {
+    masterPublic,
+    opsPublic,
+    policyPublic,
+  });
   const weightOf = (key: string) =>
     keySigners.find((s) => s.key === key)?.weight ?? 0;
 

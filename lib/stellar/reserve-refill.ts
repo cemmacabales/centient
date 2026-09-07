@@ -53,7 +53,8 @@ export type ReserveRefillPlan =
     };
 
 export const MAX_RESERVE_REFILL_FEE_STROOPS = 10_000n;
-export const MAX_RESERVE_REFILL_LIFETIME_SECONDS = 180;
+/** Approved validity window for the two-custodian offline signing ceremony. */
+export const MAX_RESERVE_REFILL_LIFETIME_SECONDS = 15 * 60;
 
 export interface HorizonBalanceLine {
   asset_type: string;
@@ -241,7 +242,7 @@ export function buildReserveRefillTransaction({
   asset,
   amountUnits,
   fee = BASE_FEE,
-  timeoutSeconds = 180,
+  timeoutSeconds = MAX_RESERVE_REFILL_LIFETIME_SECONDS,
 }: {
   sourceAccount: SourceAccount;
   policy: ReserveRefillPolicy;
