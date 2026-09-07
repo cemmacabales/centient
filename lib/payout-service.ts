@@ -5,6 +5,7 @@ import { isValidStellarAddress } from "./stellar/signature";
 
 const TERMINAL_STATUSES = ["confirmed", "sent", "skipped"];
 
+/** Is this payout status final — already paid, skipped, or confirmed — and so never re-sent? */
 function isTerminalStatus(status: string): boolean {
   return TERMINAL_STATUSES.includes(status);
 }
