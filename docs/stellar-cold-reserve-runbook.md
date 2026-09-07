@@ -174,11 +174,21 @@ npm run stellar:reserve:refill -- submit
 ```
 
 Immediately before submission, the command reloads hot and cold balances and
-requires that the current plan still matches the XDR's exact amount. It rejects
-extra operations, operation-level source overrides, a different source,
-destination, asset, issuer, amount, fee above 10,000 stroops, a future start,
+re-checks both policy invariants against the exact amount the custodians
+signed: the refill must not raise the hot float above its target, and must not
+pull the cold reserve below its retained floor. It rejects extra operations,
+operation-level source overrides, a different source, destination, asset,
+issuer, an amount above the target, fee above 10,000 stroops, a future start,
 an expiry more than 15 minutes away, missing/expired time bounds, unconfigured
 signatures, duplicate identities, or fewer than two valid signatures.
+
+The signed amount is deliberately *not* required to equal a freshly derived
+`target - hot`. The hot wallet keeps paying out during the signing ceremony, so
+re-deriving the amount at submission would invalidate both custodian signatures
+on every payout and leave the refill unable to complete under exactly the load
+that triggered it. A refill that has become smaller than the current shortfall
+is still a valid partial top-up; the next scheduled check picks up the
+remainder. Refills therefore do not require freezing payouts.
 
 The signed hash and explorer link print before Horizon is called. The command
 submits once and never retries automatically.

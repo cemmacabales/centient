@@ -139,15 +139,18 @@ async function main() {
   }
 
   if (command === "submit") {
-    const actionable = requireActionable(
-      await loadReserveRefillStatus({ asset }),
-    );
+    // Re-read balances so the policy invariants are checked against the ledger
+    // as it is now, not as it was at prepare time. The signed amount itself is
+    // authoritative: payouts during the signing ceremony move the hot balance,
+    // and re-deriving the amount here would reject the custodians' signatures.
+    const plan = await loadReserveRefillStatus({ asset });
     const horizon = server();
     const result = await submitReserveRefill({
       signedXdr: requireXdr(),
       policy,
       asset,
-      expectedAmountUnits: actionable.amountUnits,
+      hotBalanceUnits: plan.hotBalanceUnits,
+      coldBalanceUnits: plan.coldBalanceUnits,
       nowSeconds: Math.floor(Date.now() / 1000),
       log,
       submit: (transaction) => horizon.submitTransaction(transaction),
