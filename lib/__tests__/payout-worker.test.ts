@@ -31,6 +31,7 @@ import { createUser, createTask, createCampaign, VALID_REASON } from "@/tests/he
 // Seeding retryCount one below MAX_RETRIES makes the next attempt terminal.
 const RETRY_BUDGET_EXHAUSTED = 2;
 const AMOUNT_UNITS = 50000000000000000n;
+const TX_HASH = "payout-broadcast-hash";
 
 async function enqueuePendingPayout(opts: {
   campaignId?: string | null;
@@ -70,6 +71,21 @@ beforeEach(async () => {
   vi.mocked(creditBalance).mockReset();
   vi.mocked(creditBalance).mockResolvedValue(0n);
   process.env.PLATFORM_FEE_UNITS = "150000000000000000";
+});
+
+describe("payout-worker accepted submission payments", () => {
+  it("records the accepted payment tuple on its payout job", async () => {
+    vi.mocked(payReward).mockResolvedValueOnce(TX_HASH);
+    const { submission, job, user } = await enqueuePendingPayout();
+
+    const beforeBroadcast = new Date();
+    await processJob(job.id, submission.id, user.id, AMOUNT_UNITS, "SUBMISSION_PAYOUT");
+
+    const updatedJob = await prisma.payoutJob.findUniqueOrThrow({ where: { id: job.id } });
+    expect(updatedJob.txHash).toBe(TX_HASH);
+    expect(updatedJob.amountUnits).toBe(AMOUNT_UNITS);
+    expect(updatedJob.broadcastAt?.getTime()).toBeGreaterThanOrEqual(beforeBroadcast.getTime());
+  });
 });
 
 describe("payout-worker campaign balance refunds", () => {
