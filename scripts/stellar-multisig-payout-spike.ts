@@ -15,6 +15,8 @@ import {
   Operation,
   TransactionBuilder,
   type Asset,
+  type FeeBumpTransaction,
+  type Transaction,
 } from "@stellar/stellar-sdk";
 import {
   explorerUrl,
@@ -83,6 +85,31 @@ function nativeBalanceUnits(account: AccountResponse): bigint {
   return whole * STELLAR_DECIMAL_SCALE + fraction;
 }
 
+/**
+ * Submit a transaction exactly once, printing its hash *before* the network
+ * call. A submission whose outcome is unknown (timeout, dropped connection)
+ * must then be reconciled against this hash — never blindly resubmitted, which
+ * on a reused sequence number risks paying twice.
+ */
+async function submitOnce(
+  label: string,
+  transaction: Transaction | FeeBumpTransaction,
+): Promise<string> {
+  const hash = transaction.hash().toString("hex");
+  log(`${label} hash    :`, hash);
+  log(`${label} explorer:`, `${explorerUrl()}/tx/${hash}`);
+  const submitted = await server().submitTransaction(transaction);
+  if (!submitted.successful) {
+    throw new Error(`${label} was included but failed on-chain: ${hash}`);
+  }
+  if (submitted.hash !== hash) {
+    throw new Error(
+      `${label} hash mismatch: signed ${hash}, Horizon reported ${submitted.hash}`,
+    );
+  }
+  return hash;
+}
+
 async function ensurePayoutTrustline({
   master,
   ops,
@@ -112,8 +139,7 @@ async function ensurePayoutTrustline({
     .setTimeout(TX_TIMEOUT_SECONDS)
     .build();
   addIndependentSignatures(tx, [master, ops]);
-  const submitted = await horizon.submitTransaction(tx);
-  return submitted.hash;
+  return submitOnce("payout trustline", tx);
 }
 
 async function main(): Promise<void> {
@@ -153,12 +179,7 @@ async function main(): Promise<void> {
   log("payout amount  :", unitsToUsdcString(amountUnits), "USDC");
 
   const trustlineHash = await ensurePayoutTrustline({ master, ops, asset });
-  if (trustlineHash) {
-    log("payout trustline tx:", trustlineHash);
-    log("payout trustline   :", `${explorerUrl()}/tx/${trustlineHash}`);
-  } else {
-    log("payout trustline   : already present");
-  }
+  if (!trustlineHash) log("payout trustline   : already present");
 
   const fundedPayout = await horizon.loadAccount(payoutPublicKey);
   const payoutUsdcUnits = assetBalanceUnits(fundedPayout, asset);
@@ -181,9 +202,7 @@ async function main(): Promise<void> {
     fee,
   });
   addIndependentSignatures(sponsorTx, [master, ops, recipient], 3);
-  const sponsorResult = await horizon.submitTransaction(sponsorTx);
-  log("sponsor tx      :", sponsorResult.hash);
-  log("sponsor explorer:", `${explorerUrl()}/tx/${sponsorResult.hash}`);
+  const sponsorHash = await submitOnce("sponsor", sponsorTx);
 
   const recipientBefore = await horizon.loadAccount(recipient.publicKey());
   const recipientUsdcBeforeUnits = assetBalanceUnits(recipientBefore, asset);
@@ -208,8 +227,11 @@ async function main(): Promise<void> {
 
   // Submit exactly once. Unknown outcomes must be reconciled by hash, never
   // blindly retried; #7 owns sequence-safe production submission behavior.
-  const submitted = await horizon.submitTransaction(feeBump);
-  const transaction = await horizon.transactions().transaction(submitted.hash).call();
+  const payoutHash = await submitOnce("payout fee-bump", feeBump);
+  const transaction = await horizon.transactions().transaction(payoutHash).call();
+  if (!transaction.successful) {
+    throw new Error(`payout fee-bump ${payoutHash} is recorded as failed on-chain`);
+  }
   const recipientAfter = await horizon.loadAccount(recipient.publicKey());
 
   const recipientUsdcAfterUnits = assetBalanceUnits(recipientAfter, asset);
@@ -251,10 +273,10 @@ async function main(): Promise<void> {
         feeChargedStroops: String(transaction.fee_charged),
         innerSignatureCount,
         outerSignatureCount,
-        sponsorTransactionHash: sponsorResult.hash,
+        sponsorTransactionHash: sponsorHash,
         innerPaymentHash: innerHash,
-        feeBumpTransactionHash: submitted.hash,
-        explorer: `${explorerUrl()}/tx/${submitted.hash}`,
+        feeBumpTransactionHash: payoutHash,
+        explorer: `${explorerUrl()}/tx/${payoutHash}`,
       },
       null,
       2,
