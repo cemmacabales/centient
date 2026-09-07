@@ -56,7 +56,7 @@ Create `.github/workflows/agent-ready.yml` with the following behavior:
 2. Continue only when all of these conditions are true:
    - the added label is exactly `agent-ready`;
    - the issue is open;
-   - the event actor is `cemmacabales`.
+   - the event sender is `cemmacabales`.
 3. Serialize dispatches per issue with a concurrency group and do not cancel an
    in-progress dispatch.
 4. Use a fine-grained personal access token stored as
@@ -109,7 +109,7 @@ No OpenAI API key is stored in GitHub.
   so it starts a fresh attempt.
 - A missing, expired, or under-scoped `CODEX_TRIGGER_TOKEN` fails the workflow
   before a delegation comment is created.
-- Events from actors other than `cemmacabales`, closed issues, and other labels
+- Events from senders other than `cemmacabales`, closed issues, and other labels
   are skipped without consuming Codex usage.
 - Codex Cloud reports implementation blockers on the issue and must not create
   a pull request when its required verification fails.
