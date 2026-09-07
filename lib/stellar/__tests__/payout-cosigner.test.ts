@@ -15,7 +15,6 @@ const usdc = new Asset("USDC", Keypair.random().publicKey());
 const destination = Keypair.random().publicKey();
 
 const baseEnv = {
-  STELLAR_NETWORK: "testnet",
   STELLAR_POLICY_SIGNER_SECRET: policy.secret(),
   STELLAR_POLICY_SIGNER_PUBLIC: policy.publicKey(),
   STELLAR_ALLOW_LOCAL_COSIGNER: "true",
@@ -23,6 +22,9 @@ const baseEnv = {
 
 beforeEach(() => {
   process.env.STELLAR_NETWORK = "testnet";
+  // The co-signer resolves the payout asset from its own configuration rather
+  // than trusting the request, so it needs the issuer the envelopes are built with.
+  process.env.STELLAR_USDC_ISSUER = usdc.getIssuer();
 });
 
 function paymentRequest(
@@ -97,6 +99,30 @@ describe("localPolicyCoSigner", () => {
     await expect(localPolicyCoSigner(policy).signPayout(request)).rejects.toThrow(/amount/i);
   });
 
+  it("refuses an envelope paying an asset other than the configured payout asset", async () => {
+    // Independent verification is the point of the second signature: the
+    // co-signer must not sign a payment of some other asset merely because the
+    // destination and the numeric amount happen to match.
+    const rogue = new Asset("USDC", Keypair.random().publicKey());
+    const tx = buildPayoutPayment({
+      sourceAccount: new Account(Keypair.random().publicKey(), "7"),
+      destination,
+      asset: rogue,
+      amountUnits: 25_000_000n,
+    });
+    signAsPlatform(tx, platform);
+
+    await expect(
+      localPolicyCoSigner(policy).signPayout({
+        stage: "payment",
+        xdr: tx.toXDR(),
+        destination,
+        amountUnits: 25_000_000n,
+        reference: { kind: "submission", id: "sub-1" },
+      }),
+    ).rejects.toThrow(/asset/i);
+  });
+
   it("refuses an envelope carrying more than the single payment operation", async () => {
     const source = new Account(Keypair.random().publicKey(), "7");
     const { Operation } = await import("@stellar/stellar-sdk");
@@ -124,8 +150,24 @@ describe("resolvePayoutCoSigner", () => {
   });
 
   it("refuses the local co-signer on the public network", () => {
+    process.env.STELLAR_NETWORK = "public";
+    expect(() => resolvePayoutCoSigner(baseEnv)).toThrow(/never.*public network/i);
+  });
+
+  it("refuses an empty network rather than treating it as non-public", () => {
+    // An empty STELLAR_NETWORK must not slip past the public-network refusal by
+    // failing to equal the string "public".
+    process.env.STELLAR_NETWORK = "";
+    expect(() => resolvePayoutCoSigner(baseEnv)).toThrow();
+  });
+
+  it("resolves the network from one authority, ignoring a conflicting override", () => {
+    // The envelope is parsed and signed with networkPassphrase(), which reads the
+    // process configuration. If the refusal check trusted a separately supplied
+    // value, a caller could sign public-network payouts while claiming testnet.
+    process.env.STELLAR_NETWORK = "public";
     expect(() =>
-      resolvePayoutCoSigner({ ...baseEnv, STELLAR_NETWORK: "public" }),
+      resolvePayoutCoSigner({ ...baseEnv, STELLAR_NETWORK: "testnet" }),
     ).toThrow(/never.*public network/i);
   });
 

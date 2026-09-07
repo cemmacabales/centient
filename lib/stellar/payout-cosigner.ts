@@ -15,10 +15,11 @@
 import {
   Keypair,
   TransactionBuilder,
+  type Asset,
   type FeeBumpTransaction,
   type Transaction,
 } from "@stellar/stellar-sdk";
-import { networkPassphrase, stellarNetwork } from "./config";
+import { networkPassphrase, stellarNetwork, usdcAsset } from "./config";
 import { payoutAmountString } from "./payout-amount";
 import type { PayoutCoSignRequest, PayoutCoSignature, PayoutCoSigner } from "./payout-envelope";
 
@@ -28,6 +29,7 @@ export type PayoutCoSignerEnvironment = Readonly<Record<string, string | undefin
 function innerPayment(transaction: Transaction | FeeBumpTransaction): {
   destination: string;
   amount: string;
+  asset: Asset;
 } {
   const tx =
     "innerTransaction" in transaction
@@ -41,7 +43,11 @@ function innerPayment(transaction: Transaction | FeeBumpTransaction): {
         .join(", ")}]`,
     );
   }
-  return operations[0] as unknown as { destination: string; amount: string };
+  return operations[0] as unknown as {
+    destination: string;
+    amount: string;
+    asset: Asset;
+  };
 }
 
 /**
@@ -52,10 +58,20 @@ function innerPayment(transaction: Transaction | FeeBumpTransaction): {
  */
 function assertEnvelopeMatchesRequest(
   request: PayoutCoSignRequest,
+  expectedAsset: Asset,
 ): Transaction | FeeBumpTransaction {
   const transaction = TransactionBuilder.fromXDR(request.xdr, networkPassphrase());
   const payment = innerPayment(transaction);
 
+  // The asset is checked against the co-signer's own configuration, never against
+  // the request: a matching destination and numeric amount say nothing about
+  // which asset is actually moving, and the request is the very thing being
+  // independently verified.
+  if (!payment.asset.equals(expectedAsset)) {
+    throw new Error(
+      `payout co-signer: envelope pays asset ${payment.asset.getCode()}:${payment.asset.getIssuer()}, not the configured payout asset ${expectedAsset.getCode()}:${expectedAsset.getIssuer()}`,
+    );
+  }
   if (payment.destination !== request.destination) {
     throw new Error(
       `payout co-signer: envelope destination ${payment.destination} does not match the requested destination ${request.destination}`,
@@ -75,10 +91,10 @@ function assertEnvelopeMatchesRequest(
  * re-deriving the envelope's payment and matching it against the request, so it
  * exercises the same refusal paths the real service must.
  */
-export function localPolicyCoSigner(policy: Keypair): PayoutCoSigner {
+export function localPolicyCoSigner(policy: Keypair, asset?: Asset): PayoutCoSigner {
   return {
     async signPayout(request: PayoutCoSignRequest): Promise<PayoutCoSignature> {
-      const transaction = assertEnvelopeMatchesRequest(request);
+      const transaction = assertEnvelopeMatchesRequest(request, asset ?? usdcAsset());
       return {
         publicKey: policy.publicKey(),
         signature: policy.sign(transaction.hash()).toString("base64"),
@@ -102,8 +118,11 @@ export function resolvePayoutCoSigner(
     );
   }
 
-  const network = env.STELLAR_NETWORK?.trim().toLowerCase() ?? stellarNetwork();
-  if (network === "public") {
+  // Resolved from stellarNetwork() alone, which is the same authority
+  // networkPassphrase() uses to parse and sign the envelope. Reading a separately
+  // supplied value here would let the two disagree, and an empty string would slip
+  // past this refusal by simply not equalling "public".
+  if (stellarNetwork() === "public") {
     throw new Error(
       "the local payout co-signer is never permitted on the public network — one process holding both keys is not a 2-of-3",
     );
