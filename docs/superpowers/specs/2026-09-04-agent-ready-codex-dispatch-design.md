@@ -6,7 +6,9 @@ When the trusted maintainer applies the `agent-ready` label to an open GitHub
 issue, automatically delegate that issue to Codex Cloud. Codex must implement
 the issue on an isolated branch, run the repository's verification commands,
 and open a pull request against `develop`. The automation must never merge a
-pull request.
+pull request. Every commit and pull request produced by this automation must
+attribute only `cemmacabales <carlmacabales31@gmail.com>`; no AI agent,
+co-author trailer, bot identity, or generated-by-AI attribution is permitted.
 
 ## Context
 
@@ -73,6 +75,11 @@ The comment delegates this contract to Codex Cloud:
 - start from `develop` on `codex/issue-<number>`;
 - keep the change scoped to the issue;
 - run the relevant tests, typecheck, and build;
+- configure the commit author as
+  `cemmacabales <carlmacabales31@gmail.com>` and preserve that identity for
+  every commit;
+- add no co-author trailer, bot author, AI contributor, or generated-by-AI
+  attribution to commits, pull-request titles, or pull-request bodies;
 - if verification succeeds, push the branch and open a pull request against
   `develop` whose body contains `Closes #<number>`;
 - if requirements are unclear or verification fails, comment with the specific
@@ -136,6 +143,8 @@ repository, workflow logs, issue comments, or documentation.
 ## Non-Goals
 
 - No automatic merging or auto-merge configuration.
+- No commit, pull-request, or contributor attribution for Codex, ChatGPT,
+  GitHub Actions, or any other AI agent or bot.
 - No OpenAI API key or pay-as-you-go API usage.
 - No processing of multiple queued issues in one agent task.
 - No external webhook service, database, or scheduler.
