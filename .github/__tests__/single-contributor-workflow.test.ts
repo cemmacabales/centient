@@ -36,6 +36,15 @@ describe("single-contributor pull request workflow", () => {
     expect(workflow).toContain("core.setFailed(");
   });
 
+  it("rejects a temporary Codex dispatch file from the final pull request", () => {
+    expect(workflow).toContain("github.rest.pulls.listFiles");
+    expect(workflow).toContain("dispatchFiles.length > 0");
+    expect(workflow).toContain(
+      String.raw`/^\.github\/codex-dispatch\/issue-\d+\.md$/`,
+    );
+    expect(workflow).toContain("Temporary Codex dispatch files must be removed");
+  });
+
   it("rejects co-author trailers and explicit AI attribution", () => {
     expect(workflow).toContain("commit.message");
     expect(workflow).toContain("context.payload.pull_request.title");

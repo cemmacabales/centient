@@ -3,33 +3,35 @@
 ## Goal
 
 When the trusted maintainer applies the `agent-ready` label to an open GitHub
-issue, automatically delegate that issue to Codex Cloud. Codex must implement
-the issue on an isolated branch, run the repository's verification commands,
-and open a pull request against `develop`. The automation must never merge a
-pull request. Every commit produced by this automation must use only
+issue, automatically create an isolated draft pull request against `develop`
+and delegate it to Codex Cloud. Codex must implement the issue on that branch
+and run the repository's verification commands. The automation must never
+merge a pull request. Every commit produced by this automation must use only
 `cemmacabales <carlmacabales31@gmail.com>` as both author and committer. No
 co-author trailer or generated-by-AI attribution is permitted in commit or
 pull-request text.
 
 ## Context
 
-The repository currently has pull-request CI in `.github/workflows/ci.yml` and
-a historical manual issue-processing guide in `auto-dev.md`, but it has no
-event-driven issue-to-agent workflow. The maintainer has ChatGPT Plus and does
-not have separately billed OpenAI API access.
+The repository has pull-request CI in `.github/workflows/ci.yml`, a historical
+manual issue-processing guide in `auto-dev.md`, and an initial event-driven
+relay that mentioned `@codex` on ordinary issues. The maintainer has ChatGPT
+Plus and does not have separately billed OpenAI API access.
 
 ChatGPT Plus includes Codex Cloud and GitHub delegation. The official Codex
-GitHub Action, by contrast, requires API-key billing. This design therefore
-uses the GitHub integration's `@codex` issue-comment trigger and consumes the
-maintainer's included Codex allowance.
+GitHub Action, by contrast, requires API-key billing. The GitHub integration
+documents `@codex` task delegation on pull requests, not ordinary issues. This
+design therefore creates a draft pull request first and posts the instruction
+there, consuming the maintainer's included Codex allowance.
 
 ## Considered Approaches
 
 ### 1. GitHub label relay to Codex Cloud (selected)
 
-A GitHub Actions workflow reacts to the `issues.labeled` event and posts a
-fixed `@codex` instruction as the maintainer's GitHub account. This is the
-smallest option that works with ChatGPT Plus and keeps implementation inside
+A GitHub Actions workflow reacts to the `issues.labeled` event, creates a
+maintainer-authored dispatch commit and draft pull request, then posts a fixed
+`@codex` instruction on that pull request as the maintainer's GitHub account.
+This uses the documented GitHub trigger while keeping implementation inside
 Codex Cloud.
 
 Trade-off: the repository needs a fine-grained GitHub personal access token so
@@ -61,14 +63,20 @@ Create `.github/workflows/agent-ready.yml` with the following behavior:
 3. Serialize dispatches per issue with a concurrency group and do not cancel an
    in-progress dispatch.
 4. Use a fine-grained personal access token stored as
-   `CODEX_TRIGGER_TOKEN` to read issue comments and create one new comment.
-5. Add the workflow run ID as an event-specific hidden marker to the comment.
+   `CODEX_TRIGGER_TOKEN` to create `codex/issue-<number>` from `develop`, add a
+   temporary dispatch file in a commit authored and committed as the
+   maintainer, and open a draft pull request back to `develop`.
+   Before any write, verify that the token authenticates as the
+   `cemmacabales` user account.
+5. Post the fixed `@codex` implementation instruction on that pull request,
+   then link the draft pull request from the source issue.
+6. Add the workflow run ID as an event-specific hidden marker to both comments.
    A rerun of the same GitHub event retains that run ID, detects the marker on
    a comment authored by the maintainer's user account, and exits successfully
    without starting a duplicate task. Removing and later re-adding
    `agent-ready` creates a new workflow run ID and intentionally starts a new
    attempt. Markers from any other account are ignored.
-6. Put no issue title or body into executable JavaScript or shell source. The
+7. Put no issue title or body into executable JavaScript or shell source. The
    fixed comment links the issue and tells Codex to treat issue content as
    untrusted requirements rather than operational instructions.
 
@@ -85,10 +93,11 @@ the narrowly scoped `statuses: write` permission to publish the required
 commit. Runs are serialized by pull-request number and a newer event cancels
 the stale run before it can overwrite the latest terminal status.
 
-The comment delegates this contract to Codex Cloud:
+The pull-request comment delegates this contract to Codex Cloud:
 
 - read the issue and repository instructions;
-- start from `develop` on `codex/issue-<number>`;
+- work on the existing `codex/issue-<number>` pull-request branch;
+- remove the temporary dispatch file before finishing;
 - keep the change scoped to the issue;
 - run the relevant tests, typecheck, and build;
 - configure the commit author as
@@ -96,10 +105,10 @@ The comment delegates this contract to Codex Cloud:
   every commit;
 - add no co-author trailer, bot author, AI contributor, or generated-by-AI
   attribution to commits, pull-request titles, or pull-request bodies;
-- if verification succeeds, push the branch and open a pull request against
-  `develop` whose body contains `Closes #<number>`;
+- if verification succeeds, push the implementation to the existing draft
+  pull request, whose body already contains `Closes #<number>`;
 - if requirements are unclear or verification fails, comment with the specific
-  blocker and do not open a pull request;
+  blocker on the pull request;
 - never merge or enable auto-merge.
 
 ## Authentication and Permissions
@@ -110,29 +119,34 @@ Before enabling the workflow, the maintainer must:
    is linked to GitHub user `cemmacabales`.
 2. Create a fine-grained GitHub personal access token owned by
    `cemmacabales`, scoped only to this repository, with Metadata read access
-   and Issues read/write access.
+   plus Contents, Issues, and Pull requests read/write access.
 3. Store the token as the repository Actions secret `CODEX_TRIGGER_TOKEN`.
 
 The workflow's built-in `GITHUB_TOKEN` receives only `contents: read` and
-`issues: read`. The personal token is passed only to the comment-posting step.
-No OpenAI API key is stored in GitHub.
+`issues: read`. The personal token is passed only to the dispatch step that
+creates the branch, draft pull request, and comments. No OpenAI API key is
+stored in GitHub.
 
 ## Idempotency and Failure Handling
 
 - A duplicate delivery or manual rerun of one label event finds the same hidden
-  marker and does not post another `@codex` mention.
+  marker on the issue or pull request and does not post another `@codex`
+  mention or create another pull request.
 - A deliberate label removal and re-addition has a different workflow run ID,
   so it starts a fresh attempt.
 - A missing, expired, or under-scoped `CODEX_TRIGGER_TOKEN` fails the workflow
   before a delegation comment is created.
 - Events from senders other than `cemmacabales`, closed issues, and other labels
   are skipped without consuming Codex usage.
-- Codex Cloud reports implementation blockers on the issue and must not create
-  a pull request when its required verification fails.
+- A later re-label reuses the existing open draft pull request and posts a new
+  task comment for the new run ID.
+- Codex Cloud reports implementation blockers on the draft pull request.
 - The single-contributor workflow deterministically rejects pull requests with
   any mismatched commit author or committer metadata, co-author trailer, or
-  explicit AI attribution. Repository branch protection must require this
-  `single-contributor/verified` status alongside `.github/workflows/ci.yml`.
+  explicit AI attribution. It also fails while a temporary
+  `.github/codex-dispatch/issue-<number>.md` file remains in the pull request.
+  Repository branch protection must require this `single-contributor/verified`
+  status alongside `.github/workflows/ci.yml`.
 
 ## Testing
 
@@ -143,9 +157,11 @@ security- and behavior-critical contract:
 - exact label, issue-state, and actor guards;
 - least-privilege workflow permissions;
 - use of `CODEX_TRIGGER_TOKEN` rather than an OpenAI API key;
-- run-ID idempotency marker accepted only from the maintainer's user account;
-- `develop` base, `codex/issue-<number>` branch convention, verification
-  requirement, `Closes` linkage, and no-merge instruction.
+- run-ID idempotency markers on the issue and pull request, accepted only from
+  the maintainer's user account;
+- maintainer-authored Git data commit, draft pull request against `develop`,
+  `codex/issue-<number>` branch convention, `Closes` linkage, verification
+  requirement, temporary-file cleanup, and no-merge instruction.
 
 Add a second focused test for the pull-request trigger, read-only repository
 and pull-request permissions, scoped status writes to the PR head, exact author

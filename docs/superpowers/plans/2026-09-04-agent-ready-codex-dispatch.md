@@ -1,5 +1,10 @@
 # Agent-Ready Codex Dispatch Implementation Plan
 
+> Historical plan: the issue-comment trigger described below was replaced by
+> the draft-pull-request relay in `.github/workflows/agent-ready.yml` because
+> Codex's GitHub integration documents `@codex` task delegation on pull
+> requests. See `docs/agent-ready-automation.md` for the current setup.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Dispatch an open issue to Codex Cloud when `cemmacabales` applies the `agent-ready` label, then have Codex verify the implementation and open an unmerged pull request against `develop`.
