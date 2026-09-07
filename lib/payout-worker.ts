@@ -22,6 +22,20 @@ let shouldStop = false;
 let currentJobId: string | null = null;
 
 /**
+ * True when a payout failed without establishing whether it settled on-chain.
+ *
+ * These are the only failures that must not be refunded. Every other
+ * non-retryable code is a verdict that the payment never applied, so returning
+ * the balance is correct; `ambiguous_submit` is the absence of a verdict, and
+ * refunding one that did settle pays the user a second time — off-chain this
+ * time. The job is failed and paged instead, for a human to reconcile against
+ * the payout account before any reissue.
+ */
+function needsManualReconciliation(err: unknown): boolean {
+  return err instanceof StellarPaymentError && err.code === "ambiguous_submit";
+}
+
+/**
  * Return a user's locked balance after a payout is abandoned, never throwing.
  *
  * A refund is the last step in an abandoned payout. If it throws (DB constraint,
@@ -199,16 +213,28 @@ async function processWithdrawalJob(
     // can re-withdraw once they establish a trustline (ST-4b/ST-4e). Re-queueing
     // here would loop until MAX_RETRIES and waste cap/Horizon calls. `tx_bad_seq`
     // is already retried once inside `payUsdc`, so it never reaches here.
+    //
+    // `ambiguous_submit` is the one exception to the refund: it means the payout
+    // may already have settled on-chain, so returning the balance too would pay
+    // twice. See `needsManualReconciliation`.
     if (err instanceof StellarPaymentError && !err.retryable) {
+      const unreconciled = needsManualReconciliation(err);
       await prisma.payoutJob.update({
         where: { id: jobId },
         data: {
           status: "failed",
           completedAt: new Date(),
-          lastError: `non-retryable (${err.code}): ${message}`,
+          lastError: unreconciled
+            ? `needs manual reconciliation (${err.code}): ${message}`
+            : `non-retryable (${err.code}): ${message}`,
           retryCount: MAX_RETRIES,
         },
       });
+      if (unreconciled) {
+        console.error(`[payout-worker] withdrawal job ${jobId} needs manual reconciliation (${err.code}); balance NOT refunded: ${message}`);
+        Sentry.captureMessage(`[payout-worker] withdrawal job ${jobId} needs manual reconciliation (${err.code}): ${message}`, { level: "error" });
+        return;
+      }
       await safeRefund(userId, amountUnits, jobId, `Refund for non-retryable payout (${err.code})`);
       console.warn(`[payout-worker] withdrawal job ${jobId} failed non-retryably (${err.code}): ${message}`);
       Sentry.captureMessage(`[payout-worker] withdrawal job ${jobId} non-retryable (${err.code}): ${message}`, { level: "warning" });
@@ -404,17 +430,30 @@ async function processSubmissionPayout(
     // be funded first. Fail immediately (consume the full retry budget) and refund
     // the campaign balance rather than requeue. `tx_bad_seq` is retried once inside
     // `payUsdc`, so it never surfaces here.
+    //
+    // `ambiguous_submit` is the one exception to the refund: it means the payout
+    // may already have settled on-chain, so returning the balance too would pay
+    // twice. See `needsManualReconciliation`.
     if (err instanceof StellarPaymentError && !err.retryable) {
+      const unreconciled = needsManualReconciliation(err);
+      const label = unreconciled
+        ? `needs manual reconciliation (${err.code})`
+        : `non-retryable (${err.code})`;
       await prisma.$transaction([
         prisma.submission.update({
           where: { id: submissionId },
-          data: { payoutStatus: "failed", payoutError: `non-retryable (${err.code})`, retryCount: MAX_RETRIES },
+          data: { payoutStatus: "failed", payoutError: label, retryCount: MAX_RETRIES },
         }),
         prisma.payoutJob.update({
           where: { id: jobId },
-          data: { status: "failed", completedAt: new Date(), lastError: `non-retryable (${err.code}): ${message}`, retryCount: MAX_RETRIES },
+          data: { status: "failed", completedAt: new Date(), lastError: `${label}: ${message}`, retryCount: MAX_RETRIES },
         }),
       ]);
+      if (unreconciled) {
+        console.error(`[payout-worker] submission job ${jobId} needs manual reconciliation (${err.code}); campaign balance NOT refunded: ${message}`);
+        Sentry.captureMessage(`[payout-worker] submission job ${jobId} needs manual reconciliation (${err.code}): ${message}`, { level: "error" });
+        return;
+      }
       await refundCampaignBalance(submission.task, submissionId, amount, `refund: non-retryable payout (${err.code})`);
       console.error(`[payout-worker] submission job ${jobId} failed non-retryably (${err.code}): ${message}`);
       Sentry.captureMessage(`[payout-worker] submission job ${jobId} non-retryable (${err.code}): ${message}`, { level: "warning" });

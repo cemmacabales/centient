@@ -48,6 +48,16 @@ export interface PayoutSignerConfig {
 /** How long to wait between Horizon lookups while an outcome is unknown. */
 const DEFAULT_AMBIGUOUS_POLL_INTERVAL_MS = 2_000;
 
+/**
+ * How long past an envelope's expiry to keep asking Horizon before giving up and
+ * handing the payout to a human.
+ *
+ * This bounds *waiting*, never safety. Only Horizon can license a rebuild; this
+ * deadline exists so an unreachable Horizon ends in manual reconciliation
+ * instead of polling forever inside the payout mutex.
+ */
+const DEFAULT_AMBIGUOUS_RESOLVE_GRACE_MS = 60_000;
+
 /** Resolve after `ms`, used to space out Horizon lookups while an outcome is unknown. */
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -81,48 +91,96 @@ function envelopeExpiryMs(feeBump: FeeBumpTransaction): number | null {
 }
 
 /**
+ * Close time of the most recent ledger Horizon has ingested, in Unix
+ * milliseconds, or null when that reading is unavailable.
+ *
+ * This is the only clock that can retire an envelope. Stellar evaluates
+ * `maxTime` against ledger close time, not against this host's wall clock, so a
+ * host running even slightly ahead of the network would otherwise declare a
+ * still-includable envelope dead and license a rebuild that settles twice.
+ * Horizon being unreachable is not evidence about the network's clock, so that
+ * case reads as "unknown" rather than as an expiry.
+ */
+async function latestLedgerCloseMs(): Promise<number | null> {
+  try {
+    const page = await server().ledgers().order("desc").limit(1).call();
+    const closedAt = page.records[0]?.closed_at;
+    if (!closedAt) return null;
+    const closeMs = Date.parse(closedAt);
+    return Number.isNaN(closeMs) ? null : closeMs;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Settle an unknown submit outcome by identity rather than by guessing.
  *
  * The envelope hash is known before submission, so an ambiguous failure never has
  * to be resolved by rebuilding — we ask Horizon what happened to that exact
- * transaction. Polling continues until the transaction is found, or until its
- * time bounds expire and it can no longer be included by anyone. Only then is a
- * rebuild safe, and only then is the failure reported as retryable.
+ * transaction. Polling continues until the transaction is found, or until the
+ * network's own clock has moved past its time bounds so it can no longer be
+ * included by anyone. Only then is a rebuild safe, and only then is the failure
+ * reported as retryable.
  *
- * An envelope with no time bounds cannot be proven dead, so it is reported as
- * non-retryable and left for manual reconciliation rather than risking a second
- * settlement.
+ * Everything short of that proof resolves non-retryably, for manual
+ * reconciliation rather than a second settlement: an envelope with no time
+ * bounds can never be proven dead, and neither can one whose fate Horizon would
+ * not tell us before the resolve deadline.
  */
 async function resolveAmbiguousSubmit(
   envelopeHash: string,
   feeBump: FeeBumpTransaction,
   request: PayoutRequest,
   pollIntervalMs: number,
+  resolveGraceMs: number,
 ): Promise<{ hash: string }> {
   const expiresAt = envelopeExpiryMs(feeBump);
+  const who = `${request.reference.kind} ${request.reference.id}`;
 
   for (;;) {
-    const status = await getTxStatus(envelopeHash);
+    // A lookup that throws proves nothing — an unreachable Horizon is not
+    // evidence the transaction is absent. Swallowing it here is the point: were
+    // the raw error allowed to escape, the worker would requeue and rebuild the
+    // very payout this function exists to keep from settling twice.
+    const status = await getTxStatus(envelopeHash).catch(() => "unknown" as const);
     if (status === "confirmed") return { hash: envelopeHash };
     if (status === "failed") {
       throw new StellarPaymentError(
-        `submitMultisigPayout: ${request.reference.kind} ${request.reference.id} — transaction ${envelopeHash} was included and failed`,
+        `submitMultisigPayout: ${who} — transaction ${envelopeHash} was included and failed`,
         "tx_failed",
         false,
       );
     }
     if (expiresAt === null) {
       throw new StellarPaymentError(
-        `submitMultisigPayout: ${request.reference.kind} ${request.reference.id} — submit outcome unknown for ${envelopeHash} and the envelope has no time bounds; reconcile manually before reissuing`,
+        `submitMultisigPayout: ${who} — submit outcome unknown for ${envelopeHash} and the envelope has no time bounds; reconcile manually before reissuing`,
         "ambiguous_submit",
         false,
       );
     }
-    if (Date.now() > expiresAt) {
+
+    // Retry is licensed by exactly one thing: Horizon saying the transaction is
+    // absent, as of a ledger that closed strictly after the envelope's maxTime.
+    // Strictly, because an envelope is still valid at a close time equal to it.
+    if (status === "not_found") {
+      const ledgerCloseMs = await latestLedgerCloseMs();
+      if (ledgerCloseMs !== null && ledgerCloseMs > expiresAt) {
+        throw new StellarPaymentError(
+          `submitMultisigPayout: ${who} — ${envelopeHash} was absent as of ledger close ${new Date(ledgerCloseMs).toISOString()}, past its time bounds; safe to rebuild`,
+          "ambiguous_submit",
+          true,
+        );
+      }
+    }
+
+    // Wall clock bounds only how long we wait, never whether a rebuild is safe,
+    // so a skewed host clock can end this early but can never make it unsound.
+    if (Date.now() > expiresAt + resolveGraceMs) {
       throw new StellarPaymentError(
-        `submitMultisigPayout: ${request.reference.kind} ${request.reference.id} — ${envelopeHash} never appeared and its time bounds have expired; safe to rebuild`,
+        `submitMultisigPayout: ${who} — could not establish the fate of ${envelopeHash} before the resolve deadline; reconcile manually before reissuing`,
         "ambiguous_submit",
-        true,
+        false,
       );
     }
     await delay(pollIntervalMs);
@@ -173,6 +231,7 @@ async function buildCoSignSubmit(
   coSigner: PayoutCoSigner,
   timeoutSeconds: number | undefined,
   pollIntervalMs: number,
+  resolveGraceMs: number,
 ): Promise<{ hash: string }> {
   const srv = server();
   const account = await srv.loadAccount(config.payoutAccount);
@@ -234,7 +293,13 @@ async function buildCoSignSubmit(
     return { hash: res.hash };
   } catch (err) {
     if (isDefiniteRejection(err)) throw err;
-    return resolveAmbiguousSubmit(envelopeHash, feeBump, request, pollIntervalMs);
+    return resolveAmbiguousSubmit(
+      envelopeHash,
+      feeBump,
+      request,
+      pollIntervalMs,
+      resolveGraceMs,
+    );
   }
 }
 
@@ -276,12 +341,14 @@ export async function submitMultisigPayout(
     asset,
     timeoutSeconds,
     ambiguousPollIntervalMs = DEFAULT_AMBIGUOUS_POLL_INTERVAL_MS,
+    ambiguousResolveGraceMs = DEFAULT_AMBIGUOUS_RESOLVE_GRACE_MS,
   }: {
     coSigner: PayoutCoSigner;
     config?: PayoutSignerConfig;
     asset?: Asset;
     timeoutSeconds?: number;
     ambiguousPollIntervalMs?: number;
+    ambiguousResolveGraceMs?: number;
   },
 ): Promise<{ hash: string }> {
   // Validate before taking the lock or touching Horizon: an unpayable request
@@ -300,6 +367,7 @@ export async function submitMultisigPayout(
         coSigner,
         timeoutSeconds,
         ambiguousPollIntervalMs,
+        ambiguousResolveGraceMs,
       );
     } catch (err) {
       const codes = resultCodes(err);
@@ -322,13 +390,14 @@ export async function submitMultisigPayout(
       if (codes.transaction === "tx_bad_seq") {
         try {
           return await buildCoSignSubmit(
-        request,
-        resolved,
-        payAsset,
-        coSigner,
-        timeoutSeconds,
-        ambiguousPollIntervalMs,
-      );
+            request,
+            resolved,
+            payAsset,
+            coSigner,
+            timeoutSeconds,
+            ambiguousPollIntervalMs,
+            ambiguousResolveGraceMs,
+          );
         } catch (retryErr) {
           if (resultCodes(retryErr).transaction === "tx_bad_seq") {
             throw new StellarPaymentError(

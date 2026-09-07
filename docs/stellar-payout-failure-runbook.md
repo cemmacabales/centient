@@ -21,7 +21,7 @@ covers the co-signer failure modes this table does not.
 | `tx_bad_seq` | Stale sequence number on the **payout** account (concurrency) | **Yes** | `submitMultisigPayout` rebuilds and resubmits **once** in-call, re-collecting both signatures because the rebuilt envelope has a new hash. If it still fails, it's classified retryable → the **job requeues** (backoff via the job queue, up to 3 attempts). | None normally — self-heals. If a job is stuck requeuing, check for a rogue second process submitting from the same platform key (sequence contention). |
 | `op_low_reserve` | **Platform** account lacks XLM to fund a sponsored reserve (trustline flow) | **No** | Sponsored-trustline submit fails with a clear error (→ 400 at the route). | Top up the platform account's **XLM** (fees + base/trustline reserves). See wallet-health below. |
 | `invalid_sponsor_tx` | A sponsored-trustline XDR was malformed / tampered / wrong shape | **No** | Rejected at the route (400) before submit. | Client-side/abuse signal — the co-signed envelope didn't match the platform-built shape. No money moved. |
-| Timeout / Horizon 5xx / network | Submit or status read didn't complete | **Yes (soft)** | If the **submit** never returned a hash, the job requeues — no hash means no confirmed broadcast, so no double-pay on retry. If a broadcast tx isn't yet visible, the reconciler sees `not_found` (404) and **leaves it `sent`/`processing`** without burning a retry, re-checking next pass (~5s finality). | None normally. Persistent Horizon unavailability pages via wallet-health only indirectly; check Horizon status if many jobs stall. |
+| Timeout / Horizon 5xx / network | Submit or status read didn't complete | **Only once proven dead** | A missing hash is *not* evidence the payout never broadcast, so it alone never licenses a retry. `submitMultisigPayout` resolves the envelope by hash first (see below): it requeues only when Horizon reports the transaction absent as of a ledger that closed past its time bounds. Anything less resolves as `ambiguous_submit`, non-retryable, **without a refund**. If a broadcast tx isn't yet visible, the reconciler sees `not_found` (404) and **leaves it `sent`/`processing`** without burning a retry, re-checking next pass (~5s finality). | None for the retryable case — it self-heals. `ambiguous_submit` needs the reconciliation steps below. Check Horizon status if many jobs stall. |
 
 ## Trustline vs. destination — the two "recipient can't receive" cases
 
@@ -50,16 +50,35 @@ between linking and payout.
   accepted the transaction but the response was lost — a client timeout, a dropped
   connection, a 5xx after acceptance — `submitMultisigPayout` does **not** rebuild.
   The envelope hash is computed *before* submission, so the service polls Horizon
-  for that exact transaction until it is found, or until the envelope's time bounds
-  expire and it can no longer be included by anyone. A payout that actually settled
-  returns its real hash; a rebuild is only permitted once the original envelope is
-  provably dead. This closes the double-settlement window that `payUsdc` had.
+  for that exact transaction until it is found, or until it is provably dead. A
+  payout that actually settled returns its real hash. This closes the
+  double-settlement window that `payUsdc` had.
+- **What counts as provably dead.** Exactly one thing licenses a rebuild: Horizon
+  reporting the transaction **absent**, as of an ingested ledger whose `close_time`
+  is **strictly past** the envelope's `maxTime`. Stellar judges time bounds against
+  ledger close time, so the worker's own clock is never the authority — a host
+  running ahead would otherwise retire an envelope the network would still include.
+  A status lookup that *fails* proves nothing either; the service keeps polling the
+  same hash rather than treating an unreachable Horizon as absence.
+- **Everything short of that proof is non-retryable**, and deliberately so: an
+  envelope with no time bounds, or one whose fate Horizon would not confirm before
+  the resolve deadline, is reported as `ambiguous_submit` with `retryable: false`
+  for a human, rather than rebuilt into a possible second settlement.
+- **`ambiguous_submit` is never refunded.** Every other non-retryable code is a
+  verdict that the payment never applied, so the balance goes back. This one is the
+  *absence* of a verdict — refunding a payout that did settle pays the labeler twice,
+  once on-chain and once off. The job is marked `failed` with a
+  `needs manual reconciliation` error and paged to Sentry at `error`; the balance is
+  left alone until a human resolves it.
 - **Residual:** if the process dies between submitting and resolving, the in-memory
-  hash is lost and the job requeues without it. Surviving that requires persisting
-  the hash before submit; see the payout service runbook.
-- **Operationally:** a payout that fails with `ambiguous_submit` and `retryable: false`
-  needs a human. Check the payout account's recent transactions for the destination
-  and amount before re-running it.
+  hash is lost and the job requeues without it — the one path that can still retry
+  an unresolved submit. Surviving that requires persisting the hash before submit;
+  see the payout service runbook.
+- **Operationally:** a payout that fails with `ambiguous_submit`, or one that
+  requeued after a process death mid-submit, needs a human **before** any re-run.
+  Check the payout account's recent transactions for the destination and amount. If
+  it settled, record the hash and mark the job done rather than reissuing; only
+  re-run once you have confirmed nothing landed.
 - Once a hash exists, the **reconciler** owns the outcome: it polls Horizon and moves
   `sent → confirmed` (or `failed`). A `not_found` (404) is treated as *still pending*
   (Horizon read-lag before ledger inclusion), so the payout stays `sent` and is not
