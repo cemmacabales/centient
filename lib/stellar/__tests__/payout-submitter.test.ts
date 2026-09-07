@@ -436,6 +436,37 @@ describe("submitMultisigPayout", () => {
     expect(mockedGetTxStatus.mock.calls.length).toBeGreaterThan(1);
   });
 
+  it("re-reads the envelope after the expiry ledger rather than trusting a stale absence", async () => {
+    // The race the ordering exists to close: the transaction is absent when first
+    // asked, then gets included *inside* its bounds, and only afterwards does a
+    // ledger close past maxTime. Pairing that stale absence with the later ledger
+    // would declare a settled payout dead and license a rebuild that pays twice.
+    const submitted: FeeBumpTransaction[] = [];
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async (tx: FeeBumpTransaction) => {
+        submitted.push(tx);
+        throw new Error("socket hang up");
+      }),
+      ledgerCloseAt: () => new Date(Date.now() + 10_000),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+    mockedGetTxStatus
+      .mockResolvedValueOnce("not_found")
+      .mockResolvedValue("confirmed");
+
+    const result = await submitMultisigPayout(request("s1"), {
+      coSigner: honestCoSigner(),
+      config,
+      timeoutSeconds: 1,
+      ambiguousPollIntervalMs: 10,
+    });
+
+    // Resolved to the settled transaction, never rebuilt.
+    expect(result.hash).toBe(submitted[0].hash().toString("hex"));
+    expect(horizon.server.submitTransaction).toHaveBeenCalledTimes(1);
+    expect(mockedGetTxStatus.mock.calls.length).toBeGreaterThan(1);
+  });
+
   it("judges expiry by ledger close time, not by a host clock running ahead", async () => {
     // Stellar evaluates maxTime against ledger close time. A host clock ahead of
     // the network must not retire an envelope the network would still include —

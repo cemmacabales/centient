@@ -54,12 +54,18 @@ between linking and payout.
   payout that actually settled returns its real hash. This closes the
   double-settlement window that `payUsdc` had.
 - **What counts as provably dead.** Exactly one thing licenses a rebuild: Horizon
-  reporting the transaction **absent**, as of an ingested ledger whose `close_time`
-  is **strictly past** the envelope's `maxTime`. Stellar judges time bounds against
-  ledger close time, so the worker's own clock is never the authority — a host
-  running ahead would otherwise retire an envelope the network would still include.
-  A status lookup that *fails* proves nothing either; the service keeps polling the
-  same hash rather than treating an unreachable Horizon as absence.
+  reporting the transaction **absent** in a lookup made **after** it has ingested a
+  ledger whose `close_time` is **strictly past** the envelope's `maxTime`. Stellar
+  judges time bounds against ledger close time, so the worker's own clock is never
+  the authority — a host running ahead would otherwise retire an envelope the
+  network would still include.
+- **The ordering of those two reads is the proof, not a detail.** An absence
+  observed *before* that ledger means nothing: the transaction may have been
+  included in the gap between the two reads, still inside its bounds. The service
+  therefore re-reads the hash after seeing a post-expiry ledger and rebuilds only if
+  it is *still* absent. A status lookup that *fails* proves nothing either; the
+  service keeps polling the same hash rather than treating an unreachable Horizon
+  as absence.
 - **Everything short of that proof is non-retryable**, and deliberately so: an
   envelope with no time bounds, or one whose fate Horizon would not confirm before
   the resolve deadline, is reported as `ambiguous_submit` with `retryable: false`
