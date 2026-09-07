@@ -142,10 +142,9 @@ export function buildMultisigFeeBump({
   requiredSignerPublicKeys: readonly string[];
 }): FeeBumpTransaction {
   assertPublicKey("fee source", feeSource);
-  const independentHints = new Set(
-    innerTransaction.signatures.map((signature) => signature.hint().toString("hex")),
-  );
-  if (independentHints.size < 2) {
+  // A decorated signature's hint is only four bytes, so distinct signers can
+  // legitimately collide. Identity is established cryptographically below.
+  if (innerTransaction.signatures.length < 2) {
     throw new Error("fee-bump inner transaction must carry at least 2 signatures");
   }
   if (
