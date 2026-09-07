@@ -33,7 +33,6 @@ vi.mock("../../health-alert", () => ({
 
 import {
   extractBalances,
-  evaluateThresholds,
   parseBalanceThresholds,
   checkAndAlert,
   getWalletHealth,
@@ -105,18 +104,31 @@ describe("extractBalances", () => {
   });
 });
 
-describe("evaluateThresholds", () => {
-  const t = { warnUsdc: 50, pageUsdc: 10, warnXlm: 5, pageXlm: 2 };
+describe("evaluateStroopThresholds", () => {
+  const t = {
+    warnUsdcStroops: 500_000_000n,
+    pageUsdcStroops: 100_000_000n,
+    warnXlmStroops: 50_000_000n,
+    pageXlmStroops: 20_000_000n,
+  };
 
   it("is healthy when both assets are above their warning thresholds", () => {
-    const r = evaluateThresholds(10, 100, t);
+    const r = evaluateStroopThresholds({
+      xlmStroops: 100_000_000n,
+      usdcStroops: 1_000_000_000n,
+      thresholds: t,
+    });
     expect(r.healthy).toBe(true);
     expect(r.warnings).toHaveLength(0);
     expect(r.pages).toHaveLength(0);
   });
 
   it("pages on a low USDC float and names the float", () => {
-    const r = evaluateThresholds(100, 5, t);
+    const r = evaluateStroopThresholds({
+      xlmStroops: 1_000_000_000n,
+      usdcStroops: 50_000_000n,
+      thresholds: t,
+    });
     expect(r.healthy).toBe(false);
     expect(r.assetStatus.usdc).toBe("page");
     expect(r.assetStatus.xlm).toBe("healthy");
@@ -125,7 +137,11 @@ describe("evaluateThresholds", () => {
   });
 
   it("pages on a low XLM fee/reserve floor and names XLM", () => {
-    const r = evaluateThresholds(1, 100, t);
+    const r = evaluateStroopThresholds({
+      xlmStroops: 10_000_000n,
+      usdcStroops: 1_000_000_000n,
+      thresholds: t,
+    });
     expect(r.healthy).toBe(false);
     expect(r.assetStatus.usdc).toBe("healthy");
     expect(r.assetStatus.xlm).toBe("page");
@@ -134,7 +150,11 @@ describe("evaluateThresholds", () => {
   });
 
   it("warns (not pages) when an asset is between page and warn", () => {
-    const r = evaluateThresholds(3, 30, t);
+    const r = evaluateStroopThresholds({
+      xlmStroops: 30_000_000n,
+      usdcStroops: 300_000_000n,
+      thresholds: t,
+    });
     expect(r.pages).toHaveLength(0);
     expect(r.warnings.length).toBeGreaterThan(0);
   });

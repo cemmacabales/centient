@@ -249,55 +249,6 @@ export function evaluateStroopThresholds({
   };
 }
 
-export function evaluateThresholds(
-  xlmBalance: number,
-  usdcBalance: number,
-  thresholds: BalanceThresholds,
-): {
-  healthy: boolean;
-  warnings: string[];
-  pages: string[];
-  assetStatus: { usdc: BalanceStatus; xlm: BalanceStatus };
-} {
-  const warnings: string[] = [];
-  const pages: string[] = [];
-  const assetStatus: { usdc: BalanceStatus; xlm: BalanceStatus } = {
-    usdc: "healthy",
-    xlm: "healthy",
-  };
-
-  if (usdcBalance <= thresholds.pageUsdc) {
-    assetStatus.usdc = "page";
-    pages.push(
-      `USDC float ${usdcBalance.toFixed(2)} USDC is below page threshold ${thresholds.pageUsdc} USDC`,
-    );
-  } else if (usdcBalance <= thresholds.warnUsdc) {
-    assetStatus.usdc = "warn";
-    warnings.push(
-      `USDC float ${usdcBalance.toFixed(2)} USDC is below warning threshold ${thresholds.warnUsdc} USDC`,
-    );
-  }
-
-  if (xlmBalance <= thresholds.pageXlm) {
-    assetStatus.xlm = "page";
-    pages.push(
-      `XLM fee/reserve balance ${xlmBalance.toFixed(4)} XLM is below page threshold ${thresholds.pageXlm} XLM`,
-    );
-  } else if (xlmBalance <= thresholds.warnXlm) {
-    assetStatus.xlm = "warn";
-    warnings.push(
-      `XLM fee/reserve balance ${xlmBalance.toFixed(4)} XLM is below warning threshold ${thresholds.warnXlm} XLM`,
-    );
-  }
-
-  return {
-    healthy: warnings.length === 0 && pages.length === 0,
-    warnings,
-    pages,
-    assetStatus,
-  };
-}
-
 export async function getWalletHealth(): Promise<WalletHealth> {
   const thresholds = parseBalanceThresholds();
   const address = platformPublicKey();
