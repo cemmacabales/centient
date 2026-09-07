@@ -1,6 +1,6 @@
 # BRAND.md — Centient
 
-The visual and voice system for Centient. This document is the single source of truth when the coding agent builds UI. Extracted from the approved mockups (`landing`, `success`, `labeling-task`).
+The visual and voice system for Centient. This document is the single source of truth for UI implementation. Extracted from the approved mockups (`landing`, `success`, `labeling-task`).
 
 ---
 
