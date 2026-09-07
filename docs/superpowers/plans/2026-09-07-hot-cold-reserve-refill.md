@@ -33,7 +33,7 @@
 
 - Consumes: `Asset`, `Keypair`, and Stellar public-key validation from `@stellar/stellar-sdk`.
 - Produces:
-  - `ReserveRefillPolicy { coldAccount, hotAccount, signerPublicKeys, triggerUnits, targetUnits, minRetainUnits }`
+  - `ReserveRefillPolicy { coldAccount, hotAccount, signerPublicKeys, triggerUnits, targetUnits, minRetainUnits }`, where `signerPublicKeys` is the readonly `[cold master, ops, policy]` 2-of-3 set
   - `parseReserveRefillPolicy(env?: NodeJS.ProcessEnv): ReserveRefillPolicy`
   - `stellarAmountToUnits(value: string): bigint`
   - `extractAssetBalanceUnits(balances, asset): bigint`
@@ -51,7 +51,7 @@ non-integer/negative unit settings, a zero target, and `trigger >= target`.
 expect(parseReserveRefillPolicy(validEnv)).toMatchObject({
   coldAccount: cold.publicKey(),
   hotAccount: hot.publicKey(),
-  signerPublicKeys: [ops.publicKey(), policy.publicKey()],
+  signerPublicKeys: [cold.publicKey(), ops.publicKey(), policy.publicKey()],
   triggerUnits: 250_000_000n,
   targetUnits: 1_000_000_000n,
   minRetainUnits: 500_000_000n,
@@ -69,7 +69,8 @@ Expected: FAIL because `reserve-refill.ts` and its exported parser do not exist.
 Use a helper that accepts only `/^\d+$/` and converts with `BigInt`. Validate
 every public key with `StrKey.isValidEd25519PublicKey`, derive the hot key with
 `Keypair.fromSecret`, and enforce pairwise-distinct cold, hot, ops, and policy
-keys. Return a readonly tuple for the two configured co-signers.
+keys. Return a readonly tuple containing the cold master plus both configured
+co-signers, so any valid two match the on-chain 2-of-3 account.
 
 - [ ] **Step 4: Run policy tests and verify GREEN**
 
