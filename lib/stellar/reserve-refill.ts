@@ -63,12 +63,14 @@ export interface HorizonBalanceLine {
   balance: string;
 }
 
+/** Read one required environment value without applying an unsafe default. */
 function requireEnv(env: ReserveRefillEnvironment, name: string): string {
   const value = env[name];
   if (!value) throw new Error(`${name} is required`);
   return value;
 }
 
+/** Read and validate one required Stellar Ed25519 public key. */
 function requirePublicKey(env: ReserveRefillEnvironment, name: string): string {
   const value = requireEnv(env, name).trim();
   if (!StrKey.isValidEd25519PublicKey(value)) {
@@ -77,6 +79,7 @@ function requirePublicKey(env: ReserveRefillEnvironment, name: string): string {
   return value;
 }
 
+/** Parse a required non-negative integer setting into exact bigint units. */
 function requireUnits(env: ReserveRefillEnvironment, name: string): bigint {
   const value = requireEnv(env, name);
   if (!/^\d+$/.test(value)) {
@@ -85,6 +88,7 @@ function requireUnits(env: ReserveRefillEnvironment, name: string): bigint {
   return BigInt(value);
 }
 
+/** Parse and cross-check every identity and amount in the refill policy. */
 export function parseReserveRefillPolicy(
   env: ReserveRefillEnvironment = process.env,
 ): ReserveRefillPolicy {

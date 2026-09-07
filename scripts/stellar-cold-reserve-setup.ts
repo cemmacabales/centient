@@ -23,8 +23,10 @@ import {
 } from "../lib/stellar/cold-reserve-setup";
 
 const FRIENDBOT_URL = "https://friendbot.stellar.org";
+/** Emit operator-visible setup evidence without persisting it. */
 const log = (...values: unknown[]) => console.log(...values);
 
+/** Return whether Horizon currently exposes the requested account. */
 async function accountExists(accountId: string): Promise<boolean> {
   try {
     await server().loadAccount(accountId);
@@ -37,6 +39,7 @@ async function accountExists(accountId: string): Promise<boolean> {
   }
 }
 
+/** Fund one absent testnet account, tolerating an already-funded race. */
 async function friendbotFund(accountId: string): Promise<void> {
   const response = await fetch(
     `${FRIENDBOT_URL}?addr=${encodeURIComponent(accountId)}`,
@@ -46,6 +49,7 @@ async function friendbotFund(accountId: string): Promise<void> {
   }
 }
 
+/** Log an exact transaction hash, submit once, and verify Horizon's hash. */
 async function submitOnce(transaction: Transaction, label: string) {
   const hash = transaction.hash().toString("hex");
   log(`${label} hash: ${hash}`);
@@ -59,6 +63,7 @@ async function submitOnce(transaction: Transaction, label: string) {
   return hash;
 }
 
+/** Create the configured USDC trustline before multisig thresholds are raised. */
 async function ensureUsdcTrustline(master: Keypair): Promise<void> {
   const horizon = server();
   const asset = usdcAsset();
@@ -83,6 +88,7 @@ async function ensureUsdcTrustline(master: Keypair): Promise<void> {
   await submitOnce(transaction, "trustline");
 }
 
+/** Provision or verify the configured cold reserve without weakening custody. */
 async function main() {
   const network = stellarNetwork();
   const { master, opsPublic, policyPublic } = resolveColdReserveSetupKeys({
