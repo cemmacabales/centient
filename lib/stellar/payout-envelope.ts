@@ -12,11 +12,23 @@
 // transaction hash, so a compromised or buggy co-signer cannot substitute a
 // different payout — the worst it can do is refuse to sign. See the substitution
 // case in the unit tests.
-import { Keypair, type Asset, type Transaction, type TransactionBuilder } from "@stellar/stellar-sdk";
+import {
+  Keypair,
+  type Asset,
+  type FeeBumpTransaction,
+  type Transaction,
+  type TransactionBuilder,
+} from "@stellar/stellar-sdk";
 import { buildUsdcPaymentTx } from "./multisig-payout";
 import { assertPayoutAmountUnits, assertPayoutDestination } from "./payout-amount";
 
 type SourceAccount = ConstructorParameters<typeof TransactionBuilder>[0];
+/**
+ * Either envelope in the payout flow. Both the inner payment and the fee-bump
+ * that wraps it are sourced by the multisig hot account, so both need the same
+ * two independent signatures before submission.
+ */
+type SignableTransaction = Transaction | FeeBumpTransaction;
 
 /** Which envelope the co-signer is being asked to sign for one payout. */
 export type PayoutSigningStage = "payment" | "fee_bump";
@@ -83,7 +95,10 @@ export function buildPayoutPayment({
 }
 
 /** Add the platform's own signature — signature #1 of the required two. */
-export function signAsPlatform<T extends Transaction>(transaction: T, platform: Keypair): T {
+export function signAsPlatform<T extends SignableTransaction>(
+  transaction: T,
+  platform: Keypair,
+): T {
   transaction.sign(platform);
   return transaction;
 }
@@ -97,7 +112,7 @@ export function signAsPlatform<T extends Transaction>(transaction: T, platform: 
  * second check is what makes substitution impossible — a signature the co-signer
  * produced over any other payout simply does not verify here.
  */
-export function applyCoSignature<T extends Transaction>(
+export function applyCoSignature<T extends SignableTransaction>(
   transaction: T,
   coSignature: PayoutCoSignature,
   expectedCoSignerPublicKey: string,
@@ -129,7 +144,7 @@ export function applyCoSignature<T extends Transaction>(
  * required key against the envelope hash.
  */
 export function assertPayoutFullySigned(
-  transaction: Transaction,
+  transaction: SignableTransaction,
   requiredSignerPublicKeys: readonly string[],
 ): void {
   if (
