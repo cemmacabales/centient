@@ -110,16 +110,23 @@ Configured on **testnet** on 2026-09-07:
 | Thresholds | low=2, med=2, high=2 |
 | Signers | master (w=1) + ops (w=1) + policy (w=1) — 2-of-3 |
 
-Horizon confirmation, as printed by `pnpm stellar:multisig:verify`:
+Horizon confirmation, as printed by `pnpm stellar:multisig:verify` — copy-pasteable
+as valid JSON, with the signer roles listed beneath rather than as comments:
 
 ```json
-"thresholds": { "low_threshold": 2, "med_threshold": 2, "high_threshold": 2 }
-"signers": [
-  { "weight": 1, "key": "GC5UOKLU6J2EROZYYP2I23ZEF4YF42TGGRNQMMTGOJGJ7NOCH3TTR4A6" },  // master
-  { "weight": 1, "key": "GDNL2OG7XGBHTPNW4WQAT7AVLXYFHAP76DVYFMSKIZLP47KYMOLS27V3" },  // ops
-  { "weight": 1, "key": "GB6NBHA5ML3DOAQXBSDRNYVJUE6B3VPEP2BH5ZXPL5D6YZV5DJC6IWLI" }   // policy
-]
+{
+  "thresholds": { "low_threshold": 2, "med_threshold": 2, "high_threshold": 2 },
+  "signers": [
+    { "weight": 1, "key": "GC5UOKLU6J2EROZYYP2I23ZEF4YF42TGGRNQMMTGOJGJ7NOCH3TTR4A6" },
+    { "weight": 1, "key": "GDNL2OG7XGBHTPNW4WQAT7AVLXYFHAP76DVYFMSKIZLP47KYMOLS27V3" },
+    { "weight": 1, "key": "GB6NBHA5ML3DOAQXBSDRNYVJUE6B3VPEP2BH5ZXPL5D6YZV5DJC6IWLI" }
+  ]
+}
 ```
+
+- `GC5UOKLU…H3TTR4A6` — master
+- `GDNL2OG7…MOLS27V3` — ops co-signer
+- `GB6NBHA5…DJC6IWLI` — policy co-signer
 
 > These are **throwaway testnet keys**. Provision fresh keys held in the secrets
 > store for any account that will hold real value.
@@ -128,7 +135,7 @@ Horizon confirmation, as printed by `pnpm stellar:multisig:verify`:
 
 The first proof, configured 2026-08-19 on account
 [`GAFGVTR2TMPQZWWYUNIAOTFTIFPRUODUD4LB5M2IRA6ORLE4CCPXS7OK`](https://stellar.expert/explorer/testnet/account/GAFGVTR2TMPQZWWYUNIAOTFTIFPRUODUD4LB5M2IRA6ORLE4CCPXS7OK)
-(`set-options` tx `6446ef5b30d3df9f1e12cebf0afb369e895c4d94b4402b07fd300732c92ae142`),
+(`set-options` tx [`6446ef5b30d3df9f1e12cebf0afb369e895c4d94b4402b07fd300732c92ae142`](https://stellar.expert/explorer/testnet/tx/6446ef5b30d3df9f1e12cebf0afb369e895c4d94b4402b07fd300732c92ae142)),
 is still correctly configured on-chain and still verifies. It was replaced
 because its three signer **secrets** were not retained, so nothing downstream can
 produce the two signatures a payment needs — the account proves the topology but
@@ -138,3 +145,12 @@ one the payout rail uses.
 **Custody lesson:** a multisig proof is only useful if the signing material
 survives with it. Whoever provisions the mainnet account records all three keys
 in the secrets store *before* the `set-options` transaction is submitted.
+
+> ⚠️ **Open custody gap on the account above.** Its three secrets currently exist
+> only in the gitignored `.env.local` of the machine that provisioned it. That is
+> enough to develop and run the #6 spike locally, and it is *not* enough for any
+> other checkout, teammate, or CI runner — for them the account is as inoperable
+> as the superseded one. Before anything beyond local spike work depends on it,
+> copy all three secrets into the shared secrets store. If they are lost first,
+> re-run `pnpm stellar:multisig:setup`, take a new proof, and update this section
+> again.
