@@ -1,7 +1,7 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { processJob } from "@/lib/payout-worker";
 import { payReward, PayoutCapError } from "@/lib/payout";
-import { getTxStatus } from "@/lib/stellar/client";
+import { getTxStatus, StellarPaymentError } from "@/lib/stellar/client";
 import { refundReversal } from "@/lib/user-balance";
 import { prisma } from "@/tests/helpers/db";
 import crypto from "crypto";
@@ -270,6 +270,119 @@ describe("Lump-sum withdrawal handling", () => {
     const updatedJob = await prisma.payoutJob.findUnique({ where: { id: job.id } });
     expect(updatedJob?.status).toBe("failed");
     expect(updatedJob?.retryCount).toBe(3);
+  });
+
+  it("does not refund an ambiguous submit, whose payout may have settled", async () => {
+    // Every other non-retryable code is a verdict that the payment never applied,
+    // so refunding is correct. `ambiguous_submit` is the absence of a verdict:
+    // refunding one that did settle pays the user twice, once on-chain and once
+    // off. The job fails for a human to reconcile, balance untouched.
+    vi.mocked(payReward).mockReset();
+    vi.mocked(refundReversal).mockReset();
+    vi.mocked(refundReversal).mockResolvedValue(0n);
+
+    const wallet = generateWallet();
+    const userId = crypto.randomUUID();
+    const user = await prisma.user.create({
+      data: {
+        id: userId,
+        walletAddress: wallet,
+        pendingBalanceUnits: 0n,
+        email: `${crypto.randomUUID()}@test.com`,
+        passwordHash: "dummy_hash",
+      },
+    });
+    const walletAddress = wallet as `0x${string}`;
+    const amountUnits = 1000000000000000000n;
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { pendingBalanceUnits: amountUnits },
+    });
+
+    const job = await prisma.payoutJob.create({
+      data: {
+        type: "WITHDRAWAL",
+        userId: user.id,
+        amountUnits,
+        destinationAddress: walletAddress,
+        status: "queued",
+      },
+    });
+
+    await prisma.payoutJob.update({
+      where: { id: job.id },
+      data: { status: "processing" },
+    });
+
+    vi.mocked(payReward).mockRejectedValueOnce(
+      new StellarPaymentError(
+        "submit outcome unknown; reconcile manually before reissuing",
+        "ambiguous_submit",
+        false,
+      ),
+    );
+
+    await processJob(job.id, null, user.id, amountUnits, "WITHDRAWAL");
+
+    expect(refundReversal).not.toHaveBeenCalled();
+
+    const updatedJob = await prisma.payoutJob.findUnique({ where: { id: job.id } });
+    expect(updatedJob?.status).toBe("failed");
+    expect(updatedJob?.lastError).toContain("needs manual reconciliation");
+  });
+
+  it("still refunds a non-retryable code that proves the payment never applied", async () => {
+    vi.mocked(payReward).mockReset();
+    vi.mocked(refundReversal).mockReset();
+    vi.mocked(refundReversal).mockResolvedValue(0n);
+
+    const wallet = generateWallet();
+    const userId = crypto.randomUUID();
+    const user = await prisma.user.create({
+      data: {
+        id: userId,
+        walletAddress: wallet,
+        pendingBalanceUnits: 0n,
+        email: `${crypto.randomUUID()}@test.com`,
+        passwordHash: "dummy_hash",
+      },
+    });
+    const walletAddress = wallet as `0x${string}`;
+    const amountUnits = 1000000000000000000n;
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { pendingBalanceUnits: amountUnits },
+    });
+
+    const job = await prisma.payoutJob.create({
+      data: {
+        type: "WITHDRAWAL",
+        userId: user.id,
+        amountUnits,
+        destinationAddress: walletAddress,
+        status: "queued",
+      },
+    });
+
+    await prisma.payoutJob.update({
+      where: { id: job.id },
+      data: { status: "processing" },
+    });
+
+    vi.mocked(payReward).mockRejectedValueOnce(
+      new StellarPaymentError("no USDC trustline", "op_no_trust", false),
+    );
+
+    await processJob(job.id, null, user.id, amountUnits, "WITHDRAWAL");
+
+    expect(refundReversal).toHaveBeenCalledWith(
+      user.id,
+      amountUnits,
+      job.id,
+      expect.stringContaining("op_no_trust"),
+    );
   });
 });
 

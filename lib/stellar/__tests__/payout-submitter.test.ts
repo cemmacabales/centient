@@ -57,7 +57,14 @@ function horizonError(result_codes: { transaction?: string; operations?: string[
 }
 
 /** A fake Horizon whose sequence only advances on a successful submit. */
-function makeHorizon(opts: { submitTransaction?: ReturnType<typeof vi.fn> } = {}) {
+function makeHorizon(
+  opts: {
+    submitTransaction?: ReturnType<typeof vi.fn>;
+    /** Close time of the newest ingested ledger — the clock that retires an
+     *  envelope. `null` makes the lookup fail, as an unreachable Horizon does. */
+    ledgerCloseAt?: () => Date | null;
+  } = {},
+) {
   const submitted: FeeBumpTransaction[] = [];
   let sequence = 100n;
   const submitTransaction =
@@ -80,6 +87,17 @@ function makeHorizon(opts: { submitTransaction?: ReturnType<typeof vi.fn> } = {}
       }),
       fetchBaseFee: vi.fn(async () => 100),
       submitTransaction,
+      ledgers: vi.fn(() => ({
+        order: () => ({
+          limit: () => ({
+            call: async () => {
+              const closedAt = (opts.ledgerCloseAt ?? (() => new Date()))();
+              if (closedAt === null) throw new Error("503 Service Unavailable");
+              return { records: [{ closed_at: closedAt.toISOString() }] };
+            },
+          }),
+        }),
+      })),
     },
   };
 }
@@ -388,11 +406,18 @@ describe("submitMultisigPayout", () => {
 
   it("withholds retry until the envelope can no longer be included", async () => {
     // While the envelope is still inside its time bounds, an absent transaction
-    // may yet be included, so a retry would risk a second settlement.
+    // may yet be included, so a retry would risk a second settlement. The ledger
+    // clock starts behind maxTime and crosses it, which is what licenses retry.
+    const started = Date.now();
+    let ledgerReads = 0;
     const horizon = makeHorizon({
       submitTransaction: vi.fn(async () => {
         throw new Error("socket hang up");
       }),
+      // Two ledgers close inside the envelope's one-second bounds, then one
+      // closes well past them.
+      ledgerCloseAt: () =>
+        new Date(ledgerReads++ < 2 ? started : started + 10_000),
     });
     mockedServer.mockReturnValue(horizon.server as never);
     mockedGetTxStatus.mockResolvedValue("not_found");
@@ -409,6 +434,124 @@ describe("submitMultisigPayout", () => {
     // Only safe to requeue because the envelope's time bounds have expired.
     expect(err.retryable).toBe(true);
     expect(mockedGetTxStatus.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("re-reads the envelope after the expiry ledger rather than trusting a stale absence", async () => {
+    // The race the ordering exists to close: the transaction is absent when first
+    // asked, then gets included *inside* its bounds, and only afterwards does a
+    // ledger close past maxTime. Pairing that stale absence with the later ledger
+    // would declare a settled payout dead and license a rebuild that pays twice.
+    const submitted: FeeBumpTransaction[] = [];
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async (tx: FeeBumpTransaction) => {
+        submitted.push(tx);
+        throw new Error("socket hang up");
+      }),
+      ledgerCloseAt: () => new Date(Date.now() + 10_000),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+    mockedGetTxStatus
+      .mockResolvedValueOnce("not_found")
+      .mockResolvedValue("confirmed");
+
+    const result = await submitMultisigPayout(request("s1"), {
+      coSigner: honestCoSigner(),
+      config,
+      timeoutSeconds: 1,
+      ambiguousPollIntervalMs: 10,
+    });
+
+    // Resolved to the settled transaction, never rebuilt.
+    expect(result.hash).toBe(submitted[0].hash().toString("hex"));
+    expect(horizon.server.submitTransaction).toHaveBeenCalledTimes(1);
+    expect(mockedGetTxStatus.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("judges expiry by ledger close time, not by a host clock running ahead", async () => {
+    // Stellar evaluates maxTime against ledger close time. A host clock ahead of
+    // the network must not retire an envelope the network would still include —
+    // that is the rebuild that settles twice. Here the ledger stays pinned before
+    // maxTime while wall clock sails past it.
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async () => {
+        throw new Error("socket hang up");
+      }),
+      ledgerCloseAt: () => new Date(Date.now() - 3_600_000),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+    mockedGetTxStatus.mockResolvedValue("not_found");
+
+    const err = await submitMultisigPayout(request("s1"), {
+      coSigner: honestCoSigner(),
+      config,
+      timeoutSeconds: 1,
+      ambiguousPollIntervalMs: 10,
+      ambiguousResolveGraceMs: 50,
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(StellarPaymentError);
+    expect(err.code).toBe("ambiguous_submit");
+    // Never proven dead, so a human reconciles rather than the worker rebuilding.
+    expect(err.retryable).toBe(false);
+  });
+
+  it("keeps polling the same envelope when the status lookup itself fails", async () => {
+    // A failed lookup is not evidence of absence. Letting it escape would send the
+    // worker down the requeue-and-rebuild path, double-paying a settled payout.
+    const submitted: FeeBumpTransaction[] = [];
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async (tx: FeeBumpTransaction) => {
+        submitted.push(tx);
+        throw new Error("socket hang up");
+      }),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+    mockedGetTxStatus
+      .mockRejectedValueOnce(new Error("503 Service Unavailable"))
+      .mockRejectedValueOnce(new Error("503 Service Unavailable"))
+      .mockResolvedValue("confirmed");
+
+    const result = await submitMultisigPayout(request("s1"), {
+      coSigner: honestCoSigner(),
+      config,
+      ambiguousPollIntervalMs: 10,
+    });
+
+    const envelopeHash = submitted[0].hash().toString("hex");
+    expect(result.hash).toBe(envelopeHash);
+    // Every lookup asked about the same envelope; none of them rebuilt it.
+    expect(mockedGetTxStatus.mock.calls).toEqual([
+      [envelopeHash],
+      [envelopeHash],
+      [envelopeHash],
+    ]);
+    expect(horizon.server.submitTransaction).toHaveBeenCalledTimes(1);
+    expect(submitted).toHaveLength(1);
+  });
+
+  it("hands over for reconciliation when Horizon never answers", async () => {
+    // Horizon down for the whole resolve window: the payout's fate is unknown, so
+    // it must not be requeued and must not be refunded.
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async () => {
+        throw new Error("socket hang up");
+      }),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+    mockedGetTxStatus.mockRejectedValue(new Error("503 Service Unavailable"));
+
+    const err = await submitMultisigPayout(request("s1"), {
+      coSigner: honestCoSigner(),
+      config,
+      timeoutSeconds: 1,
+      ambiguousPollIntervalMs: 10,
+      ambiguousResolveGraceMs: 50,
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(StellarPaymentError);
+    expect(err.code).toBe("ambiguous_submit");
+    expect(err.retryable).toBe(false);
+    expect(err.message).toMatch(/reconcile manually/i);
   });
 
   it("rejects a non-positive amount before contacting Horizon", async () => {
