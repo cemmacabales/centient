@@ -187,8 +187,16 @@ The signed amount is deliberately *not* required to equal a freshly derived
 re-deriving the amount at submission would invalidate both custodian signatures
 on every payout and leave the refill unable to complete under exactly the load
 that triggered it. A refill that has become smaller than the current shortfall
-is still a valid partial top-up; the next scheduled check picks up the
-remainder. Refills therefore do not require freezing payouts.
+is still a valid partial top-up, and refills therefore do not require freezing
+payouts.
+
+Note what a partial top-up leaves behind. `planReserveRefill` reports `healthy`
+for any hot balance above the trigger, so a top-up that lands between the
+trigger and the target is not re-requested: the scheduled check goes quiet
+until the float next falls to the trigger, and the wallet operates slightly
+below target in the meantime. That is the intended trigger-based behaviour, not
+a missed refill — the float stays bounded by the target either way. Raise the
+trigger if you need the working float held closer to it.
 
 The signed hash and explorer link print before Horizon is called. The command
 submits once and never retries automatically.
