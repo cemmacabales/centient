@@ -41,7 +41,7 @@ function paymentRequest(
     xdr: tx.toXDR(),
     destination,
     amountUnits,
-    submissionId: "sub-1",
+    reference: { kind: "submission", id: "sub-1" },
     ...overrides,
   };
 }
@@ -77,7 +77,7 @@ describe("localPolicyCoSigner", () => {
       xdr: feeBump.toXDR(),
       destination,
       amountUnits: 25_000_000n,
-      submissionId: "sub-1",
+      reference: { kind: "submission", id: "sub-1" },
     });
 
     expect(policy.verify(feeBump.hash(), Buffer.from(result.signature, "base64"))).toBe(true);
@@ -112,7 +112,7 @@ describe("localPolicyCoSigner", () => {
         xdr: tx.toXDR(),
         destination,
         amountUnits: 25_000_000n,
-        submissionId: "sub-1",
+        reference: { kind: "submission", id: "sub-1" },
       }),
     ).rejects.toThrow(/exactly one payment/i);
   });

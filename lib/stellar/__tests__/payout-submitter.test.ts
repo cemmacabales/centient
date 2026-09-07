@@ -77,7 +77,11 @@ function makeHorizon(opts: { submitTransaction?: ReturnType<typeof vi.fn> } = {}
 }
 
 function request(submissionId: string, amountUnits = 25_000_000n) {
-  return { submissionId, destination: Keypair.random().publicKey(), amountUnits };
+  return {
+    reference: { kind: "submission" as const, id: submissionId },
+    destination: Keypair.random().publicKey(),
+    amountUnits,
+  };
 }
 
 beforeEach(() => {

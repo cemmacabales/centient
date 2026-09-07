@@ -34,6 +34,16 @@ type SignableTransaction = Transaction | FeeBumpTransaction;
 export type PayoutSigningStage = "payment" | "fee_bump";
 
 /**
+ * The ledger row a payout settles. Discriminated rather than a bare id because
+ * the two payout paths draw from different tables — a per-submission reward and
+ * a lump-sum payout job — and the co-signer (issue #8) re-derives the amount from
+ * whichever row this names. A single opaque id would leave it guessing which.
+ */
+export type PayoutReference =
+  | { kind: "submission"; id: string }
+  | { kind: "payout_job"; id: string };
+
+/**
  * One request to the independent co-signer. `xdr` is the envelope as we built and
  * platform-signed it; the payout fields are the claim the co-signer re-derives
  * from its own copy of the task ledger (issue #8) before agreeing to sign.
@@ -43,7 +53,7 @@ export interface PayoutCoSignRequest {
   xdr: string;
   destination: string;
   amountUnits: bigint;
-  submissionId: string;
+  reference: PayoutReference;
 }
 
 /** A detached signature and the key that produced it — never a transaction. */

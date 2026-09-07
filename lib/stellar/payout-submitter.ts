@@ -19,6 +19,7 @@ import { StellarPaymentError, resultCodes } from "./client";
 import { server, usdcAsset } from "./config";
 import { buildMultisigFeeBump } from "./multisig-payout";
 import { assertPayoutAmountUnits, assertPayoutDestination } from "./payout-amount";
+import type { PayoutReference } from "./payout-envelope";
 import {
   applyCoSignature,
   assertPayoutFullySigned,
@@ -40,7 +41,7 @@ export interface PayoutSignerConfig {
 
 /** One payout to settle, in exact integer units. */
 export interface PayoutRequest {
-  submissionId: string;
+  reference: PayoutReference;
   destination: string;
   amountUnits: bigint;
 }
@@ -111,7 +112,7 @@ async function buildCoSignSubmit(
       xdr: payment.toXDR(),
       destination: request.destination,
       amountUnits: request.amountUnits,
-      submissionId: request.submissionId,
+      reference: request.reference,
     }),
     config.coSignerPublicKey,
   );
@@ -133,7 +134,7 @@ async function buildCoSignSubmit(
       xdr: feeBump.toXDR(),
       destination: request.destination,
       amountUnits: request.amountUnits,
-      submissionId: request.submissionId,
+      reference: request.reference,
     }),
     config.coSignerPublicKey,
   );
@@ -203,7 +204,7 @@ export async function submitMultisigPayout(
         } catch (retryErr) {
           if (resultCodes(retryErr).transaction === "tx_bad_seq") {
             throw new StellarPaymentError(
-              `submitMultisigPayout: submission ${request.submissionId} — sustained sequence contention (tx_bad_seq after one rebuild); requeue`,
+              `submitMultisigPayout: ${request.reference.kind} ${request.reference.id} — sustained sequence contention (tx_bad_seq after one rebuild); requeue`,
               "tx_bad_seq",
               true,
             );
