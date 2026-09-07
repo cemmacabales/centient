@@ -8,8 +8,9 @@ import { Keypair } from "@stellar/stellar-sdk";
 const ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"; // Circle testnet USDC issuer
 const PLATFORM = Keypair.random();
 
-const { mockLoadAccount, mockSendAlert } = vi.hoisted(() => ({
+const { mockLoadAccount, mockLedgerCall, mockSendAlert } = vi.hoisted(() => ({
   mockLoadAccount: vi.fn(),
+  mockLedgerCall: vi.fn(),
   mockSendAlert: vi.fn(),
 }));
 
@@ -17,7 +18,12 @@ vi.mock("../config", async (importActual) => {
   const actual = await importActual<typeof import("../config")>();
   return {
     ...actual,
-    server: () => ({ loadAccount: mockLoadAccount }),
+    server: () => ({
+      loadAccount: mockLoadAccount,
+      ledgers: () => ({
+        order: () => ({ limit: () => ({ call: mockLedgerCall }) }),
+      }),
+    }),
   };
 });
 
@@ -31,8 +37,11 @@ import {
   parseBalanceThresholds,
   checkAndAlert,
   getWalletHealth,
+  calculateSpendableXlm,
+  xlmToStroops,
   TRUSTLINE_RESERVE_XLM,
 } from "../balance";
+import { walletBalanceAlerts } from "../../wallet-balance-alerts";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -41,6 +50,7 @@ beforeEach(() => {
   process.env = { ...ORIGINAL_ENV };
   process.env.STELLAR_USDC_ISSUER = ISSUER;
   process.env.STELLAR_PLATFORM_SECRET = PLATFORM.secret();
+  mockLedgerCall.mockResolvedValue({ records: [{ base_reserve_in_stroops: "5000000" }] });
 });
 
 afterEach(() => {
@@ -136,14 +146,19 @@ describe("checkAndAlert", () => {
 
 describe("getWalletHealth", () => {
   it("reports both USDC float and XLM fee/reserve for the pooled account", async () => {
-    mockLoadAccount.mockResolvedValueOnce({ balances: balances("500.0000000", "100.0000000") });
+    mockLoadAccount.mockResolvedValueOnce({
+      balances: balances("500.0000000", "100.0000000"),
+      subentry_count: 0,
+      num_sponsoring: 0,
+      num_sponsored: 0,
+    });
 
     const health = await getWalletHealth();
 
     expect(mockLoadAccount).toHaveBeenCalledWith(PLATFORM.publicKey());
     expect(health.usdcBalance).toBe("500.0000");
     expect(health.xlmBalance).toBe("100.0000");
-    expect(health.availableXlmBalance).toBe("100.0000");
+    expect(health.availableXlmBalance).toBe("99.0000");
     expect(health.healthy).toBe(true);
   });
 
@@ -184,5 +199,139 @@ describe("getWalletHealth sponsored-reserve accounting", () => {
     const health = await getWalletHealth();
     expect(health.numSponsoring).toBe(0);
     expect(health.sponsoredReserveXlm).toBe("0.0000");
+  });
+});
+
+describe("calculateSpendableXlm", () => {
+  it("subtracts live protocol reserves and native selling liabilities", () => {
+    const result = calculateSpendableXlm({
+      totalStroops: 100_000_000n,
+      sellingLiabilitiesStroops: 10_000_000n,
+      baseReserveStroops: 5_000_000n,
+      subentryCount: 2,
+      numSponsoring: 3,
+      numSponsored: 1,
+    });
+
+    expect(result).toEqual({ minimumBalanceStroops: 30_000_000n, spendableStroops: 60_000_000n });
+  });
+
+  it("offsets sponsored entries against the reserve requirement", () => {
+    const result = calculateSpendableXlm({
+      totalStroops: 100_000_000n,
+      sellingLiabilitiesStroops: 0n,
+      baseReserveStroops: 5_000_000n,
+      subentryCount: 0,
+      numSponsoring: 0,
+      numSponsored: 5,
+    });
+
+    expect(result.minimumBalanceStroops).toBe(0n);
+  });
+
+  it("preserves all seven Stellar decimal places when parsing Horizon amounts", () => {
+    expect(xlmToStroops("10.1234567")).toBe(101_234_567n);
+  });
+
+  it("floors overspent XLM at zero", () => {
+    const result = calculateSpendableXlm({
+      totalStroops: 10_000_000n,
+      sellingLiabilitiesStroops: 5_000_000n,
+      baseReserveStroops: 5_000_000n,
+      subentryCount: 2,
+      numSponsoring: 0,
+      numSponsored: 0,
+    });
+
+    expect(result.spendableStroops).toBe(0n);
+  });
+});
+
+describe("getWalletHealth protocol reserve data", () => {
+  it("uses the latest Horizon ledger and account liabilities for spendable XLM", async () => {
+    mockLoadAccount.mockResolvedValueOnce({
+      balances: [
+        { asset_type: "native", balance: "10.0000000", selling_liabilities: "1.0000000" },
+        { asset_type: "credit_alphanum4", asset_code: "USDC", asset_issuer: ISSUER, balance: "100.0000000" },
+      ],
+      subentry_count: 2,
+      num_sponsoring: 3,
+      num_sponsored: 1,
+    });
+
+    const health = await getWalletHealth();
+
+    expect(health.baseReserveXlm).toBe("0.5000");
+    expect(health.minimumBalanceXlm).toBe("3.0000");
+    expect(health.nativeSellingLiabilitiesXlm).toBe("1.0000");
+    expect(health.availableXlmBalance).toBe("6.0000");
+    expect(health.numSubentries).toBe(2);
+    expect(health.numSponsoring).toBe(3);
+    expect(health.numSponsored).toBe(1);
+    expect(health.monitoringStatus).toBe("healthy");
+  });
+
+  it("marks absent or invalid wallet configuration as unconfigured without inventing balances", async () => {
+    delete process.env.STELLAR_PLATFORM_SECRET;
+    const missing = await getWalletHealth();
+
+    process.env.STELLAR_PLATFORM_SECRET = "not-a-stellar-secret";
+    const invalid = await getWalletHealth();
+
+    for (const health of [missing, invalid]) {
+      expect(health.monitoringStatus).toBe("unconfigured");
+      expect(health.usdcBalance).toBe("—");
+      expect(health.xlmBalance).toBe("—");
+      expect(health.availableXlmBalance).toBe("—");
+      expect(health.baseReserveXlm).toBe("—");
+      expect(health.minimumBalanceXlm).toBe("—");
+      expect(health.nativeSellingLiabilitiesXlm).toBe("—");
+      expect(health.sponsoredReserveXlm).toBe("—");
+      expect(health.assetStatus).toEqual({ usdc: "unknown", xlm: "unknown" });
+    }
+  });
+
+  it("marks Horizon failures as errors without inventing balances", async () => {
+    mockLoadAccount.mockRejectedValueOnce(new Error("Horizon unavailable"));
+
+    const health = await getWalletHealth();
+
+    expect(health.monitoringStatus).toBe("error");
+    expect(health.usdcBalance).toBe("—");
+    expect(health.xlmBalance).toBe("—");
+    expect(health.availableXlmBalance).toBe("—");
+    expect(health.baseReserveXlm).toBe("—");
+    expect(health.minimumBalanceXlm).toBe("—");
+    expect(health.nativeSellingLiabilitiesXlm).toBe("—");
+    expect(health.sponsoredReserveXlm).toBe("—");
+    expect(health.assetStatus).toEqual({ usdc: "unknown", xlm: "unknown" });
+  });
+});
+
+describe("walletBalanceAlerts monitoring states", () => {
+  it("emits a warning source alert when monitoring is unconfigured", () => {
+    expect(
+      walletBalanceAlerts({
+        address: "—",
+        availableXlmBalance: "—",
+        sponsoredReserveXlm: "0.0000",
+        usdcBalance: "—",
+        assetStatus: { usdc: "unknown", xlm: "unknown" },
+        monitoringStatus: "unconfigured",
+      }),
+    ).toMatchObject([{ key: "wallet-monitoring-unconfigured", severity: "WARN" }]);
+  });
+
+  it("emits a page source alert when monitoring is unavailable", () => {
+    expect(
+      walletBalanceAlerts({
+        address: PLATFORM.publicKey(),
+        availableXlmBalance: "—",
+        sponsoredReserveXlm: "0.0000",
+        usdcBalance: "—",
+        assetStatus: { usdc: "unknown", xlm: "unknown" },
+        monitoringStatus: "error",
+      }),
+    ).toMatchObject([{ key: "wallet-monitoring-unavailable", severity: "PAGE" }]);
   });
 });
