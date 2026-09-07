@@ -11,7 +11,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 import { REWARD_TOKEN_SYMBOL } from "../constants";
 import { sendDedupedDiscordAlert } from "../health-alert";
 import { walletBalanceAlerts } from "../wallet-balance-alerts";
-import { server } from "./config";
+import { server, usdcAsset, usdcToUnits } from "./config";
 
 /**
  * @deprecated Reserve requirements are read from Horizon's latest ledger. This
@@ -109,15 +109,14 @@ export function xlmToStroops(xlm: string): bigint {
   return BigInt(match[1]) * STROOPS_PER_XLM + BigInt((match[2] ?? "").padEnd(7, "0"));
 }
 
-function stroopsToDisplay(stroops: bigint): string {
+function stroopsToDisplay(stroops: bigint, decimalPlaces = 4): string {
   if (stroops < 0n) throw new Error("XLM stroops must be non-negative");
   const whole = stroops / STROOPS_PER_XLM;
   const fraction = (stroops % STROOPS_PER_XLM).toString().padStart(7, "0");
-  return `${whole}.${fraction.slice(0, 4)}`;
+  return `${whole}.${fraction.slice(0, decimalPlaces)}`;
 }
 
 function countFromHorizon(value: unknown, name: string): number {
-  if (value === undefined) return 0;
   if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return value;
   throw new Error(`Invalid Horizon ${name}`);
 }
@@ -158,24 +157,95 @@ export function parseBalanceThresholds(): BalanceThresholds {
 
 /**
  * Pull the two balances that matter out of a Horizon `balances[]` array: the
- * native XLM line and our USDC line (matched by `asset_code === 'USDC'` AND
- * `asset_issuer === STELLAR_USDC_ISSUER`). A missing USDC line means no trustline
- * / no float — reported as 0, which is correctly treated as low float downstream.
+ * native XLM line and the configured payout-asset line (matched by the exact
+ * code and issuer validated by `usdcAsset()`). A missing configured asset line
+ * means no trustline / no float — reported as 0 and treated as low downstream.
  */
 export function extractBalances(balances: HorizonBalanceLine[]): { xlm: number; usdc: number } {
-  const issuer = process.env.STELLAR_USDC_ISSUER?.trim();
+  const asset = usdcAsset();
+  const issuer = asset.getIssuer();
+  if (!issuer) throw new Error("Configured USDC asset has no issuer");
 
   const native = balances.find((b) => b.asset_type === "native");
   const usdcLine = balances.find(
     (b) =>
       b.asset_type !== "native" &&
-      b.asset_code === "USDC" &&
-      (issuer ? b.asset_issuer === issuer : true),
+      b.asset_code === asset.getCode() &&
+      b.asset_issuer === issuer,
   );
 
   return {
     xlm: native ? Number(native.balance) : 0,
-    usdc: usdcLine ? Number(usdcLine.balance) : 0,
+    usdc: usdcLine ? Number(usdcToUnits(usdcLine.balance)) / Number(STROOPS_PER_XLM) : 0,
+  };
+}
+
+export interface StroopThresholds {
+  warnUsdcStroops: bigint;
+  pageUsdcStroops: bigint;
+  warnXlmStroops: bigint;
+  pageXlmStroops: bigint;
+}
+
+function configuredThresholdStroops(): StroopThresholds {
+  return {
+    warnUsdcStroops: xlmToStroops(process.env.BALANCE_WARN_USDC ?? "50"),
+    pageUsdcStroops: xlmToStroops(process.env.BALANCE_PAGE_USDC ?? "10"),
+    warnXlmStroops: xlmToStroops(process.env.BALANCE_WARN_XLM ?? "5"),
+    pageXlmStroops: xlmToStroops(process.env.BALANCE_PAGE_XLM ?? "2"),
+  };
+}
+
+export function evaluateStroopThresholds({
+  xlmStroops,
+  usdcStroops,
+  thresholds,
+}: {
+  xlmStroops: bigint;
+  usdcStroops: bigint;
+  thresholds: StroopThresholds;
+}): {
+  healthy: boolean;
+  warnings: string[];
+  pages: string[];
+  assetStatus: { usdc: BalanceStatus; xlm: BalanceStatus };
+} {
+  const warnings: string[] = [];
+  const pages: string[] = [];
+  const assetStatus: { usdc: BalanceStatus; xlm: BalanceStatus } = {
+    usdc: "healthy",
+    xlm: "healthy",
+  };
+
+  if (usdcStroops <= thresholds.pageUsdcStroops) {
+    assetStatus.usdc = "page";
+    pages.push(
+      `USDC float ${stroopsToDisplay(usdcStroops, 2)} USDC is below page threshold ${stroopsToDisplay(thresholds.pageUsdcStroops, 2)} USDC`,
+    );
+  } else if (usdcStroops <= thresholds.warnUsdcStroops) {
+    assetStatus.usdc = "warn";
+    warnings.push(
+      `USDC float ${stroopsToDisplay(usdcStroops, 2)} USDC is below warning threshold ${stroopsToDisplay(thresholds.warnUsdcStroops, 2)} USDC`,
+    );
+  }
+
+  if (xlmStroops <= thresholds.pageXlmStroops) {
+    assetStatus.xlm = "page";
+    pages.push(
+      `XLM fee/reserve balance ${stroopsToDisplay(xlmStroops)} XLM is below page threshold ${stroopsToDisplay(thresholds.pageXlmStroops)} XLM`,
+    );
+  } else if (xlmStroops <= thresholds.warnXlmStroops) {
+    assetStatus.xlm = "warn";
+    warnings.push(
+      `XLM fee/reserve balance ${stroopsToDisplay(xlmStroops)} XLM is below warning threshold ${stroopsToDisplay(thresholds.warnXlmStroops)} XLM`,
+    );
+  }
+
+  return {
+    healthy: warnings.length === 0 && pages.length === 0,
+    warnings,
+    pages,
+    assetStatus,
   };
 }
 
@@ -255,13 +325,45 @@ export async function getWalletHealth(): Promise<WalletHealth> {
     };
   }
 
+  let configuredUsdcCode: string;
+  let configuredUsdcIssuer: string;
+  try {
+    const asset = usdcAsset();
+    const issuer = asset.getIssuer();
+    if (!issuer) throw new Error("Configured USDC asset has no issuer");
+    configuredUsdcCode = asset.getCode();
+    configuredUsdcIssuer = issuer;
+  } catch {
+    return {
+      address,
+      monitoringStatus: "unconfigured",
+      usdcBalance: "—",
+      xlmBalance: "—",
+      availableXlmBalance: "—",
+      baseReserveXlm: "—",
+      minimumBalanceXlm: "—",
+      nativeSellingLiabilitiesXlm: "—",
+      numSubentries: 0,
+      numSponsoring: 0,
+      numSponsored: 0,
+      sponsoredReserveXlm: "—",
+      rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
+      healthy: false,
+      warnings: ["STELLAR USDC asset not configured"],
+      pages: [],
+      assetStatus: { usdc: "unknown", xlm: "unknown" },
+      thresholds,
+    };
+  }
+
   let totalStroops: bigint;
   let sellingLiabilitiesStroops: bigint;
   let baseReserveStroops: bigint;
-  let usdc = 0;
-  let numSubentries = 0;
-  let numSponsoring = 0;
-  let numSponsored = 0;
+  let usdcStroops: bigint;
+  let numSubentries: number;
+  let numSponsoring: number;
+  let numSponsored: number;
+  let thresholdStroops: StroopThresholds;
   try {
     const horizon = server();
     const [account, ledgerPage] = await Promise.all([
@@ -274,13 +376,23 @@ export async function getWalletHealth(): Promise<WalletHealth> {
     const latestLedger = ledgerPage.records[0];
     if (!native || !latestLedger) throw new Error("Horizon account or latest ledger is incomplete");
 
-    ({ usdc } = extractBalances(account.balances as HorizonBalanceLine[]));
     totalStroops = xlmToStroops(native.balance);
-    sellingLiabilitiesStroops = xlmToStroops(native.selling_liabilities ?? "0");
+    if (native.selling_liabilities === undefined) {
+      throw new Error("Horizon native selling_liabilities is missing");
+    }
+    sellingLiabilitiesStroops = xlmToStroops(native.selling_liabilities);
     baseReserveStroops = baseReserveStroopsFromLedger(latestLedger.base_reserve_in_stroops);
     numSubentries = countFromHorizon(account.subentry_count, "subentry_count");
     numSponsoring = countFromHorizon(account.num_sponsoring, "num_sponsoring");
     numSponsored = countFromHorizon(account.num_sponsored, "num_sponsored");
+    const usdcLine = (account.balances as HorizonBalanceLine[]).find(
+      (balance) =>
+        balance.asset_type !== "native" &&
+        balance.asset_code === configuredUsdcCode &&
+        balance.asset_issuer === configuredUsdcIssuer,
+    );
+    usdcStroops = usdcLine ? usdcToUnits(usdcLine.balance) : 0n;
+    thresholdStroops = configuredThresholdStroops();
   } catch {
     return {
       address,
@@ -315,18 +427,16 @@ export async function getWalletHealth(): Promise<WalletHealth> {
   // Preserved until callers consume minimumBalanceXlm directly. Unlike the old
   // constant estimate, this is derived from the same live reserve used above.
   const sponsoredReserveStroops = baseReserveStroops * BigInt(numSponsoring);
-  const availableXlm = Number(spendableStroops) / Number(STROOPS_PER_XLM);
-
-  const { healthy, warnings, pages, assetStatus } = evaluateThresholds(
-    availableXlm,
-    usdc,
-    thresholds,
-  );
+  const { healthy, warnings, pages, assetStatus } = evaluateStroopThresholds({
+    xlmStroops: spendableStroops,
+    usdcStroops,
+    thresholds: thresholdStroops,
+  });
 
   return {
     address,
     monitoringStatus: "healthy",
-    usdcBalance: usdc.toFixed(4),
+    usdcBalance: stroopsToDisplay(usdcStroops),
     xlmBalance: stroopsToDisplay(totalStroops),
     availableXlmBalance: stroopsToDisplay(spendableStroops),
     baseReserveXlm: stroopsToDisplay(baseReserveStroops),

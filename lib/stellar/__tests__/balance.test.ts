@@ -38,6 +38,7 @@ import {
   checkAndAlert,
   getWalletHealth,
   calculateSpendableXlm,
+  evaluateStroopThresholds,
   xlmToStroops,
   TRUSTLINE_RESERVE_XLM,
 } from "../balance";
@@ -57,10 +58,20 @@ afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
 });
 
-type Line = { asset_type: string; asset_code?: string; asset_issuer?: string; balance: string };
+type Line = {
+  asset_type: string;
+  asset_code?: string;
+  asset_issuer?: string;
+  balance: string;
+  selling_liabilities?: string;
+};
 
 function balances(usdc: string | null, xlm: string): Line[] {
-  const lines: Line[] = [{ asset_type: "native", balance: xlm }];
+  const lines: Line[] = [{
+    asset_type: "native",
+    balance: xlm,
+    selling_liabilities: "0.0000000",
+  }];
   if (usdc !== null) {
     lines.push({
       asset_type: "credit_alphanum4",
@@ -131,7 +142,12 @@ describe("evaluateThresholds", () => {
 
 describe("checkAndAlert", () => {
   it("sends distinct alerts when both the USDC and spendable XLM balances are low", async () => {
-    mockLoadAccount.mockResolvedValueOnce({ balances: balances("5.0000000", "1.0000000") });
+    mockLoadAccount.mockResolvedValueOnce({
+      balances: balances("5.0000000", "1.0000000"),
+      subentry_count: 0,
+      num_sponsoring: 0,
+      num_sponsored: 0,
+    });
     mockSendAlert.mockResolvedValue("sent");
 
     await checkAndAlert();
@@ -163,7 +179,12 @@ describe("getWalletHealth", () => {
   });
 
   it("flags an unhealthy float when the USDC trustline line is missing (zero float)", async () => {
-    mockLoadAccount.mockResolvedValueOnce({ balances: balances(null, "100.0000000") });
+    mockLoadAccount.mockResolvedValueOnce({
+      balances: balances(null, "100.0000000"),
+      subentry_count: 0,
+      num_sponsoring: 0,
+      num_sponsored: 0,
+    });
 
     const health = await getWalletHealth();
 
@@ -175,12 +196,14 @@ describe("getWalletHealth", () => {
 
 describe("getWalletHealth sponsored-reserve accounting", () => {
   it("subtracts 0.5 XLM per num_sponsoring from the XLM floor", async () => {
-    // 6 XLM raw, but 10 sponsored trustlines lock 5 XLM → 1 XLM available,
-    // which is at/below the default page threshold (2 XLM) → pages.
+    // 6 XLM raw with 10 sponsored reserve units requires 6 XLM total once the
+    // base account reserve is included, leaving zero spendable XLM.
     mockLoadAccount.mockResolvedValue({
+      subentry_count: 0,
       num_sponsoring: 10,
+      num_sponsored: 0,
       balances: [
-        { asset_type: "native", balance: "6.0000000" },
+        { asset_type: "native", balance: "6.0000000", selling_liabilities: "0.0000000" },
         { asset_type: "credit_alphanum4", asset_code: "USDC", asset_issuer: ISSUER, balance: "100.0" },
       ],
     });
@@ -188,17 +211,19 @@ describe("getWalletHealth sponsored-reserve accounting", () => {
     expect(TRUSTLINE_RESERVE_XLM).toBe(0.5);
     expect(health.numSponsoring).toBe(10);
     expect(health.sponsoredReserveXlm).toBe("5.0000");
+    expect(health.availableXlmBalance).toBe("0.0000");
     expect(health.healthy).toBe(false);
     expect(health.pages.join(" ")).toMatch(/XLM/);
   });
 
-  it("treats a missing num_sponsoring as 0", async () => {
+  it("treats missing reserve counts as a Horizon monitoring error", async () => {
     mockLoadAccount.mockResolvedValue({
       balances: [{ asset_type: "native", balance: "50.0" }],
     });
     const health = await getWalletHealth();
-    expect(health.numSponsoring).toBe(0);
-    expect(health.sponsoredReserveXlm).toBe("0.0000");
+    expect(health.monitoringStatus).toBe("error");
+    expect(health.xlmBalance).toBe("—");
+    expect(health.assetStatus).toEqual({ usdc: "unknown", xlm: "unknown" });
   });
 });
 
@@ -245,6 +270,22 @@ describe("calculateSpendableXlm", () => {
 
     expect(result.spendableStroops).toBe(0n);
   });
+
+  it("compares an unsafe-integer XLM threshold in exact stroops", () => {
+    const balanceAtWarnBoundary = 9_007_199_254_740_993n;
+    const result = evaluateStroopThresholds({
+      xlmStroops: balanceAtWarnBoundary,
+      usdcStroops: 1_000_000_000n,
+      thresholds: {
+        warnUsdcStroops: 500_000_000n,
+        pageUsdcStroops: 100_000_000n,
+        warnXlmStroops: balanceAtWarnBoundary,
+        pageXlmStroops: balanceAtWarnBoundary - 1n,
+      },
+    });
+
+    expect(result.assetStatus.xlm).toBe("warn");
+  });
 });
 
 describe("getWalletHealth protocol reserve data", () => {
@@ -269,6 +310,89 @@ describe("getWalletHealth protocol reserve data", () => {
     expect(health.numSponsoring).toBe(3);
     expect(health.numSponsored).toBe(1);
     expect(health.monitoringStatus).toBe("healthy");
+  });
+
+  it("matches the USDC balance by configured code and issuer", async () => {
+    process.env.STELLAR_USDC_CODE = "EURC";
+    mockLoadAccount.mockResolvedValueOnce({
+      balances: [
+        { asset_type: "native", balance: "100.0000000", selling_liabilities: "0.0000000" },
+        { asset_type: "credit_alphanum4", asset_code: "USDC", asset_issuer: ISSUER, balance: "999.0000000" },
+        { asset_type: "credit_alphanum4", asset_code: "EURC", asset_issuer: ISSUER, balance: "100.0000000" },
+      ],
+      subentry_count: 0,
+      num_sponsoring: 0,
+      num_sponsored: 0,
+    });
+
+    const health = await getWalletHealth();
+
+    expect(health.monitoringStatus).toBe("healthy");
+    expect(health.usdcBalance).toBe("100.0000");
+  });
+
+  it.each([
+    ["missing issuer", undefined],
+    ["invalid issuer", "not-a-stellar-issuer"],
+  ])("marks a %s configuration as unconfigured", async (_description, issuer) => {
+    if (issuer === undefined) delete process.env.STELLAR_USDC_ISSUER;
+    else process.env.STELLAR_USDC_ISSUER = issuer;
+
+    const health = await getWalletHealth();
+
+    expect(health.monitoringStatus).toBe("unconfigured");
+    expect(health.usdcBalance).toBe("—");
+    expect(health.assetStatus).toEqual({ usdc: "unknown", xlm: "unknown" });
+  });
+
+  it.each([
+    ["subentry_count", { num_sponsoring: 0, num_sponsored: 0 }],
+    ["num_sponsoring", { subentry_count: 0, num_sponsored: 0 }],
+    ["num_sponsored", { subentry_count: 0, num_sponsoring: 0 }],
+  ])("marks a missing %s as an error", async (_field, counts) => {
+    mockLoadAccount.mockResolvedValueOnce({
+      balances: balances("100.0000000", "100.0000000"),
+      ...counts,
+    });
+
+    const health = await getWalletHealth();
+
+    expect(health.monitoringStatus).toBe("error");
+    expect(health.xlmBalance).toBe("—");
+    expect(health.assetStatus).toEqual({ usdc: "unknown", xlm: "unknown" });
+  });
+
+  it("marks a missing native selling liability as an error", async () => {
+    mockLoadAccount.mockResolvedValueOnce({
+      balances: [{ asset_type: "native", balance: "100.0000000" }],
+      subentry_count: 0,
+      num_sponsoring: 0,
+      num_sponsored: 0,
+    });
+
+    const health = await getWalletHealth();
+
+    expect(health.monitoringStatus).toBe("error");
+    expect(health.xlmBalance).toBe("—");
+    expect(health.assetStatus).toEqual({ usdc: "unknown", xlm: "unknown" });
+  });
+
+  it("marks malformed configured-USDC data as an error", async () => {
+    mockLoadAccount.mockResolvedValueOnce({
+      balances: [
+        { asset_type: "native", balance: "100.0000000", selling_liabilities: "0.0000000" },
+        { asset_type: "credit_alphanum4", asset_code: "USDC", asset_issuer: ISSUER, balance: "not-a-balance" },
+      ],
+      subentry_count: 0,
+      num_sponsoring: 0,
+      num_sponsored: 0,
+    });
+
+    const health = await getWalletHealth();
+
+    expect(health.monitoringStatus).toBe("error");
+    expect(health.usdcBalance).toBe("—");
+    expect(health.assetStatus).toEqual({ usdc: "unknown", xlm: "unknown" });
   });
 
   it("marks absent or invalid wallet configuration as unconfigured without inventing balances", async () => {
@@ -314,7 +438,6 @@ describe("walletBalanceAlerts monitoring states", () => {
       walletBalanceAlerts({
         address: "—",
         availableXlmBalance: "—",
-        sponsoredReserveXlm: "0.0000",
         usdcBalance: "—",
         assetStatus: { usdc: "unknown", xlm: "unknown" },
         monitoringStatus: "unconfigured",
@@ -327,11 +450,26 @@ describe("walletBalanceAlerts monitoring states", () => {
       walletBalanceAlerts({
         address: PLATFORM.publicKey(),
         availableXlmBalance: "—",
-        sponsoredReserveXlm: "0.0000",
         usdcBalance: "—",
         assetStatus: { usdc: "unknown", xlm: "unknown" },
         monitoringStatus: "error",
       }),
     ).toMatchObject([{ key: "wallet-monitoring-unavailable", severity: "PAGE" }]);
+  });
+
+  it("describes the exact minimum balance and selling liabilities for low XLM", () => {
+    const [alert] = walletBalanceAlerts({
+      address: PLATFORM.publicKey(),
+      availableXlmBalance: "6.0000",
+      minimumBalanceXlm: "3.0000",
+      nativeSellingLiabilitiesXlm: "1.0000",
+      usdcBalance: "100.0000",
+      assetStatus: { usdc: "healthy", xlm: "page" },
+      monitoringStatus: "healthy",
+    });
+
+    expect(alert.lines[0]).toContain("3.0000 XLM minimum balance");
+    expect(alert.lines[0]).toContain("1.0000 XLM selling liabilities");
+    expect(alert.lines[0]).not.toContain("reserved");
   });
 });
