@@ -26,8 +26,8 @@ of scope because issue #8 owns the independent signing-service boundary.
 The refill policy uses exact 7-decimal Stellar units (`bigint`) throughout:
 
 - `STELLAR_COLD_RESERVE_ACCOUNT`: cold reserve public key.
-- `STELLAR_COLD_OPS_SIGNER_PUBLIC`: first allowed cold signer.
-- `STELLAR_COLD_POLICY_SIGNER_PUBLIC`: second allowed cold signer.
+- `STELLAR_COLD_OPS_SIGNER_PUBLIC`: operations co-signer.
+- `STELLAR_COLD_POLICY_SIGNER_PUBLIC`: policy co-signer.
 - `STELLAR_HOT_FLOAT_TRIGGER_UNITS`: refill trigger, inclusive.
 - `STELLAR_HOT_FLOAT_TARGET_UNITS`: post-refill target; strictly greater than
   the trigger.
@@ -37,7 +37,9 @@ The hot destination is derived from `STELLAR_PLATFORM_SECRET`, the same source
 used by the payout rail and wallet-health code. It is never accepted as a CLI
 argument, preventing an operator typo from redirecting a refill.
 
-All account IDs and signer IDs must be valid, distinct Stellar public keys.
+The allowed signing set is the cold account's master public key plus the two
+configured co-signer public keys, matching the on-chain 2-of-3 topology. All
+account IDs and signer IDs must be valid, distinct Stellar public keys.
 All amount settings must be non-negative decimal integer strings, and the
 target must be positive and greater than the trigger. Production has no hidden
 defaults: missing policy values fail closed. Tests pass an explicit environment
