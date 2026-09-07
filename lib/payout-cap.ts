@@ -30,16 +30,31 @@ export function getDailyPayoutCapUnits(): bigint {
   return value;
 }
 
-export async function getRolling24hPayoutSum(): Promise<bigint> {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const aggregate = await prisma.submission.aggregate({
-    _sum: { payoutAmountUnits: true },
+export interface PayoutActivity {
+  count: number;
+  volumeUnits: bigint;
+}
+
+export async function getPayoutActivitySince(since: Date): Promise<PayoutActivity> {
+  const result = await prisma.payoutJob.aggregate({
+    _count: { _all: true },
+    _sum: { amountUnits: true },
     where: {
-      payoutStatus: { in: ["sent", "confirmed"] },
-      createdAt: { gte: since },
+      status: { in: ["processing", "done"] },
+      broadcastAt: { gte: since },
+      txHash: { not: null },
+      amountUnits: { not: null },
     },
   });
-  return aggregate._sum.payoutAmountUnits ?? 0n;
+  return {
+    count: result._count._all,
+    volumeUnits: result._sum.amountUnits ?? 0n,
+  };
+}
+
+export async function getRolling24hPayoutSum(): Promise<bigint> {
+  const activity = await getPayoutActivitySince(new Date(Date.now() - 86_400_000));
+  return activity.volumeUnits;
 }
 
 export async function checkPayoutCap(amount: bigint): Promise<{
