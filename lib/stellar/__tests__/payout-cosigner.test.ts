@@ -27,6 +27,7 @@ beforeEach(() => {
   process.env.STELLAR_USDC_ISSUER = usdc.getIssuer();
 });
 
+/** A platform-signed payment envelope plus the request the co-signer checks it against. */
 function paymentRequest(
   overrides: Partial<PayoutCoSignRequest> = {},
   amountUnits = 25_000_000n,

@@ -21,10 +21,15 @@ const BATCH_SIZE = 20;
 let shouldStop = false;
 let currentJobId: string | null = null;
 
-// A refund is the last step that returns the user's locked balance after a payout
-// is abandoned. If it throws (DB constraint, ledger error), the funds are stranded
-// with the job already marked failed/completed — no retry path. Swallowing the error
-// silently loses money without a trace, so surface it loudly to Sentry + logs.
+/**
+ * Return a user's locked balance after a payout is abandoned, never throwing.
+ *
+ * A refund is the last step in an abandoned payout. If it throws (DB constraint,
+ * ledger error) the funds are stranded with the job already marked failed or
+ * completed, and there is no retry path. Swallowing that silently loses money
+ * without a trace, so the failure is surfaced loudly to Sentry and the logs
+ * instead of propagating and masking the original payout error.
+ */
 async function safeRefund(
   userId: string,
   amountUnits: bigint,
@@ -42,6 +47,11 @@ async function safeRefund(
   }
 }
 
+/**
+ * Atomically claim the next queued payout job for this worker, or null when the
+ * queue is empty. Claiming marks the job in-flight so a second worker cannot pick
+ * up the same payout.
+ */
 export async function claimNextJob(): Promise<{
   id: string;
   submissionId: string | null;
@@ -81,6 +91,11 @@ export async function claimNextJob(): Promise<{
   return claimed[0];
 }
 
+/**
+ * Credit an abandoned submission payout back to its campaign balance. Gold tasks
+ * and campaign-less tasks draw from no campaign budget, so they are a no-op.
+ * Best-effort: a failure here must not mask the payout error that triggered it.
+ */
 async function refundCampaignBalance(
   task: { isGold: boolean; campaignId: string | null },
   submissionId: string,
@@ -96,6 +111,11 @@ async function refundCampaignBalance(
   ).catch(() => {});
 }
 
+/**
+ * Settle one user-initiated withdrawal: resolve the destination, pay it, and on
+ * failure classify the error, refund the user's locked balance, and either requeue
+ * or fail the job permanently.
+ */
 async function processWithdrawalJob(
   jobId: string,
   userId: string,
@@ -230,6 +250,11 @@ async function processWithdrawalJob(
   }
 }
 
+/**
+ * Settle one submission reward: pay the linked wallet, then record the hash and
+ * credit totals. On failure it refunds the campaign balance and applies the same
+ * retryable / non-retryable classification as a withdrawal.
+ */
 async function processSubmissionPayout(
   jobId: string,
   submissionId: string,
@@ -425,6 +450,7 @@ async function processSubmissionPayout(
   }
 }
 
+/** Dispatch one claimed job to its handler, failing jobs whose type and fields disagree. */
 export async function processJob(
   jobId: string,
   submissionId: string | null,
@@ -449,6 +475,11 @@ export async function processJob(
   currentJobId = null;
 }
 
+/**
+ * Claim and process payout jobs until {@link stopWorker} is called, idling on an
+ * empty queue. A loop-level error is reported and slept off rather than killing
+ * the worker, so one bad job cannot stop the rail.
+ */
 export async function runWorkerLoop(): Promise<void> {
   console.log("[payout-worker] starting loop");
 
@@ -471,14 +502,17 @@ export async function runWorkerLoop(): Promise<void> {
   console.log("[payout-worker] loop stopped");
 }
 
+/** Ask the loop to exit after the in-flight job finishes. */
 export function stopWorker(): void {
   shouldStop = true;
 }
 
+/** Resolve after `ms`, used for the idle-poll and error backoff. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Stop the loop cleanly on SIGINT/SIGTERM so an in-flight payout is not cut short. */
 function installSignalHandlers() {
   const handler = (signal: string) => {
     console.log(`[payout-worker] received ${signal}, finishing in-flight job then exiting`);

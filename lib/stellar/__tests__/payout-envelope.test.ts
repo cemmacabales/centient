@@ -20,10 +20,12 @@ beforeEach(() => {
   process.env.STELLAR_NETWORK = "testnet";
 });
 
+/** A throwaway multisig payout account to source envelopes from. */
 function hotAccount(sequence = "42") {
   return new Account(Keypair.random().publicKey(), sequence);
 }
 
+/** The detached signature `signer` would return for `tx`, as the real co-signer does. */
 function coSignatureOver(tx: Transaction, signer: Keypair) {
   return {
     publicKey: signer.publicKey(),
@@ -80,6 +82,7 @@ describe("buildPayoutPayment", () => {
 });
 
 describe("applyCoSignature", () => {
+  /** A payout envelope carrying only the platform's signature. */
   function signedPayment() {
     const tx = buildPayoutPayment({
       sourceAccount: hotAccount(),
@@ -145,6 +148,7 @@ describe("applyCoSignature", () => {
 });
 
 describe("assertPayoutFullySigned", () => {
+  /** A payout envelope carrying both required signatures. */
   function dualSigned() {
     const tx = buildPayoutPayment({
       sourceAccount: hotAccount(),
