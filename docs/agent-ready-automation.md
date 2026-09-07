@@ -14,6 +14,10 @@ automation accepts label events only from `cemmacabales`; Codex works from
 3. In the repository, open Settings > Secrets and variables > Actions and add
    the token as `CODEX_TRIGGER_TOKEN`.
 4. Confirm the repository has an `agent-ready` label.
+5. In the `develop` branch protection or ruleset, require the
+   `single-contributor/verified` status so a pull request cannot merge when
+   any commit has different author or committer metadata, a co-author trailer,
+   or explicit AI attribution in commit or pull-request text.
 
 Do not put the token value in source files, workflow logs, issues, or pull
 requests. ChatGPT Plus usage limits apply to delegated Codex Cloud tasks.
@@ -28,15 +32,18 @@ requests. ChatGPT Plus usage limits apply to delegated Codex Cloud tasks.
    and opens a pull request against `develop` without merging it.
 6. Confirm every commit reports only
    `cemmacabales <carlmacabales31@gmail.com>` as author and committer.
+7. Confirm the `single-contributor/verified` status passes on the pull
+   request's latest head commit.
 
 Close the test pull request and issue manually if they are not intended to
 merge.
 
 ## Retry behavior
 
-A rerun of the same label event is deduplicated. To start a deliberate new
-attempt, remove `agent-ready`, address the cause of the failure, and re-add the
-label. The new label event gets a new marker.
+A rerun of the same label event is deduplicated by its stable workflow run ID.
+Only a matching marker posted by the `cemmacabales` user account is trusted.
+To start a deliberate new attempt, remove `agent-ready`, address the cause of
+the failure, and re-add the label. The new label event gets a new run ID.
 
 ## Rotate or revoke the token
 

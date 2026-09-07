@@ -1,0 +1,100 @@
+name: Enforce single contributor
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: single-contributor-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify-commit-identities:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the maintainer as author and committer
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const requiredIdentity = {
+              name: "cemmacabales",
+              email: "carlmacabales31@gmail.com",
+            };
+            const prohibitedAttribution =
+              /(^|\n)\s*co-authored-by\s*:|generated(?:\s+|-)(?:by|with)[\s:-]*(?:codex|chatgpt|claude|openai|ai)\b|authored(?:\s+|-)by[\s:-]*(?:codex|chatgpt|claude|openai|ai)\b/i;
+            const headSha = context.payload.pull_request.head.sha;
+            const publishStatus = (state, description) =>
+              github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: headSha,
+                state,
+                context: "single-contributor/verified",
+                description,
+              });
+
+            await publishStatus("pending", "Checking commit attribution");
+
+            const commits = await github.paginate(
+              github.rest.pulls.listCommits,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                per_page: 100,
+              },
+            );
+
+            const invalidCommits = commits.filter(({ commit }) =>
+              commit.author?.name !== requiredIdentity.name ||
+              commit.author?.email !== requiredIdentity.email ||
+              commit.committer?.name !== requiredIdentity.name ||
+              commit.committer?.email !== requiredIdentity.email
+            );
+            const attributedCommits = commits.filter(({ commit }) =>
+              prohibitedAttribution.test(commit.message),
+            );
+            const pullRequestText = [
+              context.payload.pull_request.title,
+              context.payload.pull_request.body ?? "",
+            ].join("\n");
+            const pullRequestHasAttribution =
+              prohibitedAttribution.test(pullRequestText);
+
+            const failures = [];
+
+            if (invalidCommits.length > 0) {
+              const shortShas = invalidCommits
+                .map(({ sha }) => sha.slice(0, 7))
+                .join(", ");
+              failures.push(
+                `Every commit must be authored and committed by ${requiredIdentity.name} <${requiredIdentity.email}>. Invalid commits: ${shortShas}`,
+              );
+            }
+
+            if (attributedCommits.length > 0) {
+              const shortShas = attributedCommits
+                .map(({ sha }) => sha.slice(0, 7))
+                .join(", ");
+              failures.push(`Commit attribution is not allowed: ${shortShas}`);
+            }
+
+            if (pullRequestHasAttribution) {
+              failures.push("Pull request attribution is not allowed.");
+            }
+
+            const finalState = failures.length > 0 ? "failure" : "success";
+            const description = failures.length > 0
+              ? "Contributor policy failed"
+              : "Contributor policy passed";
+            await publishStatus(finalState, description);
+
+            if (failures.length > 0) {
+              core.setFailed(failures.join("\n"));
+            }

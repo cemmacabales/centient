@@ -36,9 +36,13 @@ describe("agent-ready Codex dispatch workflow", () => {
   it("deduplicates one label event while allowing a later re-label", () => {
     const workflow = readWorkflow();
 
-    expect(workflow).toContain("context.payload.issue.updated_at");
+    expect(workflow).toContain("context.runId");
     expect(workflow).toContain("agent-ready-dispatch:");
-    expect(workflow).toContain("comments.some((comment) =>");
+    expect(workflow).toContain("comments.some(");
+    expect(workflow).toContain(
+      'comment.user?.login === "cemmacabales"',
+    );
+    expect(workflow).toContain('comment.user?.type === "User"');
   });
 
   it("delegates the required branch, verification, PR, and authorship contract", () => {

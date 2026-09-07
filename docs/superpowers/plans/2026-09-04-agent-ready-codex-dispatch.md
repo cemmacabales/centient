@@ -4,7 +4,7 @@
 
 **Goal:** Dispatch an open issue to Codex Cloud when `cemmacabales` applies the `agent-ready` label, then have Codex verify the implementation and open an unmerged pull request against `develop`.
 
-**Architecture:** A least-privilege GitHub Actions workflow listens for `issues.labeled`, verifies the label, state, and event sender, then posts an idempotent `@codex` instruction through the maintainer's fine-grained GitHub token. A focused static-contract test protects the workflow's security boundaries and delegation instructions, and a runbook documents the one-time Codex Cloud and secret setup.
+**Architecture:** A least-privilege GitHub Actions workflow listens for `issues.labeled`, verifies the label, state, and event sender, then posts an idempotent `@codex` instruction through the maintainer's fine-grained GitHub token. A second trusted `pull_request_target` workflow rejects any commit whose author or committer metadata differs from the maintainer's exact identity without executing pull-request code, then publishes a dedicated status on the PR head SHA. Focused static-contract tests protect both workflows, and a runbook documents the one-time Codex Cloud, secret, and branch-protection setup.
 
 **Tech Stack:** GitHub Actions, `actions/github-script@v8`, Codex Cloud GitHub integration, TypeScript 5.4, Vitest 4.
 
@@ -26,11 +26,13 @@
 
 **Files:**
 - Create: `.github/__tests__/agent-ready-workflow.test.ts`
+- Create: `.github/__tests__/single-contributor-workflow.test.ts`
 - Create: `.github/workflows/agent-ready.yml`
+- Create: `.github/workflows/single-contributor.yml`
 
 **Interfaces:**
-- Consumes: GitHub `issues.labeled` payload fields `label.name`, `issue.number`, `issue.state`, `issue.updated_at`, and `sender.login`; repository secret `CODEX_TRIGGER_TOKEN`.
-- Produces: One `@codex` issue comment per unique label event, marked with `<!-- agent-ready-dispatch:<issue.updated_at> -->`.
+- Consumes: GitHub `issues.labeled` payload fields `label.name`, `issue.number`, `issue.state`, and `sender.login`; the stable workflow run ID; repository secret `CODEX_TRIGGER_TOKEN`.
+- Produces: One `@codex` issue comment per unique label event, marked with `<!-- agent-ready-dispatch:<run-id> -->`, plus a pull-request check enforcing exact commit author and committer metadata.
 
 - [ ] **Step 1: Write the failing workflow-contract test**
 
@@ -75,9 +77,13 @@ describe("agent-ready Codex dispatch workflow", () => {
   it("deduplicates one label event while allowing a later re-label", () => {
     const workflow = readWorkflow();
 
-    expect(workflow).toContain("context.payload.issue.updated_at");
+    expect(workflow).toContain("context.runId");
     expect(workflow).toContain("agent-ready-dispatch:");
-    expect(workflow).toContain("comments.some((comment) =>");
+    expect(workflow).toContain("comments.some(");
+    expect(workflow).toContain(
+      'comment.user?.login === "cemmacabales"',
+    );
+    expect(workflow).toContain('comment.user?.type === "User"');
   });
 
   it("delegates the required branch, verification, PR, and authorship contract", () => {
@@ -141,8 +147,7 @@ jobs:
           github-token: ${{ secrets.CODEX_TRIGGER_TOKEN }}
           script: |
             const issueNumber = context.payload.issue.number;
-            const eventTimestamp = context.payload.issue.updated_at;
-            const marker = `<!-- agent-ready-dispatch:${eventTimestamp} -->`;
+            const marker = `<!-- agent-ready-dispatch:${context.runId} -->`;
 
             const comments = await github.paginate(
               github.rest.issues.listComments,
@@ -154,7 +159,14 @@ jobs:
               },
             );
 
-            if (comments.some((comment) => comment.body?.includes(marker))) {
+            const alreadyDispatched = comments.some(
+              (comment) =>
+                comment.user?.login === "cemmacabales" &&
+                comment.user?.type === "User" &&
+                comment.body?.includes(marker),
+            );
+
+            if (alreadyDispatched) {
               core.info(`Issue #${issueNumber} was already dispatched for this label event.`);
               return;
             }
@@ -195,19 +207,34 @@ Expected: PASS with four passing tests.
 Run:
 
 ```bash
-ruby -e 'require "yaml"; YAML.safe_load_file(".github/workflows/agent-ready.yml", [], [], true); puts "valid YAML"'
+ruby -e 'require "yaml"; [".github/workflows/agent-ready.yml", ".github/workflows/single-contributor.yml"].each { |path| YAML.safe_load(File.read(path), [], [], true) }; puts "valid YAML"'
 ```
 
 Expected: `valid YAML`. Ruby 2.6 treats the unquoted `on` key using YAML 1.1 rules, so the Vitest assertion remains the authoritative check for the exact GitHub trigger spelling.
 
-- [ ] **Step 6: Commit the tested workflow**
+- [ ] **Step 6: Add the deterministic single-contributor check**
+
+Create `.github/workflows/single-contributor.yml` and its focused contract
+test. On opened, synchronized, reopened, and edited `pull_request_target`
+events, paginate the GitHub pull-request commits API and fail unless every
+commit's author and committer name/email exactly match
+`cemmacabales <carlmacabales31@gmail.com>`. Give the workflow only
+`contents: read` and `pull-requests: read` permissions plus only
+`statuses: write`, and never check out or execute pull-request code. Also
+reject co-author trailers and explicit AI attribution in commit messages,
+pull-request titles, and pull-request bodies. Publish
+`single-contributor/verified` directly on the latest PR head SHA and require
+that status in branch protection. Serialize runs by PR number and cancel an
+older run when a newer PR event arrives.
+
+- [ ] **Step 7: Commit the tested workflows**
 
 Run:
 
 ```bash
 git config user.name "cemmacabales"
 git config user.email "carlmacabales31@gmail.com"
-git add .github/__tests__/agent-ready-workflow.test.ts .github/workflows/agent-ready.yml
+git add .github/__tests__/agent-ready-workflow.test.ts .github/__tests__/single-contributor-workflow.test.ts .github/workflows/agent-ready.yml .github/workflows/single-contributor.yml
 git commit -m "feat: dispatch agent-ready issues to Codex"
 ```
 
@@ -220,6 +247,7 @@ Expected: one commit authored and committed only by `cemmacabales <carlmacabales
 **Files:**
 - Create: `docs/agent-ready-automation.md`
 - Test: `.github/__tests__/agent-ready-workflow.test.ts`
+- Test: `.github/__tests__/single-contributor-workflow.test.ts`
 
 **Interfaces:**
 - Consumes: the `CODEX_TRIGGER_TOKEN`, Codex Cloud repository connection, `agent-ready` label, and workflow behavior from Task 1.
@@ -246,6 +274,8 @@ automation accepts label events only from `cemmacabales`; Codex works from
 3. In the repository, open Settings > Secrets and variables > Actions and add
    the token as `CODEX_TRIGGER_TOKEN`.
 4. Confirm the repository has an `agent-ready` label.
+5. Require the `single-contributor/verified` status in the `develop` branch
+   protection or ruleset.
 
 Do not put the token value in source files, workflow logs, issues, or pull
 requests. ChatGPT Plus usage limits apply to delegated Codex Cloud tasks.
@@ -260,15 +290,18 @@ requests. ChatGPT Plus usage limits apply to delegated Codex Cloud tasks.
    and opens a pull request against `develop` without merging it.
 6. Confirm every commit reports only
    `cemmacabales <carlmacabales31@gmail.com>` as author and committer.
+7. Confirm the `single-contributor/verified` status passes on the latest PR
+   head commit.
 
 Close the test pull request and issue manually if they are not intended to
 merge.
 
 ## Retry behavior
 
-A rerun of the same label event is deduplicated. To start a deliberate new
-attempt, remove `agent-ready`, address the cause of the failure, and re-add the
-label. The new label event gets a new marker.
+A rerun of the same label event is deduplicated by its stable workflow run ID.
+Only a matching marker posted by the `cemmacabales` user account is trusted.
+To start a deliberate new attempt, remove `agent-ready`, address the cause of
+the failure, and re-add the label. The new label event gets a new run ID.
 
 ## Rotate or revoke the token
 

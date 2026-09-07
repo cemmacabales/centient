@@ -26,8 +26,7 @@ jobs:
           github-token: ${{ secrets.CODEX_TRIGGER_TOKEN }}
           script: |
             const issueNumber = context.payload.issue.number;
-            const eventTimestamp = context.payload.issue.updated_at;
-            const marker = `<!-- agent-ready-dispatch:${eventTimestamp} -->`;
+            const marker = `<!-- agent-ready-dispatch:${context.runId} -->`;
             const closesReference = `Closes #${issueNumber}`;
 
             const comments = await github.paginate(
@@ -40,7 +39,14 @@ jobs:
               },
             );
 
-            if (comments.some((comment) => comment.body?.includes(marker))) {
+            const alreadyDispatched = comments.some(
+              (comment) =>
+                comment.user?.login === "cemmacabales" &&
+                comment.user?.type === "User" &&
+                comment.body?.includes(marker),
+            );
+
+            if (alreadyDispatched) {
               core.info(`Issue #${issueNumber} was already dispatched for this label event.`);
               return;
             }

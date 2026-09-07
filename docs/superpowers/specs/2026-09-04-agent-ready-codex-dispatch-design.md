@@ -6,9 +6,10 @@ When the trusted maintainer applies the `agent-ready` label to an open GitHub
 issue, automatically delegate that issue to Codex Cloud. Codex must implement
 the issue on an isolated branch, run the repository's verification commands,
 and open a pull request against `develop`. The automation must never merge a
-pull request. Every commit and pull request produced by this automation must
-attribute only `cemmacabales <carlmacabales31@gmail.com>`; no AI agent,
-co-author trailer, bot identity, or generated-by-AI attribution is permitted.
+pull request. Every commit produced by this automation must use only
+`cemmacabales <carlmacabales31@gmail.com>` as both author and committer. No
+co-author trailer or generated-by-AI attribution is permitted in commit or
+pull-request text.
 
 ## Context
 
@@ -61,13 +62,28 @@ Create `.github/workflows/agent-ready.yml` with the following behavior:
    in-progress dispatch.
 4. Use a fine-grained personal access token stored as
    `CODEX_TRIGGER_TOKEN` to read issue comments and create one new comment.
-5. Add an event-specific hidden marker to the comment. A rerun of the same
-   GitHub event detects the marker and exits successfully without starting a
-   duplicate task. Removing and later re-adding `agent-ready` produces a new
-   event marker and intentionally starts a new attempt.
+5. Add the workflow run ID as an event-specific hidden marker to the comment.
+   A rerun of the same GitHub event retains that run ID, detects the marker on
+   a comment authored by the maintainer's user account, and exits successfully
+   without starting a duplicate task. Removing and later re-adding
+   `agent-ready` creates a new workflow run ID and intentionally starts a new
+   attempt. Markers from any other account are ignored.
 6. Put no issue title or body into executable JavaScript or shell source. The
    fixed comment links the issue and tells Codex to treat issue content as
    untrusted requirements rather than operational instructions.
+
+Create `.github/workflows/single-contributor.yml` as a trusted
+`pull_request_target` check. It runs the workflow definition from the
+base branch, inspects every commit returned by GitHub's pull-request commits
+API without checking out or executing pull-request code, and fails unless both
+Git author and committer metadata exactly match
+`cemmacabales <carlmacabales31@gmail.com>`. It also rejects co-author trailers
+and explicit AI attribution in commit messages, pull-request titles, and
+pull-request bodies, and reruns whenever those PR fields are edited. It uses
+the narrowly scoped `statuses: write` permission to publish the required
+`single-contributor/verified` status directly on the pull request's latest head
+commit. Runs are serialized by pull-request number and a newer event cancels
+the stale run before it can overwrite the latest terminal status.
 
 The comment delegates this contract to Codex Cloud:
 
@@ -105,7 +121,7 @@ No OpenAI API key is stored in GitHub.
 
 - A duplicate delivery or manual rerun of one label event finds the same hidden
   marker and does not post another `@codex` mention.
-- A deliberate label removal and re-addition has a different event timestamp,
+- A deliberate label removal and re-addition has a different workflow run ID,
   so it starts a fresh attempt.
 - A missing, expired, or under-scoped `CODEX_TRIGGER_TOKEN` fails the workflow
   before a delegation comment is created.
@@ -113,8 +129,10 @@ No OpenAI API key is stored in GitHub.
   are skipped without consuming Codex usage.
 - Codex Cloud reports implementation blockers on the issue and must not create
   a pull request when its required verification fails.
-- Existing branch protections and `.github/workflows/ci.yml` remain the final
-  deterministic gate on the pull request.
+- The single-contributor workflow deterministically rejects pull requests with
+  any mismatched commit author or committer metadata, co-author trailer, or
+  explicit AI attribution. Repository branch protection must require this
+  `single-contributor/verified` status alongside `.github/workflows/ci.yml`.
 
 ## Testing
 
@@ -125,9 +143,14 @@ security- and behavior-critical contract:
 - exact label, issue-state, and actor guards;
 - least-privilege workflow permissions;
 - use of `CODEX_TRIGGER_TOKEN` rather than an OpenAI API key;
-- event-specific idempotency marker;
+- run-ID idempotency marker accepted only from the maintainer's user account;
 - `develop` base, `codex/issue-<number>` branch convention, verification
   requirement, `Closes` linkage, and no-merge instruction.
+
+Add a second focused test for the pull-request trigger, read-only repository
+and pull-request permissions, scoped status writes to the PR head, exact author
+and committer identity, prohibited attribution, pagination, and deterministic
+failure.
 
 Also parse the workflow with Ruby's built-in YAML parser as a syntax check,
 while relying on the focused test for GitHub-specific `on` semantics because
@@ -144,8 +167,8 @@ repository, workflow logs, issue comments, or documentation.
 ## Non-Goals
 
 - No automatic merging or auto-merge configuration.
-- No commit, pull-request, or contributor attribution for Codex, ChatGPT,
-  GitHub Actions, or any other AI agent or bot.
+- No commit metadata or commit/pull-request text attributing work to Codex,
+  ChatGPT, GitHub Actions, or any other AI agent or bot.
 - No OpenAI API key or pay-as-you-go API usage.
 - No processing of multiple queued issues in one agent task.
 - No external webhook service, database, or scheduler.
