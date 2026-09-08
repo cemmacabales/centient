@@ -12,79 +12,12 @@
 // wearing a multisig's clothes. It is therefore refused on the public network and
 // requires an explicit opt-in even on testnet, and the absence of any configured
 // co-signer fails closed rather than degrading to a single signature.
-import {
-  Keypair,
-  TransactionBuilder,
-  type Asset,
-  type FeeBumpTransaction,
-  type Transaction,
-} from "@stellar/stellar-sdk";
-import { networkPassphrase, stellarNetwork, usdcAsset } from "./config";
-import { payoutAmountString } from "./payout-amount";
+import { Keypair, type Asset } from "@stellar/stellar-sdk";
+import { stellarNetwork, usdcAsset } from "./config";
+import { assertEnvelopeMatchesRequest } from "./cosigner-verify";
 import type { PayoutCoSignRequest, PayoutCoSignature, PayoutCoSigner } from "./payout-envelope";
 
 export type PayoutCoSignerEnvironment = Readonly<Record<string, string | undefined>>;
-
-/** The payment operation an envelope actually settles, whatever wraps it. */
-function innerPayment(transaction: Transaction | FeeBumpTransaction): {
-  destination: string;
-  amount: string;
-  asset: Asset;
-} {
-  const tx =
-    "innerTransaction" in transaction
-      ? (transaction as FeeBumpTransaction).innerTransaction
-      : (transaction as Transaction);
-  const operations = tx.operations;
-  if (operations.length !== 1 || operations[0].type !== "payment") {
-    throw new Error(
-      `payout co-signer: envelope must carry exactly one payment operation, got [${operations
-        .map((o) => o.type)
-        .join(", ")}]`,
-    );
-  }
-  return operations[0] as unknown as {
-    destination: string;
-    amount: string;
-    asset: Asset;
-  };
-}
-
-/**
- * Re-derive what the envelope actually pays and refuse to sign unless it matches
- * the request. This is the check that makes the second signature meaningful: a
- * co-signer that signs whatever XDR it is handed adds a key, not a control.
- * Issue #8's service performs this same comparison against its own ledger copy.
- */
-function assertEnvelopeMatchesRequest(
-  request: PayoutCoSignRequest,
-  expectedAsset: Asset,
-): Transaction | FeeBumpTransaction {
-  const transaction = TransactionBuilder.fromXDR(request.xdr, networkPassphrase());
-  const payment = innerPayment(transaction);
-
-  // The asset is checked against the co-signer's own configuration, never against
-  // the request: a matching destination and numeric amount say nothing about
-  // which asset is actually moving, and the request is the very thing being
-  // independently verified.
-  if (!payment.asset.equals(expectedAsset)) {
-    throw new Error(
-      `payout co-signer: envelope pays asset ${payment.asset.getCode()}:${payment.asset.getIssuer()}, not the configured payout asset ${expectedAsset.getCode()}:${expectedAsset.getIssuer()}`,
-    );
-  }
-  if (payment.destination !== request.destination) {
-    throw new Error(
-      `payout co-signer: envelope destination ${payment.destination} does not match the requested destination ${request.destination}`,
-    );
-  }
-  const expected = payoutAmountString(request.amountUnits);
-  if (payment.amount !== expected) {
-    throw new Error(
-      `payout co-signer: envelope amount ${payment.amount} does not match the requested amount ${expected}`,
-    );
-  }
-  return transaction;
-}
 
 /**
  * An in-process co-signer holding the policy key directly. Signs only after
