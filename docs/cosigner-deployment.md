@@ -58,6 +58,15 @@ RESET ROLE;
 If the `UPDATE` succeeds, stop — the grant is wrong and the isolation is
 cosmetic.
 
+Build `COSIGNER_DATABASE_URL` from the Postgres service's **public** connection
+details (`DATABASE_PUBLIC_URL`, or the host and port on its Connect tab), with
+your new user and password substituted in.
+
+**It must be the public host, not `postgres.railway.internal`.** Railway's
+private networking is scoped to a single project, and the co-signer lives in a
+different project by design. The internal hostname does not resolve from there,
+and the failure presents as a hung connection rather than a clear error.
+
 ## 2. Generate the keys and secrets
 
 The policy keypair may already exist from the #5 multisig setup
@@ -152,6 +161,7 @@ submission, and the #12 suite regression-guards it).
 | App crash-loops: "configured with both COSIGNER_URL and STELLAR_POLICY_SIGNER_SECRET" | The policy seed is still in the app project. Delete it there. |
 | Every payout refused 401 | `COSIGNER_SHARED_SECRET` differs between the two projects. |
 | Every payout refused 409 "no ledger row" | `COSIGNER_DATABASE_URL` points at the wrong database. |
+| Co-signer hangs or times out reaching Postgres | `COSIGNER_DATABASE_URL` uses `postgres.railway.internal`. Private networking is per-project; use the public host. |
 | Refused 409 "already carries broadcast hash" | Working as intended — that payout settled already. Do not retry it; reconcile. |
 | Refused 503 "same-workspace is never permitted on the public network" | `STELLAR_NETWORK=public` under the MVP topology. This is the mainnet gate; see the ADR's exit criteria. |
 | Co-signer exits at boot | A required variable is missing. There are no fallbacks by design; the log names the one. |
