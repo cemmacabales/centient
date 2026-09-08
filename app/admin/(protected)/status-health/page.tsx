@@ -13,7 +13,8 @@ function unitsToFourDecimalUsdc(units: string | null): string {
   return `${whole}.${fraction}`;
 }
 
-function reserveStatusLabel(status: string): string {
+function reserveStatusLabel(status: string | null): string {
+  if (status === null) return "—";
   const words = status.replaceAll("_", " ");
   return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
 }
