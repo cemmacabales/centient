@@ -16,10 +16,40 @@ function isTerminalStatus(status: string): boolean {
 }
 
 /**
- * Re-check eligibility under a per-wallet advisory lock. Returns the fresh
- * submission row if it still needs paying, or null if another worker already
- * advanced it to a terminal state. The on-chain payout is deliberately NOT
- * broadcast here — see reprocessPayoutWithNonceSafety for the rationale.
+ * How long a claimed retry is considered in flight. Sized to the retry cron's
+ * shortest backoff (`BASE_BACKOFF_MS`, 60s at retryCount 0) so the lease and the
+ * backoff are exactly complementary: the cron will not offer a `failed`
+ * submission again until 60s have passed, and this refuses it for the same 60s.
+ * A lease can therefore never delay a retry the cron considers due.
+ */
+const RETRY_CLAIM_LEASE_MS = 60_000;
+
+/**
+ * Claim a submission for one retry under a per-wallet advisory lock. Returns the
+ * fresh row if it still needs paying, or null if it is terminal, already
+ * broadcast, or held by another retry in flight. The on-chain payout is
+ * deliberately NOT broadcast here — see reprocessPayoutWithNonceSafety.
+ *
+ * The lease is what makes the advisory lock mean anything. The lock is
+ * transaction-scoped, and this function used only to *read*, so N callers
+ * serialized by the lock each observed the identical pre-broadcast row, each
+ * returned it, and each broadcast — the lock ordered the reads and prevented
+ * nothing. `reprocessPayoutWithNonceSafety` is reachable concurrently in two
+ * ways that make that a live double-payment: two retry-cron runs overlapping
+ * (the `stuckPending` query filters on age, never on whether a retry is already
+ * running), and an admin retry landing while the cron holds the same row.
+ *
+ * Writing `lastRetriedAt` inside the locked transaction is what a second
+ * claimant observes. Same column, same lease idea, and the same
+ * `STALE_PROCESSING_MS`-shaped reasoning the reconciler's `claimNextSubmission`
+ * and the worker's `claimNextJob` already use for their own rows.
+ *
+ * What this does not do: there is no heartbeat on a submission, so a broadcast
+ * still running when its lease expires can be claimed again. That window is
+ * bounded by the lease rather than unbounded, and the stored `payoutTxHash`
+ * refuses re-broadcast the moment the first attempt persists. Closing it
+ * outright needs the envelope hash persisted before submit — the same
+ * process-death gap tracked on the roadmap, and a payout state-machine change.
  */
 async function claimForRetry(
   tx: any,
@@ -34,6 +64,21 @@ async function claimForRetry(
   // A saved txHash means the on-chain transfer was already broadcast. Returning null
   // here prevents re-broadcast even if a prior error left the status as "failed".
   if (fresh.payoutTxHash) return null;
+  if (
+    fresh.lastRetriedAt &&
+    Date.now() - fresh.lastRetriedAt.getTime() < RETRY_CLAIM_LEASE_MS
+  ) {
+    return null;
+  }
+
+  // Taken before the lock is released, so the next claimant reads it and stands
+  // down. Every later write of this column — success, failure, or the admin
+  // route's reset — overwrites the lease, which is correct: each one is a newer
+  // statement about the same retry.
+  await tx.submission.update({
+    where: { id: submissionId },
+    data: { lastRetriedAt: new Date() },
+  });
 
   return fresh;
 }
