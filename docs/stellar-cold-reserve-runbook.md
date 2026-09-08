@@ -42,8 +42,29 @@ STELLAR_COLD_MIN_RETAIN_UNITS=500000000
 
 The example policy triggers at 25 USDC, restores exactly 100 USDC, and refuses
 any refill that would leave less than 50 USDC cold. Set values from the measured
-daily payout budget. The worst-case USDC loss after a complete hot-wallet
-compromise is the configured target, never the remaining cold balance.
+daily payout budget.
+
+### Worst-case loss
+
+A complete hot-wallet compromise can spend at most what the hot wallet holds,
+and the hot wallet never holds more than the refill target, because every
+refill restores *exactly* the target and nothing else deposits into it. The
+cold reserve is untouched: no deployed service holds a cold seed, and a
+refill needs two of the three cold signers. So the bound is the target, not
+the reserve.
+
+| Quantity | Source | Example policy |
+|---|---|---|
+| Hot float target | `STELLAR_HOT_FLOAT_TARGET_UNITS` | 100 USDC |
+| Daily payout cap | `DAILY_PAYOUT_CAP_UNITS` | set ≤ target so one day's payouts cannot outrun the float |
+| Measured daily payout budget | `getPayoutActivitySince` over the trailing 7 days, or the admin status page | fill in before choosing the target |
+| **Worst-case loss** | = hot float target | **100 USDC** |
+| Cold balance at risk | none | 0 USDC |
+
+Choose the target as a small multiple of the measured daily budget (two to three
+days covers a weekend without a refill ceremony). Raising the target raises the
+worst-case loss one-for-one; that trade is the only policy decision here, and it
+is re-made whenever the daily budget changes materially.
 
 The cold account also needs XLM for its base reserve, USDC trustline, and rare
 refill fees. Keep at least 5 XLM spendable above its ledger reserve. The refill
@@ -128,7 +149,10 @@ unattended scheduler must not create competing stale envelopes.
 ## Wallet-health schedule and authenticated check
 
 Wallet health is checked by the authenticated `POST /api/cron/wallet-health`
-endpoint. Configure the scheduler with `CRON_SECRET` in its secret store and
+endpoint. **Nothing in this repository schedules it** — `railway.json` only
+runs migrations before deploy, and the same is true of `/api/cron/payout-retry`
+and `/api/cron/reserve-refill`. Provision a scheduler outside the app (a Railway
+cron service or equivalent) with `CRON_SECRET` in its own secret store and
 invoke it at least once per minute in production so short-lived balance and
 activity breaches are observed promptly:
 
@@ -140,7 +164,12 @@ curl -X POST https://APP_HOST/api/cron/wallet-health \
 The response contains the current USDC and spendable XLM status, payout and
 failure metrics, reserve state, configured thresholds, and alert delivery
 results. A `sent` result means Discord accepted the alert; `suppressed` means
-the alert identity is inside its cooldown window. Alert identities include
+the alert identity is inside its cooldown window. Every identity shares one
+cooldown, `HEALTH_ALERT_COOLDOWN_MS` (default 15 minutes). That includes
+`payout-cap`, which before #72 had its own 60-minute cooldown in the payout
+path; the shorter, shared window is deliberate, because the payout path and the
+health monitor raise the same identity through one Redis lease and must agree
+on its length. Alert identities include
 `wallet-usdc-warn`, `wallet-usdc-page`, `wallet-xlm-warn`,
 `wallet-xlm-page`, `payout-rate-spike`, `payout-volume-spike`, `payout-cap`,
 `repeated-payout-failures`, `reserve-refill-overdue`,
@@ -319,9 +348,16 @@ asset issuer, fee, expiry, and hash to the approved request before signing.
 Return the twice-signed XDR to the online operator host:
 
 ```bash
+STELLAR_RESERVE_REFILL_AMOUNT_UNITS=<amount from prepare> \
 STELLAR_RESERVE_REFILL_XDR='<twice-signed XDR>' \
 npm run stellar:reserve:refill -- submit
 ```
+
+`STELLAR_RESERVE_REFILL_AMOUNT_UNITS` is required and must be the same value
+the custodians signed against in the `sign` step. The command refuses to run
+without it: an envelope carrying any other amount is refused before Horizon is
+contacted, which is the only amount check at submit that does not read its
+expectation from the envelope itself.
 
 Immediately before submission, the command reloads hot and cold balances and
 re-checks both policy invariants against the exact amount the custodians
@@ -387,21 +423,53 @@ updated worst-case calculation.
 
 ## Public evidence record
 
-Record only public facts after the live testnet proof:
+Record only public facts after the live testnet proof. Testnet proof taken
+2026-09-08 for #10 / #73, all values verified through Horizon:
 
 ```text
-Network:
-Cold account:
-Cold ops public key:
-Cold policy public key:
-Thresholds and weights:
-Trustline transaction hash:
-Multisig setup transaction hash:
-Refill transaction hash:
-Hot USDC before -> after:
-Cold USDC before -> after:
-Trigger / target / retained floor:
+Network:                          testnet
+Cold account:                     GDPGRS4P6UZZK23CKKELGLJAYTCAWPV4C7TH6Q322SF735A5H6U5XK5G
+Cold ops public key:              GDERX2QG4LY4SK6VHBX5VRKE2PFDB25ZCD3OLUM4RDVAY43EOXBRZ4BC
+Cold policy public key:           GAOTECDRSB5HHAJAMOOMUYTDOR5HTFNSSETEDNWJDXDFRBZVQMOOXD6V
+Thresholds and weights:           low/med/high 2/2/2; master, ops, policy each weight 1
+Trustline transaction hash:       fddea73e981194f020bcf531f96140c3117f8c400915228e6901c2312b4a8c6a
+Multisig setup transaction hash:  05bbe397033a7984700b8d844cf1d247e04db7537fd9a0293a5bda6c1506d14a
+Cold funding (hot -> cold, via the multisig payout service, 2 signatures + fee-bump):
+                                  452fd68061ecae052ebd681ee47010adbc2e05c01c86afb9bba685a77fb1d836
+Refill transaction hash:          3a5969cdac22dad6646630c90cdb3ae3919a727f2abd8f663863b7e9e6b9ef3e
+                                  (source = cold account, 1 payment op, 2 signatures: cold master + cold ops,
+                                   fee 100 stroops paid by the cold account, ledger 4563417)
+Hot USDC before -> after:         8.9000000 -> 12.0000000
+Cold USDC before -> after:        10.0000000 -> 6.9000000
+Trigger / target / retained floor: 100000000 / 120000000 / 50000000 units (10 / 12 / 5 USDC)
+Refill amount:                    31000000 units (3.1 USDC) = target - hot, passed to submit as
+                                  STELLAR_RESERVE_REFILL_AMOUNT_UNITS
 stellar.expert account and transaction links:
+  https://stellar.expert/explorer/testnet/account/GDPGRS4P6UZZK23CKKELGLJAYTCAWPV4C7TH6Q322SF735A5H6U5XK5G
+  https://stellar.expert/explorer/testnet/tx/fddea73e981194f020bcf531f96140c3117f8c400915228e6901c2312b4a8c6a
+  https://stellar.expert/explorer/testnet/tx/05bbe397033a7984700b8d844cf1d247e04db7537fd9a0293a5bda6c1506d14a
+  https://stellar.expert/explorer/testnet/tx/452fd68061ecae052ebd681ee47010adbc2e05c01c86afb9bba685a77fb1d836
+  https://stellar.expert/explorer/testnet/tx/3a5969cdac22dad6646630c90cdb3ae3919a727f2abd8f663863b7e9e6b9ef3e
 ```
+
+The three cold seeds for this testnet proof were generated on the provisioning
+machine and live only in a mode-600 file outside the repository. They were
+never placed in `.env.local` or exported into the shell. Each `sign` step was
+run with a one-line env file holding exactly one `STELLAR_COLD_SIGNER_SECRET`,
+and `submit` was run without any such file, so no seed variable existed in its
+process.
+
+Note what that does and does not guarantee. `node --env-file` *adds* variables;
+it does not remove ones already in the ambient environment, and every command
+here also loads `.env.local` through `dotenv/config`. Seed isolation therefore
+comes from the operator's environment, not from the flag: run `submit` from a
+shell where no `STELLAR_COLD_*_SECRET` variable is set (for example
+`env -u STELLAR_COLD_SIGNER_SECRET npm run stellar:reserve:refill -- submit`),
+and never put a cold seed in `.env.local`. The exact `sign` and `submit`
+commands are in "Collect two independent signatures" and "Submit once" above.
+
+That is the same custody gap the payout account has (see
+`docs/stellar-multisig-runbook.md`, "Key custody — current state"), and it is
+acceptable for a disposable testnet proof only.
 
 Never record a seed, secret-manager reference, or signed XDR.
