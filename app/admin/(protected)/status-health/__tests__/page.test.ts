@@ -163,4 +163,23 @@ describe("admin status health page", () => {
     expect(html).toContain("Permanent failures</div><div class=\"mt-3 font-headline text-3xl font-extrabold tracking-tight text-on-surface\">—</div>");
     expect(html).not.toContain("0 payouts");
   });
+
+  it("keeps rail health rendered when the legacy database snapshot fails", async () => {
+    mockGetHealthSnapshot.mockRejectedValueOnce(new Error("database unavailable"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const html = renderToStaticMarkup(await AdminStatusHealthPage());
+
+    // Independent rail health survives: wallet cards, cap card, and the banner.
+    expect(html).toContain("5.0000 USDC");
+    expect(html).toContain("6.0000 XLM spendable");
+    expect(html).toContain("80% used");
+    expect(html).toContain("Daily payout cap is approaching");
+    // Legacy database-backed cards report unavailable rather than a false zero.
+    expect(html).toContain("Queue and task metrics are unavailable");
+    expect(html).toContain("Pending</div><div class=\"mt-3 font-headline text-3xl font-extrabold tracking-tight text-on-surface\">—</div>");
+    expect(html).not.toContain("Stuck payout detected");
+    expect(JSON.stringify(errors.mock.calls)).not.toContain("database unavailable");
+    errors.mockRestore();
+  });
 });
