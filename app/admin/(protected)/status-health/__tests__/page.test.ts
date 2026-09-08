@@ -108,6 +108,10 @@ describe("admin status health page", () => {
     expect(html).toContain("5.0000 USDC");
     expect(html).toContain("6.0000 XLM spendable");
     expect(html).toContain("10.0000 XLM total; 3.0000 minimum; 1.0000 liabilities");
+    // The thresholds are inclusive (`evaluateStroopThresholds` uses `<=`), so
+    // the label must not promise a strict `<`.
+    expect(html).toContain("Warning: ≤50 | Page: ≤10");
+    expect(html).toContain("Warning: ≤5 | Page: ≤2");
     expect(html).toContain("Daily payout cap is approaching");
     expect(html).toContain("80% used");
     expect(html).toContain("Refill required");
