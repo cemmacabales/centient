@@ -186,6 +186,33 @@ describe("handleCoSignRequest", () => {
     expect((await handleCoSignRequest(shared, body, headers)).status).toBe(401);
   });
 
+  it("does not let two concurrent requests both spend the last of the cap", async () => {
+    // Both requests read the broadcast volume before either has settled, so
+    // without serialisation they both see room and both get signed — and the two
+    // together exceed the cap this service exists to enforce. The signing
+    // decision therefore runs one at a time.
+    const shared = deps({
+      capUnits: 30_000_000n,
+      ledger: {
+        readPayout: async () => ledgerRow(),
+        // Nothing has broadcast yet: the race is between two in-flight requests,
+        // not between a request and a settled payment.
+        broadcastVolumeSince: async () => 0n,
+      },
+    });
+    const first = signedRequest();
+    const second = signedRequest();
+
+    const [a, b] = await Promise.all([
+      handleCoSignRequest(shared, first.body, first.headers),
+      handleCoSignRequest(shared, second.body, second.headers),
+    ]);
+
+    const signed = [a, b].filter((r) => r.status === 200);
+    expect(signed).toHaveLength(1);
+    expect([a, b].find((r) => r.status !== 200)?.status).toBe(409);
+  });
+
   it("never returns a transaction, only a detached signature", async () => {
     const { body, headers } = signedRequest();
 
