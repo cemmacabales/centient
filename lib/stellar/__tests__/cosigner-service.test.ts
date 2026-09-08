@@ -4,6 +4,7 @@ import { handleCoSignRequest, type CoSignerDeps } from "../cosigner-service";
 import { signCoSignRequest, type NonceStore } from "../cosigner-transport";
 import { buildPayoutPayment, signAsPlatform } from "../payout-envelope";
 import type { LedgerPayout } from "../cosigner-ledger";
+import { checkPayoutCap } from "@/lib/payout-cap";
 
 const policy = Keypair.random();
 const platform = Keypair.random();
@@ -16,6 +17,7 @@ beforeEach(() => {
   process.env.STELLAR_NETWORK = "testnet";
   process.env.STELLAR_USDC_ISSUER = usdc.getIssuer();
   process.env.COSIGNER_ISOLATION_LEVEL = "same-workspace";
+  delete process.env.DAILY_PAYOUT_CAP_UNITS;
 });
 
 function nonces(): NonceStore {
@@ -150,6 +152,32 @@ describe("handleCoSignRequest", () => {
   it("refuses once its own daily cap would be exceeded", async () => {
     // The co-signer's cap is configured separately from the payout service's, so
     // this is a genuinely second opinion rather than the same check run twice.
+    const { body, headers } = signedRequest();
+
+    const response = await handleCoSignRequest(
+      deps({
+        capUnits: 30_000_000n,
+        ledger: {
+          readPayout: async () => ledgerRow(),
+          broadcastVolumeSince: async () => 20_000_000n,
+        },
+      }),
+      body,
+      headers,
+    );
+
+    expect(response.status).toBe(409);
+    expect(JSON.stringify(response.body)).toMatch(/cap/i);
+  });
+
+  it("still refuses when the payout service cap is disabled", async () => {
+    // A real app-side bypass must not affect the policy service's independently
+    // configured decision.
+    process.env.DAILY_PAYOUT_CAP_UNITS = "0";
+    await expect(checkPayoutCap(amountUnits)).resolves.toMatchObject({
+      allowed: true,
+      cap: 0n,
+    });
     const { body, headers } = signedRequest();
 
     const response = await handleCoSignRequest(

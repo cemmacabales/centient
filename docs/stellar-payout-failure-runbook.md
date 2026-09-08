@@ -145,7 +145,10 @@ reset or duplicate it.
 
 ## Daily payout cap
 
-Enforced in **USDC units** (7-dec base units; ST-2b). When the cap is hit, the
-payout is marked failed/skipped and the balance (campaign or user) is refunded,
-retry budget consumed. Env: `MIN_WITHDRAWAL_UNITS` and the cap envs are all in USDC
-units, not XLM stroops.
+Enforced in **USDC units** (7-dec base units; ST-2b) independently by the payout
+service and policy co-signer. When the application cap blocks a per-submission
+payout, the submission remains pending, its retry budget is not consumed, its
+campaign debit stays reserved, and the cap alert is emitted; a co-signer breach
+returns no signature. See the
+[daily payout cap runbook](stellar-daily-payout-cap-runbook.md) for both variables,
+their deliberately different windows, and the change procedure.

@@ -60,14 +60,62 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM centient_cos
 Verify the boundary is real rather than assumed:
 
 ```sql
-SET ROLE centient_cosigner;
-SELECT count(*) FROM public.submissions;          -- succeeds
-UPDATE public.submissions SET payout_status = 'x'; -- must fail: permission denied
-RESET ROLE;
+-- Allowed read. This transaction should complete normally.
+BEGIN;
+SET LOCAL ROLE centient_cosigner;
+SELECT count(*) FROM public.submissions;
+ROLLBACK;
+
+-- The payout-job request path reads a different table. This must also succeed.
+BEGIN;
+SET LOCAL ROLE centient_cosigner;
+SELECT count(*) FROM public.payout_jobs;
+ROLLBACK;
+
+-- Run each refusal probe as its own transaction. After PostgreSQL rejects a
+-- statement, that transaction is aborted until ROLLBACK; combining the probes
+-- would make every later one fail without proving its own permission boundary.
+BEGIN;
+SET LOCAL ROLE centient_cosigner;
+UPDATE public.submissions
+SET "payoutStatus" = "payoutStatus"
+WHERE false;
+-- must fail: permission denied for table submissions
+ROLLBACK;
+
+BEGIN;
+SET LOCAL ROLE centient_cosigner;
+DELETE FROM public.submissions WHERE false;
+-- must fail: permission denied for table submissions
+ROLLBACK;
+
+BEGIN;
+SET LOCAL ROLE centient_cosigner;
+INSERT INTO public.payout_jobs ("id", "status", "createdAt", "updatedAt")
+VALUES ('cosigner-permission-probe', 'queued', NOW(), NOW());
+-- must fail: permission denied for table payout_jobs
+ROLLBACK;
+
+BEGIN;
+SET LOCAL ROLE centient_cosigner;
+UPDATE public.payout_jobs SET "status" = 'queued' WHERE false;
+-- must fail: permission denied for table payout_jobs
+ROLLBACK;
+
+BEGIN;
+SET LOCAL ROLE centient_cosigner;
+SELECT count(*) FROM public.users;
+-- must fail: permission denied for table users
+ROLLBACK;
 ```
 
-If the `UPDATE` succeeds, stop — the grant is wrong and the isolation is
-cosmetic.
+`"payoutStatus"` is the real mapped column name, and `queued` is a valid
+`PayoutJobStatus` value. Those details matter: a nonexistent column or invalid
+enum value would fail before PostgreSQL checked the role's permissions and would
+certify nothing. If either allowed read fails, any write succeeds, or the
+`users` read succeeds, stop — the grant is wrong and the isolation is cosmetic.
+The transactions make every probe safe even if a grant is accidentally too
+broad.
 
 Build `COSIGNER_DATABASE_URL` from the Postgres service's **public** connection
 details (`DATABASE_PUBLIC_URL`, or the host and port on its Connect tab), with
@@ -140,7 +188,7 @@ openssl rand -hex 32
    | `STELLAR_POLICY_SIGNER_SECRET` | the policy seed (`S…`) |
    | `COSIGNER_SHARED_SECRET` | the `openssl rand -hex 32` output |
    | `COSIGNER_DATABASE_URL` | `postgresql://centient_cosigner:…@PUBLIC_HOST:PORT/railway?sslmode=require` |
-   | `COSIGNER_DAILY_CAP_UNITS` | e.g. `200000000000` (200 USDC) — set it independently of the app's cap |
+   | `COSIGNER_DAILY_CAP_UNITS` | e.g. `1000000000` (100 USDC) — set it independently of the app's cap and at or below the hot-float target; see the [daily-cap runbook](stellar-daily-payout-cap-runbook.md) |
    | `COSIGNER_ISOLATION_LEVEL` | `same-workspace` |
    | `STELLAR_NETWORK` | `testnet` |
    | `STELLAR_USDC_ISSUER` | the same issuer the app pays in |

@@ -186,7 +186,8 @@ with `DAILY_PAYOUT_CAP_UNITS=0` so the proof did not depend on a database.
 
 - It does not implement the independent co-signer's transport, isolation, or
   ledger re-derivation. That is **#8**, behind the `PayoutCoSigner` interface.
-- It does not enforce a daily cap at the co-signer. The existing cap runs at
-  `payReward`; the second, independent cap is **#9**.
+- It did not originally enforce a daily cap at the co-signer. **#9** now supplies
+  that second, independent gate; see the
+  [daily payout cap runbook](stellar-daily-payout-cap-runbook.md).
 - It does not remove every remaining single-key broadcast path elsewhere in the
   codebase, nor add the lane-wide signature-count regression guard. That is **#12**.

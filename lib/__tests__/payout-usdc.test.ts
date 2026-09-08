@@ -71,6 +71,9 @@ describe("payReward → multisig USDC payout", () => {
     );
     expect(hash).toBe("abc123def456");
     expect(hash).not.toMatch(/^0x/);
+    // A settled payout is recorded by the caller, so the alert reads it from the
+    // ledger rather than being handed an amount it would then double-count.
+    expect(mockMaybeSendCapAlert).toHaveBeenCalledWith();
   });
 
   it("has no single-key broadcast to fall back to", async () => {
@@ -99,6 +102,8 @@ describe("payReward → multisig USDC payout", () => {
       PayoutCapError,
     );
     expect(mockSubmitMultisigPayout).not.toHaveBeenCalled();
+    expect(mockMaybeSendCapAlert).toHaveBeenCalledOnce();
+    expect(mockMaybeSendCapAlert).toHaveBeenCalledWith(5_000_000n);
   });
 
   it("refuses to broadcast when no co-signer is configured", async () => {

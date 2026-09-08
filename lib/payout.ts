@@ -38,7 +38,14 @@ export async function payReward(
 ): Promise<string> {
   const amount = amountUnits ?? rewardInUnits();
 
-  await checkPayoutCap(amount);
+  try {
+    await checkPayoutCap(amount);
+  } catch (err) {
+    if (err instanceof PayoutCapError) {
+      maybeSendCapAlert(amount).catch(() => {});
+    }
+    throw err;
+  }
 
   // Resolved before submission so a missing co-signer fails the payout outright
   // rather than after an envelope has been built and a sequence number spent.
@@ -49,6 +56,8 @@ export async function payReward(
     { coSigner },
   );
 
+  // No argument here: the caller records this broadcast's tuple once `payReward`
+  // returns, so passing the amount would race that write and count it twice.
   maybeSendCapAlert().catch(() => {});
 
   return hash;
