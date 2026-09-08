@@ -35,6 +35,16 @@ vi.mock("@/lib/stellar/payout-cosigner", () => ({
 
 vi.mock("@/lib/stellar/balance", () => ({ checkAndAlert: vi.fn(async () => {}) }));
 
+// The real implementation is kept — the positive cases assert on what it
+// actually reports. Wrapping it only makes the *call* observable, which is what
+// the negative case needs: `maybeSendCapAlert()` is fire-and-forget, so checking
+// its delivery after `processJob` returns would race an in-flight alert and pass
+// for the wrong reason. The call itself is synchronous at every call site.
+vi.mock("@/lib/payout-cap", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/payout-cap")>();
+  return { ...actual, maybeSendCapAlert: vi.fn(actual.maybeSendCapAlert) };
+});
+
 vi.mock("@/lib/payout-broadcast", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/payout-broadcast")>();
   return { ...actual, persistAcceptedPayment: vi.fn(actual.persistAcceptedPayment) };
@@ -47,12 +57,14 @@ vi.mock("@sentry/nextjs", () => ({
 
 import type { HealthAlert } from "@/lib/health-alert";
 import { abandonAcceptedPayment, persistAcceptedPayment } from "@/lib/payout-broadcast";
+import { maybeSendCapAlert } from "@/lib/payout-cap";
 import { processJob } from "@/lib/payout-worker";
 import { submitMultisigPayout } from "@/lib/stellar/payout-submitter";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 import { createUser } from "@/tests/helpers/factories";
 
 const mockSubmitPayout = vi.mocked(submitMultisigPayout);
+const mockMaybeSendCapAlert = vi.mocked(maybeSendCapAlert);
 const mockPersistAcceptedPayment = vi.mocked(persistAcceptedPayment);
 
 // 1 USDC cap against a 0.9 USDC payout: 90% of the cap, over the 80% default
@@ -146,6 +158,9 @@ describe("the daily cap alert is evaluated after the broadcast tuple is persiste
       amountUnits: PAYOUT_UNITS,
     });
     expect(jobAtAlertTime?.broadcastAt).toBeInstanceOf(Date);
+    // Raised once, by the persisting caller, with no amount — never also from
+    // inside `payReward`, which is where the stale read came from.
+    expect(mockMaybeSendCapAlert).toHaveBeenCalledExactlyOnceWith();
   });
 
   it("does not raise the alert from the broadcast itself, where no tuple exists yet", async () => {
@@ -164,6 +179,14 @@ describe("the daily cap alert is evaluated after the broadcast tuple is persiste
     await processJob(job.id, null, job.userId!, PAYOUT_UNITS, "WITHDRAWAL");
 
     expect(mockSubmitPayout).toHaveBeenCalledOnce();
+
+    // Deterministic, not a race: every call site invokes `maybeSendCapAlert()`
+    // synchronously, so by the time `processJob` has returned the call has
+    // either happened or never will. Asserting on the call rather than on its
+    // delivery is what makes this assertion sound for a fire-and-forget path.
+    expect(mockMaybeSendCapAlert).not.toHaveBeenCalled();
+
+    // And the payment is not silently dropped: it settled, so it pages.
     const keys = mockSendAlert.mock.calls.map(([alert]) => (alert as HealthAlert).key);
     expect(keys).not.toContain("payout-cap");
     expect(keys).toContain("payout-persistence-unavailable");

@@ -25,6 +25,15 @@ function isTerminalStatus(status: string): boolean {
 const RETRY_CLAIM_LEASE_MS = 60_000;
 
 /**
+ * How often an in-flight retry refreshes its claim. Well inside
+ * `RETRY_CLAIM_LEASE_MS`, for the reason the worker's own heartbeat exists: a
+ * Horizon submit can take several seconds, and a lease that expires under a live
+ * broadcast would let a second claimant broadcast before the first stores its
+ * hash — the double-payment the lease is there to prevent.
+ */
+const RETRY_CLAIM_HEARTBEAT_MS = 20_000;
+
+/**
  * Claim a submission for one retry under a per-wallet advisory lock. Returns the
  * fresh row if it still needs paying, or null if it is terminal, already
  * broadcast, or held by another retry in flight. The on-chain payout is
@@ -44,12 +53,14 @@ const RETRY_CLAIM_LEASE_MS = 60_000;
  * `STALE_PROCESSING_MS`-shaped reasoning the reconciler's `claimNextSubmission`
  * and the worker's `claimNextJob` already use for their own rows.
  *
- * What this does not do: there is no heartbeat on a submission, so a broadcast
- * still running when its lease expires can be claimed again. That window is
- * bounded by the lease rather than unbounded, and the stored `payoutTxHash`
- * refuses re-broadcast the moment the first attempt persists. Closing it
- * outright needs the envelope hash persisted before submit — the same
- * process-death gap tracked on the roadmap, and a payout state-machine change.
+ * A live retry refreshes the lease while it broadcasts (see
+ * `heartbeatRetryClaim`), so the lease cannot expire underneath a payout that is
+ * still in flight. What remains is the process-death case: a worker that dies
+ * mid-submit stops refreshing, the lease expires, and the row is reclaimed
+ * without the envelope hash the first attempt never got to persist. Closing that
+ * needs the hash persisted *before* submit and reconciled before reissue — the
+ * same gap tracked on the roadmap, and a payout state-machine change rather than
+ * a locking one.
  */
 async function claimForRetry(
   tx: any,
@@ -81,6 +92,28 @@ async function claimForRetry(
   });
 
   return fresh;
+}
+
+/**
+ * Keep a claimed retry's lease fresh for as long as its payout is in flight.
+ *
+ * `updateMany` with `payoutTxHash: null` rather than `update` by id, so the
+ * refresh becomes a no-op the instant the broadcast tuple lands. That keeps a
+ * heartbeat that fires between the persist and `clearInterval` from writing a
+ * later `lastRetriedAt` over the recorded broadcast time.
+ *
+ * Failures are swallowed: a missed refresh costs at most a reclaimed lease, and
+ * turning a bookkeeping error into a payment error is exactly backwards.
+ */
+function heartbeatRetryClaim(submissionId: string): NodeJS.Timeout {
+  return setInterval(() => {
+    prisma.submission
+      .updateMany({
+        where: { id: submissionId, payoutTxHash: null },
+        data: { lastRetriedAt: new Date() },
+      })
+      .catch(() => {});
+  }, RETRY_CLAIM_HEARTBEAT_MS);
 }
 
 /**
@@ -155,104 +188,112 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
   );
   if (!fresh) return;
 
-  // Step 2: broadcast the on-chain transfer. payReward enforces the payout cap.
-  // txHash is now a Stellar hash (plain string) — the full payout-service port to
-  // `payUsdc`/`G…` destinations is ST-3d (#298); this widens the type to keep the
-  // build green in the meantime.
-  let txHash: string;
+  // The claim is a lease, and a lease that expires under a live broadcast is
+  // no lease at all. Refresh it for exactly as long as this payout is in
+  // flight — through the submit and through the write that records it.
+  const heartbeat = heartbeatRetryClaim(submissionId);
   try {
-    txHash = await payReward(walletAddress, amount, {
-      kind: "submission",
-      id: submissionId,
-    });
-  } catch (err: any) {
-    console.error(`[payout-service] reprocess failed for submission ${submissionId}:`, err);
+    // Step 2: broadcast the on-chain transfer. payReward enforces the payout cap.
+    // txHash is now a Stellar hash (plain string) — the full payout-service port to
+    // `payUsdc`/`G…` destinations is ST-3d (#298); this widens the type to keep the
+    // build green in the meantime.
+    let txHash: string;
+    try {
+      txHash = await payReward(walletAddress, amount, {
+        kind: "submission",
+        id: submissionId,
+      });
+    } catch (err: any) {
+      console.error(`[payout-service] reprocess failed for submission ${submissionId}:`, err);
 
-    if (err instanceof PayoutCapError || err?.name === "PayoutCapError") {
-      // Cap breach is transient — leave the submission pending and don't burn a retry.
+      if (err instanceof PayoutCapError || err?.name === "PayoutCapError") {
+        // Cap breach is transient — leave the submission pending and don't burn a retry.
+        await prisma.submission.update({
+          where: { id: submissionId },
+          data: { payoutStatus: "pending" },
+        });
+        return;
+      }
+
+      // Non-retryable rail errors (`op_no_trust` — recipient holds no USDC
+      // trustline; `op_no_destination` — recipient unfunded) can never succeed on
+      // a blind retry. Surface the reason explicitly; the submission is marked
+      // failed below and the cron retry job (ST-3b) must not auto-retry it.
+      if (err instanceof StellarPaymentError && !err.retryable) {
+        console.error(
+          `[payout-service] submission ${submissionId} permanently failed (${err.code}): ${err.message}`,
+        );
+      }
+
       await prisma.submission.update({
         where: { id: submissionId },
-        data: { payoutStatus: "pending" },
+        data: {
+          payoutStatus: "failed",
+          retryCount: fresh.retryCount + 1,
+          lastRetriedAt: new Date(),
+        },
       });
-      return;
+
+      throw err;
     }
 
-    // Non-retryable rail errors (`op_no_trust` — recipient holds no USDC
-    // trustline; `op_no_destination` — recipient unfunded) can never succeed on
-    // a blind retry. Surface the reason explicitly; the submission is marked
-    // failed below and the cron retry job (ST-3b) must not auto-retry it.
-    if (err instanceof StellarPaymentError && !err.retryable) {
-      console.error(
-        `[payout-service] submission ${submissionId} permanently failed (${err.code}): ${err.message}`,
-      );
-    }
-
-    await prisma.submission.update({
-      where: { id: submissionId },
-      data: {
-        payoutStatus: "failed",
-        retryCount: fresh.retryCount + 1,
-        lastRetriedAt: new Date(),
-      },
-    });
-
-    throw err;
-  }
-
-  // Step 3: persist the on-chain result and its accounting record atomically.
-  const broadcastAt = new Date();
-  const accepted = { reference: `submission:${submissionId}`, txHash, amountUnits: amount, broadcastAt };
-  // Storing the hash is what makes this irreversible for the retry paths:
-  // `claimForRetry` refuses any submission that already carries one, and the
-  // status is terminal, so neither the cron nor an admin retry can re-broadcast.
-  const quarantine = () =>
-    prisma.submission.update({
-      where: { id: submissionId },
-      data: {
-        payoutStatus: "needs_reconciliation",
-        payoutTxHash: txHash,
-        lastRetriedAt: new Date(),
-      },
-    });
-
-  const persisted = await persistAcceptedPayment(accepted, () => prisma.$transaction(async (tx) => {
-      await tx.submission.update({
+    // Step 3: persist the on-chain result and its accounting record atomically.
+    const broadcastAt = new Date();
+    const accepted = { reference: `submission:${submissionId}`, txHash, amountUnits: amount, broadcastAt };
+    // Storing the hash is what makes this irreversible for the retry paths:
+    // `claimForRetry` refuses any submission that already carries one, and the
+    // status is terminal, so neither the cron nor an admin retry can re-broadcast.
+    const quarantine = () =>
+      prisma.submission.update({
         where: { id: submissionId },
-        data: { payoutStatus: "sent", payoutTxHash: txHash, lastRetriedAt: broadcastAt },
-      });
-      await tx.payoutJob.upsert({
-        where: { submissionId },
-        create: {
-          type: "SUBMISSION_PAYOUT",
-          submissionId,
-          amountUnits: amount,
-          txHash,
-          broadcastAt,
-          status: "done",
-          completedAt: broadcastAt,
-        },
-        update: {
-          amountUnits: amount,
-          txHash,
-          broadcastAt,
-          status: "done",
-          completedAt: broadcastAt,
-          lastError: null,
+        data: {
+          payoutStatus: "needs_reconciliation",
+          payoutTxHash: txHash,
+          lastRetriedAt: new Date(),
         },
       });
-  }), quarantine);
-  if (!persisted) return;
 
-  // Raised only once the broadcast tuple is in the ledger the alert reads. Doing
-  // it inside `payReward` would sum a total that excludes this payout and could
-  // skip the threshold crossing it just caused.
-  maybeSendCapAlert().catch(() => {});
+    const persisted = await persistAcceptedPayment(accepted, () => prisma.$transaction(async (tx) => {
+        await tx.submission.update({
+          where: { id: submissionId },
+          data: { payoutStatus: "sent", payoutTxHash: txHash, lastRetriedAt: broadcastAt },
+        });
+        await tx.payoutJob.upsert({
+          where: { submissionId },
+          create: {
+            type: "SUBMISSION_PAYOUT",
+            submissionId,
+            amountUnits: amount,
+            txHash,
+            broadcastAt,
+            status: "done",
+            completedAt: broadcastAt,
+          },
+          update: {
+            amountUnits: amount,
+            txHash,
+            broadcastAt,
+            status: "done",
+            completedAt: broadcastAt,
+            lastError: null,
+          },
+        });
+    }), quarantine);
+    if (!persisted) return;
 
-  try {
-    await creditUserTotals(walletAddress, amount);
-  } catch {
-    // The payment and its hash are recorded; only the totals failed. The stored
-    // hash already blocks re-broadcast, so this just needs a human.
-    await abandonAcceptedPayment(accepted, quarantine);
+    // Raised only once the broadcast tuple is in the ledger the alert reads. Doing
+    // it inside `payReward` would sum a total that excludes this payout and could
+    // skip the threshold crossing it just caused.
+    maybeSendCapAlert().catch(() => {});
+
+    try {
+      await creditUserTotals(walletAddress, amount);
+    } catch {
+      // The payment and its hash are recorded; only the totals failed. The stored
+      // hash already blocks re-broadcast, so this just needs a human.
+      await abandonAcceptedPayment(accepted, quarantine);
+    }
+  } finally {
+    clearInterval(heartbeat);
   }
 }
