@@ -8,6 +8,11 @@ import { checkAndAlert } from "./stellar/balance";
 import { computeIAA } from "./quality";
 import { REWARDED_STATUSES } from "./constants";
 import { refundReversal } from "./user-balance";
+import {
+  abandonAcceptedPayment,
+  persistAcceptedPayment,
+  type AcceptedPayment,
+} from "./payout-broadcast";
 
 const STALE_PROCESSING_MS = 60_000;
 // Refresh the in-flight job's heartbeat well within STALE_PROCESSING_MS so a slow
@@ -44,6 +49,31 @@ function needsManualReconciliation(err: unknown): boolean {
  * without a trace, so the failure is surfaced loudly to Sentry and the logs
  * instead of propagating and masking the original payout error.
  */
+
+const RECONCILIATION_ERROR = "accepted payment needs manual reconciliation";
+
+/**
+ * Take a paid-but-unrecorded job out of the claimable set.
+ *
+ * `claimNextJob` reclaims any job still `processing` once its heartbeat goes
+ * stale, so leaving it there would re-run the handler and pay a second time.
+ * Failing it is not a refund: no refund path keys off this status, and the
+ * reconciler only touches jobs that carry a hash.
+ */
+function quarantinePayoutJob(jobId: string): () => Promise<unknown> {
+  return () =>
+    prisma.payoutJob.update({
+      where: { id: jobId },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        lastError: RECONCILIATION_ERROR,
+        retryCount: MAX_RETRIES,
+      },
+    });
+}
+
+/** Refund a failed withdrawal without letting the refund's own failure throw. */
 async function safeRefund(
   userId: string,
   amountUnits: bigint,
@@ -130,6 +160,11 @@ async function refundCampaignBalance(
  * failure classify the error, refund the user's locked balance, and either requeue
  * or fail the job permanently.
  */
+/**
+ * Settle one withdrawal: pay the destination, then record the broadcast tuple.
+ * Once a hash exists the funds are gone, so a persistence failure pages for
+ * reconciliation instead of refunding or requeueing.
+ */
 async function processWithdrawalJob(
   jobId: string,
   userId: string,
@@ -171,22 +206,34 @@ async function processWithdrawalJob(
       .catch(() => {});
   }, HEARTBEAT_REFRESH_MS);
 
+  let accepted: AcceptedPayment | undefined;
   try {
     const txHash = await payReward(destination, amountUnits, {
       kind: "payout_job",
       id: jobId,
     });
+    const broadcastAt = new Date();
+    accepted = { reference: `payout_job:${jobId}`, txHash, amountUnits, broadcastAt };
 
-    await prisma.payoutJob.update({
-      where: { id: jobId },
-      data: {
-        txHash,
-        workerHeartbeatAt: new Date(),
-      },
-    });
+    const persisted = await persistAcceptedPayment(
+      accepted,
+      () =>
+        prisma.payoutJob.update({
+          where: { id: jobId },
+          data: { txHash, amountUnits, broadcastAt, workerHeartbeatAt: broadcastAt },
+        }),
+      quarantinePayoutJob(jobId),
+    );
+    if (!persisted) return;
 
     console.log(`[payout-worker] withdrawal job ${jobId} broadcast: paid ${amountUnits} to ${destination} (${txHash})`);
   } catch (err) {
+    if (accepted) {
+      // The tuple may have persisted, but the job is still `processing` with a
+      // dying heartbeat — quarantine it or a sweep re-pays it.
+      await abandonAcceptedPayment(accepted, quarantinePayoutJob(jobId));
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
 
     if (err instanceof PayoutCapError) {
@@ -281,6 +328,11 @@ async function processWithdrawalJob(
  * credit totals. On failure it refunds the campaign balance and applies the same
  * retryable / non-retryable classification as a withdrawal.
  */
+/**
+ * Settle one submission reward: pay the linked wallet, record the broadcast
+ * tuple, then credit the submission and user bookkeeping. The tuple is persisted
+ * before the bookkeeping so a bookkeeping failure cannot unwind a paid reward.
+ */
 async function processSubmissionPayout(
   jobId: string,
   submissionId: string,
@@ -341,11 +393,25 @@ async function processSubmissionPayout(
       .catch(() => {});
   }, HEARTBEAT_REFRESH_MS);
 
+  let accepted: AcceptedPayment | undefined;
   try {
     const txHash = await payReward(walletAddress, amount, {
       kind: "submission",
       id: submissionId,
     });
+    const broadcastAt = new Date();
+    accepted = { reference: `payout_job:${jobId}`, txHash, amountUnits: amount, broadcastAt };
+
+    const persisted = await persistAcceptedPayment(
+      accepted,
+      () =>
+        prisma.payoutJob.update({
+          where: { id: jobId },
+          data: { txHash, amountUnits: amount, broadcastAt, workerHeartbeatAt: broadcastAt },
+        }),
+      quarantinePayoutJob(jobId),
+    );
+    if (!persisted) return;
 
     await prisma.$transaction(async (tx) => {
       await tx.submission.update({
@@ -407,6 +473,12 @@ async function processSubmissionPayout(
 
     console.log(`[payout-worker] submission job ${jobId} completed: submission ${submissionId} paid ${txHash}`);
   } catch (err) {
+    if (accepted) {
+      // The tuple may have persisted, but the job is still `processing` with a
+      // dying heartbeat — quarantine it or a sweep re-pays it.
+      await abandonAcceptedPayment(accepted, quarantinePayoutJob(jobId));
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
 
     if (err instanceof PayoutCapError) {
