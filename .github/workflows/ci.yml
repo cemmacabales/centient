@@ -8,6 +8,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # PR-controlled code is checked out and `npm ci` runs its lifecycle scripts,
+    # which can read whatever the job's token can. Read-only, and not persisted
+    # into .git/config where a script could find it.
+    permissions:
+      contents: read
+
     services:
       postgres:
         image: postgres:15-alpine
@@ -30,6 +36,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -83,6 +91,11 @@ jobs:
   payments-lane:
     runs-on: ubuntu-latest
 
+    # Same reasoning as `build`: this job adds a second checkout and install of
+    # PR-controlled code, so it gets the same least-privilege treatment.
+    permissions:
+      contents: read
+
     services:
       postgres:
         image: postgres:15-alpine
@@ -105,6 +118,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

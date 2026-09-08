@@ -36,7 +36,13 @@ each alone is bypassable:
    the platform signing secret each equals a named allowlist with a stated reason
    per entry. `scripts/` is in scope on purpose — "anywhere in the codebase" is
    not satisfied by a library that behaves while a hand-run script beside it does
-   not.
+   not. Submits are matched as a *member reference*, not as a call, so an alias
+   (`server().submitTransaction.bind(...)`), a destructure, or a callback cannot
+   walk past a call-shaped pattern. Known limit: a raw `fetch` to Horizon's
+   `/transactions` endpoint bypasses the SDK and this pattern — the
+   payment-builder and signing-secret checks are what stand in its way, since a
+   payout that is never built and can never be platform-signed cannot be
+   broadcast by any transport.
 2. **Boundary.** `submitMultisigPayout` refuses anything not carrying two
    distinct verified signatures — on the fee bump as well as the inner payment,
    against a co-signature that is genuinely the right key's but over a different
@@ -171,9 +177,13 @@ Neither is new, and neither is closed by anything above.
   duration of the submit call. A crash between submit and resolution loses it,
   and the job requeues without it. Closing this needs the hash persisted before
   submit and reconciled before reissue — a payout state-machine change tracked on
-  the roadmap. `lib/payout-service.ts`'s retry lease narrows the related
-  concurrent-claim window but does not close this one; the failure runbook routes
-  the case through reconciliation rather than implying a bare retry is safe.
+  the roadmap. `lib/payout-service.ts`'s retry claim now holds a lease *and*
+  refreshes it for as long as the broadcast is in flight, so the lease cannot
+  expire under a live payout; what remains is exactly the process-death case — a
+  worker that dies mid-submit stops refreshing, the lease expires, and the row is
+  reclaimed without the envelope hash the first attempt never persisted. The
+  failure runbook routes that case through reconciliation rather than implying a
+  bare retry is safe.
 - **The submit lock is process-local.** `submitMultisigPayout`'s sequence mutex
   serializes payouts inside one Node process and nothing beyond it, so the
   deployment must run exactly one payout submitter. A second instance costs
@@ -186,6 +196,10 @@ Neither is new, and neither is closed by anything above.
 ## Reproducing this locally
 
 ```bash
-pnpm test:payments   # the lane exactly as CI runs it
-pnpm typecheck       # tsc --noEmit; there is no ESLint or Prettier gate
+npm run test:payments   # the lane exactly as CI runs it
+npm run typecheck       # tsc --noEmit; there is no ESLint or Prettier gate
 ```
+
+`npm`, not `pnpm`, because `npm ci` against the committed `package-lock.json` is
+the install authority for CI. The `pnpm` aliases work locally and resolve the
+same tree today, but only the npm form reproduces what the lane actually ran.

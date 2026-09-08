@@ -60,8 +60,21 @@ import {
 
 const REPO_ROOT = path.resolve(__dirname, "../../..");
 
-/** Horizon's transaction-submitting entry points. */
-const SUBMIT_PATTERN = /\bsubmit(?:Async)?Transaction\s*\(/;
+/**
+ * Horizon's transaction-submitting entry points, matched as a *reference* rather
+ * than as a call. `foo.submitTransaction(tx)` is only the obvious spelling;
+ * `const submit = server().submitTransaction.bind(server())`, a destructure, or
+ * passing the method as a callback all reach Horizon while a call-shaped pattern
+ * (`\s*\(`) stays green — and a guard that a one-line alias defeats is not a
+ * guard. Naming the method at all in shipped code puts the file on the list.
+ *
+ * Known limit, deliberately not chased: a raw `fetch` to Horizon's
+ * `/transactions` endpoint bypasses the SDK and therefore this pattern. The
+ * payment-builder and signing-secret checks below are what stand in its way —
+ * a payout that is never constructed and can never be platform-signed cannot be
+ * broadcast by any transport.
+ */
+const SUBMIT_PATTERN = /\bsubmit(?:Async)?Transaction\b/;
 /** Construction of a payment operation — the only op that moves USDC. */
 const PAYMENT_BUILDER_PATTERN = /\bOperation\.payment\s*\(/;
 
