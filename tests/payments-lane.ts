@@ -132,3 +132,60 @@ export function paymentsLaneSourceFiles(repoRoot: string): string[] {
   }
   return files.sort();
 }
+
+/**
+ * Compile one lane glob to a regular expression. Supports exactly what the lane
+ * uses — `**` across directories, `*` within a path segment — rather than
+ * pulling in a matcher or leaning on `fs.globSync`, which is still experimental
+ * on the Node version CI runs and is not in the installed `@types/node`.
+ */
+function globToRegExp(glob: string): RegExp {
+  const pattern = glob
+    .split("/")
+    .map((segment) =>
+      segment === "**"
+        ? "(?:.+)"
+        : segment.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*"),
+    )
+    // `a/**/b` must also match `a/b`: a `**` with nothing under it is not a
+    // stale glob, it is the zero-directory case.
+    .join("/")
+    .replace(/\/\(\?:\.\+\)\//g, "/(?:.+/)?");
+  return new RegExp(`^${pattern}$`);
+}
+
+/** Every `*.test.ts` in the repository, repo-relative, excluding other worktrees. */
+function allTestFiles(repoRoot: string): string[] {
+  const skip = new Set(["node_modules", ".next", ".worktrees", ".claude", ".git", "coverage"]);
+  const found: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (skip.has(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".test.ts")) {
+        found.push(path.relative(repoRoot, full).split(path.sep).join("/"));
+      }
+    }
+  };
+  walk(repoRoot);
+  return found;
+}
+
+/** Test files the lane's globs actually resolve to, repo-relative and sorted. */
+export function paymentsLaneTestFiles(repoRoot: string): string[] {
+  const all = allTestFiles(repoRoot);
+  const matchers = PAYMENTS_LANE_TEST_GLOBS.map(globToRegExp);
+  return all.filter((file) => matchers.some((re) => re.test(file))).sort();
+}
+
+/** How many files each glob resolves to — zero means the glob has gone stale. */
+export function paymentsLaneGlobCounts(repoRoot: string): Record<string, number> {
+  const all = allTestFiles(repoRoot);
+  return Object.fromEntries(
+    PAYMENTS_LANE_TEST_GLOBS.map((glob) => {
+      const re = globToRegExp(glob);
+      return [glob, all.filter((file) => re.test(file)).length];
+    }),
+  );
+}

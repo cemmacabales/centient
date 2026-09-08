@@ -22,6 +22,7 @@
     "stellar:reserve:setup": "tsx scripts/stellar-cold-reserve-setup.ts",
     "stellar:reserve:refill": "tsx scripts/stellar-reserve-refill.ts",
     "test": "vitest run",
+    "test:payments": "vitest run --config vitest.payments.config.ts",
     "typecheck": "tsc --noEmit",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",

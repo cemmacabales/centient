@@ -64,3 +64,62 @@ jobs:
         run: npm run build
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/centient_test
+
+  # The payments lane, as its own linkable job (#12).
+  #
+  # `build` above already runs these tests inside the full suite, so this adds no
+  # coverage. What it adds is evidence: Deliverable 1 has to point at a run that
+  # says "the payment rail is green", and a link to `build` says "every test in
+  # the repository passed" — true, but not a statement about the rail, and it
+  # stops being one the moment an unrelated suite goes red.
+  #
+  # The cost is a second Postgres service and a duplicated install/migrate on
+  # every PR. Accepted deliberately: the alternative is evidence that needs a
+  # paragraph of explanation to read.
+  #
+  # `build` remains the authoritative merge gate. Lane membership is defined once
+  # in `tests/payments-lane.ts`, shared with the no-single-key regression guard so
+  # the job and the guard cannot disagree about what the payments lane is.
+  payments-lane:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: centient_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/centient_test
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/centient_test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma generate
+        run: npx prisma generate
+
+      - name: Run migrations
+        run: npx prisma migrate deploy
+
+      - name: Run the payments lane
+        run: npm run test:payments
