@@ -6,6 +6,8 @@ import {
   PAYMENTS_LANE_SOURCE_ROOTS,
   PAYOUT_SIGNER_SECRET_ALLOWLIST,
   USDC_PAYMENT_BUILDER_ALLOWLIST,
+  paymentsLaneGlobCounts,
+  paymentsLaneTestFiles,
   paymentsLaneSourceFiles,
 } from "@/tests/payments-lane";
 
@@ -95,6 +97,23 @@ describe("the payments lane scan itself", () => {
     for (const root of PAYMENTS_LANE_SOURCE_ROOTS) {
       expect(laneFiles.some((file) => file.startsWith(`${root}/`))).toBe(true);
     }
+  });
+
+  it("resolves every test glob the CI lane runs", () => {
+    // A glob that matches nothing shrinks the lane silently: `payments-lane`
+    // stays green while the suite it was meant to prove stops running. Renaming
+    // or deleting a payment test must update the manifest, not slip past it.
+    const counts = paymentsLaneGlobCounts(REPO_ROOT);
+    for (const [glob, count] of Object.entries(counts)) {
+      expect(count, `${glob} matches no test file`).toBeGreaterThan(0);
+    }
+    // The lane is a subset with real content, not the whole suite and not a
+    // handful of files.
+    const laneTests = paymentsLaneTestFiles(REPO_ROOT);
+    expect(laneTests.length).toBeGreaterThan(30);
+    expect(laneTests).toContain("lib/stellar/__tests__/no-single-key-payout.test.ts");
+    expect(laneTests).toContain("lib/__tests__/payout-concurrency-db.test.ts");
+    expect(laneTests).toContain("lib/__tests__/payout-cap-alert-ordering-db.test.ts");
   });
 
   it("never reads test code, whose fakes submit freely by design", () => {
