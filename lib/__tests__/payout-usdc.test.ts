@@ -71,9 +71,12 @@ describe("payReward → multisig USDC payout", () => {
     );
     expect(hash).toBe("abc123def456");
     expect(hash).not.toMatch(/^0x/);
-    // A settled payout is recorded by the caller, so the alert reads it from the
-    // ledger rather than being handed an amount it would then double-count.
-    expect(mockMaybeSendCapAlert).toHaveBeenCalledWith();
+    // A settled payout raises no alert from here. `payReward` returns before the
+    // caller writes the broadcast tuple, so an alert raised at this point sums a
+    // ledger that is missing this payout — the threshold crossing it just caused
+    // would read as not-yet-crossed. Each caller raises it after
+    // `persistAcceptedPayment` instead.
+    expect(mockMaybeSendCapAlert).not.toHaveBeenCalled();
   });
 
   it("has no single-key broadcast to fall back to", async () => {

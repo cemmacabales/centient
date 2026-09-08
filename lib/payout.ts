@@ -30,6 +30,16 @@ export { PayoutCapError };
  * Non-retryable `StellarPaymentError`s (`op_no_trust` — recipient holds no USDC
  * trustline; `op_no_destination` — recipient unfunded) propagate unchanged to the
  * caller, which must mark the payout failed rather than loop.
+ *
+ * Cap alerting on the success path deliberately does NOT happen here. This
+ * function returns before any caller has written the broadcast tuple, so an
+ * alert raised from here reads a rolling total that excludes the payout that
+ * just settled and can skip a threshold crossing entirely. Each caller raises it
+ * instead, immediately after `persistAcceptedPayment` succeeds, where the ledger
+ * the alert reads already contains the payout. Passing the amount in from here
+ * is not the fix: the read may or may not already see the tuple, so it trades a
+ * missed alert for a double-count. Only the rejection path below keeps an
+ * argument, because nothing records a refused payout.
  */
 export async function payReward(
   to: string,
@@ -55,10 +65,6 @@ export async function payReward(
     { destination: to, amountUnits: amount, reference },
     { coSigner },
   );
-
-  // No argument here: the caller records this broadcast's tuple once `payReward`
-  // returns, so passing the amount would race that write and count it twice.
-  maybeSendCapAlert().catch(() => {});
 
   return hash;
 }
