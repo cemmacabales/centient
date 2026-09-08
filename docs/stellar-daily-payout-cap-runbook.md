@@ -69,15 +69,39 @@ start.
 
 ## Breach behavior
 
-- The payout service checks its rolling window before resolving the co-signer or
-  constructing a transaction. On breach it throws `PayoutCapError` and runs the
-  cap alert path. A per-submission payout remains pending, no retry is burned,
-  and its campaign debit remains reserved for the later retry.
-- The policy co-signer checks its UTC-day spend before signing. On breach it
-  returns HTTP 409 and no detached signature, so the two-signature payout cannot
-  be submitted.
-- An operator should verify the recorded broadcast volume and the two configured
-  values. Do not requeue or raise a cap merely to clear a pending payout.
+The payout service checks its rolling window before resolving the co-signer or
+constructing a transaction. On breach it throws `PayoutCapError` and runs the cap
+alert path. What happens to the job then depends on its type, and the two differ:
+
+- A **withdrawal** — the live earnings path — is **terminal**. Its retry budget is
+  consumed and the user's locked balance is refunded, so the money returns to
+  their withdrawable balance and they can re-withdraw once the window has room.
+  Nothing retries it on their behalf.
+- A legacy **per-submission** payout is **deferred**. The submission stays
+  `pending`, its retry budget is untouched, and its campaign debit stays reserved
+  so the later attempt has funding. This path only drains `SUBMISSION_PAYOUT`
+  jobs enqueued before the accrual cutover — new earnings accrue to the user's
+  balance at submit time and settle as a withdrawal, so a cap breach today
+  reaches the withdrawal behavior above.
+
+The deferral is **not self-healing on its own**. Recovery runs through
+`POST /api/cron/payout-retry`, which is scheduled outside the application (see
+the [cold-reserve runbook](stellar-cold-reserve-runbook.md) for how the other
+crons are provisioned). If that schedule is not running, a deferred submission
+never retries and its campaign debit stays reserved indefinitely. Confirm the
+schedule before treating a `pending` payout as merely waiting.
+
+The policy co-signer checks its UTC-day spend before signing. On breach it returns
+HTTP 409 and no detached signature, so the two-signature payout cannot be
+submitted, whatever the application decided.
+
+The cap alert reports the **ledger's** spend, not the refused amount: a paging
+alert can read below 100% consumed and still carry a `blocked attempt: N units`
+line. That is the refusal, not an arithmetic error — the units in that line never
+left the payout account.
+
+An operator should verify the recorded broadcast volume and the two configured
+values. Do not requeue or raise a cap merely to clear a pending payout.
 
 ## Regression checks
 
