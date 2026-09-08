@@ -51,6 +51,7 @@ describe("GET /api/health/wallet", () => {
       numSubentries: 2,
       numSponsoring: 3,
       numSponsored: 1,
+      sponsoredReserveXlm: "1.5000",
       monitoringStatus: "healthy",
       assetStatus: { usdc: "healthy", xlm: "healthy" },
       healthy: true,
