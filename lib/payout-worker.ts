@@ -258,8 +258,9 @@ async function processWithdrawalJob(
     // trustline; `op_no_destination` — recipient unfunded) can never succeed on a
     // blind retry. Fail the job immediately and refund the user's balance so they
     // can re-withdraw once they establish a trustline (ST-4b/ST-4e). Re-queueing
-    // here would loop until MAX_RETRIES and waste cap/Horizon calls. `tx_bad_seq`
-    // is already retried once inside `payUsdc`, so it never reaches here.
+    // here would loop until MAX_RETRIES and waste cap/Horizon calls. A single
+    // `tx_bad_seq` is rebuilt and resubmitted once inside the multisig submitter;
+    // only sustained contention surfaces here, and it is retryable.
     //
     // `ambiguous_submit` is the one exception to the refund: it means the payout
     // may already have settled on-chain, so returning the balance too would pay
@@ -505,8 +506,9 @@ async function processSubmissionPayout(
     // Non-retryable rail errors (`op_no_trust` / `op_no_destination`) can never
     // succeed on a blind retry — the recipient `G…` must add a USDC trustline /
     // be funded first. Fail immediately (consume the full retry budget) and refund
-    // the campaign balance rather than requeue. `tx_bad_seq` is retried once inside
-    // `payUsdc`, so it never surfaces here.
+    // the campaign balance rather than requeue. A single `tx_bad_seq` is rebuilt
+    // and resubmitted once inside the multisig submitter; only sustained
+    // contention surfaces here, and it is retryable.
     //
     // `ambiguous_submit` is the one exception to the refund: it means the payout
     // may already have settled on-chain, so returning the balance too would pay
