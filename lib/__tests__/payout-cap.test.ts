@@ -243,4 +243,23 @@ describe("maybeSendCapAlert", () => {
       lines: ["80% consumed", "800 of 1000 units spent", "200 units remain"],
     });
   });
+
+  it("includes an attempted payout that has not reached the ledger yet", async () => {
+    process.env.DAILY_PAYOUT_CAP_UNITS = "1000";
+    mockPayoutJobAggregate.mockResolvedValueOnce({
+      _count: { _all: 1 },
+      _sum: { amountUnits: 700n },
+    });
+    mockSendAlert.mockResolvedValueOnce("sent");
+
+    const result = await maybeSendCapAlert(300n);
+
+    expect(result).toBe("sent");
+    expect(mockSendAlert).toHaveBeenCalledWith({
+      key: "payout-cap",
+      severity: "PAGE",
+      title: "Daily payout cap is exhausted",
+      lines: ["100% consumed", "1000 of 1000 units spent", "0 units remain"],
+    });
+  });
 });

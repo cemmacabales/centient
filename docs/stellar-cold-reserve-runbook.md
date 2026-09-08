@@ -56,7 +56,7 @@ the reserve.
 | Quantity | Source | Example policy |
 |---|---|---|
 | Hot float target | `STELLAR_HOT_FLOAT_TARGET_UNITS` | 100 USDC |
-| Daily payout caps | `DAILY_PAYOUT_CAP_UNITS` and `COSIGNER_DAILY_CAP_UNITS` | set each independently ≤ target; see the [daily-cap runbook](stellar-daily-payout-cap-runbook.md) |
+| Daily payout caps | `DAILY_PAYOUT_CAP_UNITS` and `COSIGNER_DAILY_CAP_UNITS` | 100 USDC each (`1000000000` units), configured independently; see the [daily-cap runbook](stellar-daily-payout-cap-runbook.md) |
 | Measured daily payout budget | `getPayoutActivitySince` over the trailing 7 days, or the admin status page | fill in before choosing the target |
 | **Worst-case loss** | = hot float target | **100 USDC** |
 | Cold balance at risk | none | 0 USDC |
