@@ -14,6 +14,7 @@
     "worker": "tsx lib/upload-worker.ts",
     "reconciler": "tsx lib/reconciler.ts",
     "payout": "tsx lib/payout-worker.ts",
+    "cosign": "tsx services/cosigner/server.ts",
     "stellar:multisig:setup": "tsx scripts/stellar-multisig-setup.ts",
     "stellar:multisig:verify": "tsx scripts/stellar-multisig-verify.ts",
     "stellar:multisig:payout-spike": "tsx scripts/stellar-multisig-payout-spike.ts",

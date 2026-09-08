@@ -7,7 +7,11 @@ import {
   signAsPlatform,
   type PayoutCoSignRequest,
 } from "../payout-envelope";
-import { localPolicyCoSigner, resolvePayoutCoSigner } from "../payout-cosigner";
+import {
+  assertAppDeploymentSeparation,
+  localPolicyCoSigner,
+  resolvePayoutCoSigner,
+} from "../payout-cosigner";
 
 const policy = Keypair.random();
 const platform = Keypair.random();
@@ -187,9 +191,121 @@ describe("resolvePayoutCoSigner", () => {
     ).toThrow(/does not match/i);
   });
 
+  it("refuses to run the app process holding both the co-signer URL and the policy key", () => {
+    // The whole point of deploying the co-signer separately (ADR-0001) is that
+    // this process cannot produce both signatures. If it can see the policy
+    // secret at all, the boundary does not exist and the deployment is wrong —
+    // so this is a refusal to start, not a preference for the remote signer.
+    expect(() =>
+      resolvePayoutCoSigner({
+        ...baseEnv,
+        COSIGNER_URL: "https://cosigner.example",
+        COSIGNER_SHARED_SECRET: "s".repeat(32),
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+      }),
+    ).toThrow(/both/i);
+  });
+
+  it("resolves the deployed co-signer when a URL is configured without the key", () => {
+    expect(() =>
+      resolvePayoutCoSigner({
+        COSIGNER_URL: "https://cosigner.example/cosign",
+        COSIGNER_SHARED_SECRET: "s".repeat(32),
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+        STELLAR_POLICY_SIGNER_PUBLIC: policy.publicKey(),
+      }),
+    ).not.toThrow();
+  });
+
+  it("refuses the deployed co-signer without a shared secret to authenticate with", () => {
+    expect(() =>
+      resolvePayoutCoSigner({
+        COSIGNER_URL: "https://cosigner.example/cosign",
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+        STELLAR_POLICY_SIGNER_PUBLIC: policy.publicKey(),
+      }),
+    ).toThrow(/COSIGNER_SHARED_SECRET/);
+  });
+
+  it("refuses the deployed co-signer when the topology is not permitted on this network", () => {
+    // The isolation gate is enforced on the calling side too, so a simulated
+    // boundary cannot be used for a public-network payout even if the service
+    // itself were misconfigured to allow it.
+    process.env.STELLAR_NETWORK = "public";
+    expect(() =>
+      resolvePayoutCoSigner({
+        COSIGNER_URL: "https://cosigner.example/cosign",
+        COSIGNER_SHARED_SECRET: "s".repeat(32),
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+        STELLAR_POLICY_SIGNER_PUBLIC: policy.publicKey(),
+      }),
+    ).toThrow(/same-workspace/i);
+  });
+
+  it("refuses to send payout details to the co-signer over plaintext HTTP", () => {
+    // The HMAC authenticates the request; it does not conceal it. Over plain HTTP
+    // the destination, the amount, the envelope XDR, and the returned policy
+    // signature are all readable in transit.
+    expect(() =>
+      resolvePayoutCoSigner({
+        COSIGNER_URL: "http://cosigner.example/cosign",
+        COSIGNER_SHARED_SECRET: "s".repeat(32),
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+      }),
+    ).toThrow(/https/i);
+  });
+
+  it("still allows a loopback co-signer over HTTP for local development", () => {
+    expect(() =>
+      resolvePayoutCoSigner({
+        COSIGNER_URL: "http://127.0.0.1:8080/cosign",
+        COSIGNER_SHARED_SECRET: "s".repeat(32),
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+      }),
+    ).not.toThrow();
+  });
+
+  it("refuses a COSIGNER_URL that is not a usable URL at all", () => {
+    expect(() =>
+      resolvePayoutCoSigner({
+        COSIGNER_URL: "cosigner.example/cosign",
+        COSIGNER_SHARED_SECRET: "s".repeat(32),
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+      }),
+    ).toThrow(/COSIGNER_URL/);
+  });
+
   it("fails closed when no co-signer is configured at all", () => {
     expect(() =>
       resolvePayoutCoSigner({ ...baseEnv, STELLAR_POLICY_SIGNER_SECRET: undefined }),
     ).toThrow(/no payout co-signer is configured/i);
+  });
+});
+
+describe("assertAppDeploymentSeparation", () => {
+  it("refuses an app deployment that can see both the URL and the policy key", () => {
+    // Checked at startup, not only when a payout is attempted: a deployment that
+    // has collapsed the two signing boundaries should be visible the moment it
+    // comes up, not hours later when the first contributor tries to get paid.
+    expect(() =>
+      assertAppDeploymentSeparation({
+        COSIGNER_URL: "https://cosigner.example/cosign",
+        STELLAR_POLICY_SIGNER_SECRET: policy.secret(),
+      }),
+    ).toThrow(/both/i);
+  });
+
+  it("permits an app deployment carrying only the co-signer URL", () => {
+    expect(() =>
+      assertAppDeploymentSeparation({ COSIGNER_URL: "https://cosigner.example/cosign" }),
+    ).not.toThrow();
+  });
+
+  it("permits a development deployment with no co-signer URL at all", () => {
+    // The gated local signer is still a supported development path, so holding
+    // the policy seed alone is not by itself a misconfiguration.
+    expect(() =>
+      assertAppDeploymentSeparation({ STELLAR_POLICY_SIGNER_SECRET: policy.secret() }),
+    ).not.toThrow();
   });
 });
