@@ -423,21 +423,40 @@ updated worst-case calculation.
 
 ## Public evidence record
 
-Record only public facts after the live testnet proof:
+Record only public facts after the live testnet proof. Testnet proof taken
+2026-09-08 for #10 / #73, all values verified through Horizon:
 
 ```text
-Network:
-Cold account:
-Cold ops public key:
-Cold policy public key:
-Thresholds and weights:
-Trustline transaction hash:
-Multisig setup transaction hash:
-Refill transaction hash:
-Hot USDC before -> after:
-Cold USDC before -> after:
-Trigger / target / retained floor:
+Network:                          testnet
+Cold account:                     GDPGRS4P6UZZK23CKKELGLJAYTCAWPV4C7TH6Q322SF735A5H6U5XK5G
+Cold ops public key:              GDERX2QG4LY4SK6VHBX5VRKE2PFDB25ZCD3OLUM4RDVAY43EOXBRZ4BC
+Cold policy public key:           GAOTECDRSB5HHAJAMOOMUYTDOR5HTFNSSETEDNWJDXDFRBZVQMOOXD6V
+Thresholds and weights:           low/med/high 2/2/2; master, ops, policy each weight 1
+Trustline transaction hash:       fddea73e981194f020bcf531f96140c3117f8c400915228e6901c2312b4a8c6a
+Multisig setup transaction hash:  05bbe397033a7984700b8d844cf1d247e04db7537fd9a0293a5bda6c1506d14a
+Cold funding (hot -> cold, via the multisig payout service, 2 signatures + fee-bump):
+                                  452fd68061ecae052ebd681ee47010adbc2e05c01c86afb9bba685a77fb1d836
+Refill transaction hash:          3a5969cdac22dad6646630c90cdb3ae3919a727f2abd8f663863b7e9e6b9ef3e
+                                  (source = cold account, 1 payment op, 2 signatures: cold master + cold ops,
+                                   fee 100 stroops paid by the cold account, ledger 4563417)
+Hot USDC before -> after:         8.9000000 -> 12.0000000
+Cold USDC before -> after:        10.0000000 -> 6.9000000
+Trigger / target / retained floor: 100000000 / 120000000 / 50000000 units (10 / 12 / 5 USDC)
+Refill amount:                    31000000 units (3.1 USDC) = target - hot, passed to submit as
+                                  STELLAR_RESERVE_REFILL_AMOUNT_UNITS
 stellar.expert account and transaction links:
+  https://stellar.expert/explorer/testnet/account/GDPGRS4P6UZZK23CKKELGLJAYTCAWPV4C7TH6Q322SF735A5H6U5XK5G
+  https://stellar.expert/explorer/testnet/tx/fddea73e981194f020bcf531f96140c3117f8c400915228e6901c2312b4a8c6a
+  https://stellar.expert/explorer/testnet/tx/05bbe397033a7984700b8d844cf1d247e04db7537fd9a0293a5bda6c1506d14a
+  https://stellar.expert/explorer/testnet/tx/452fd68061ecae052ebd681ee47010adbc2e05c01c86afb9bba685a77fb1d836
+  https://stellar.expert/explorer/testnet/tx/3a5969cdac22dad6646630c90cdb3ae3919a727f2abd8f663863b7e9e6b9ef3e
 ```
+
+The three cold seeds for this testnet proof were generated on the provisioning
+machine and live only in a mode-600 file outside the repository; each `sign`
+step received exactly one of them through `node --env-file`, and the `submit`
+step received none. That is the same custody gap the payout account has (see
+`docs/stellar-multisig-runbook.md`, "Key custody — current state"), and it is
+acceptable for a disposable testnet proof only.
 
 Never record a seed, secret-manager reference, or signed XDR.

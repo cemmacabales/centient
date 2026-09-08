@@ -161,6 +161,27 @@ values.
 Zero-value payouts are rejected before an envelope is built: they are no-ops that
 still burn a sequence number and a fee.
 
+## Live testnet evidence (2026-09-08, #73)
+
+`pnpm stellar:payout:proof <G destination> <amount units> <reference id>` drives
+the real `payReward` path end to end — cap check, platform signature, gated
+local co-signature, fee-bump, sequence-safe submit — and prints the hash. It is
+testnet only: it refuses any other network, and the local co-signer it relies
+on is refused on the public network regardless.
+
+Two payouts from the 2-of-3 payout account
+`GC5UOKLU6J2EROZYYP2I23ZEF4YF42TGGRNQMMTGOJGJ7NOCH3TTR4A6`, both verified on
+Horizon as fee-bump envelopes carrying two signatures on the inner payment and
+two on the outer envelope, fee 200 stroops paid by the payout account:
+
+| Purpose | Destination | Amount | Fee-bump hash |
+|---|---|---|---|
+| Contributor payout (the #7 DoD item) | `GA4XSHGIOVGWI6ZGDIRFG3ROFOHXRDVHH5YKGFKC5C2LHOT6EB5WCQXI` (the #6 sponsored recipient, holds 0 XLM) | 0.1 USDC | [`9f6b8ae9…996c`](https://stellar.expert/explorer/testnet/tx/9f6b8ae96a2d17cf3ba2fd585f1e434287bc7113d33f5ecec75cbbe53470996c) |
+| Treasury transfer to fund the cold reserve | `GDPGRS4P6UZZK23CKKELGLJAYTCAWPV4C7TH6Q322SF735A5H6U5XK5G` | 10 USDC | [`452fd680…d836`](https://stellar.expert/explorer/testnet/tx/452fd68061ecae052ebd681ee47010adbc2e05c01c86afb9bba685a77fb1d836) |
+
+The recipient's balance went from 1.0 to 1.1 USDC with 0 XLM spent. Both ran
+with `DAILY_PAYOUT_CAP_UNITS=0` so the proof did not depend on a database.
+
 ## What #7 does not do
 
 - It does not implement the independent co-signer's transport, isolation, or
