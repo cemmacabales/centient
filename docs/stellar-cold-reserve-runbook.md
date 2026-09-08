@@ -319,9 +319,15 @@ asset issuer, fee, expiry, and hash to the approved request before signing.
 Return the twice-signed XDR to the online operator host:
 
 ```bash
+STELLAR_RESERVE_REFILL_AMOUNT_UNITS=<amount from prepare> \
 STELLAR_RESERVE_REFILL_XDR='<twice-signed XDR>' \
 npm run stellar:reserve:refill -- submit
 ```
+
+Pass the same `STELLAR_RESERVE_REFILL_AMOUNT_UNITS` the custodians signed
+against. It is optional, but without it the amount check at submit reads the
+amount from the envelope and compares it with itself; with it, an envelope
+carrying any other amount is refused before Horizon is contacted.
 
 Immediately before submission, the command reloads hot and cold balances and
 re-checks both policy invariants against the exact amount the custodians
