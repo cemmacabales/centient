@@ -1,5 +1,16 @@
 # Deploying the independent policy co-signer
 
+> **Topology amended 2026-09-08.** The co-signer ships as a `cosigner` **service
+> inside the existing `centient-work` project**, not as a separate project: the
+> maintainer's account cannot create projects in that workspace. See the
+> amendment in [ADR-0001](adr/0001-simulated-cosigner-isolation.md) for what that
+> costs (the separate member list) and what it buys back (private networking).
+>
+> **`scripts/setup-cosigner.sh` walks the whole procedure interactively** and is
+> the recommended way to run it — the Railway CLI needs a terminal, and every
+> secret is read hidden and piped to `railway variable set --stdin` so it never
+> reaches a process list or a shell history.
+
 The runbook for issue #8 under the topology decided in
 [ADR-0001](adr/0001-simulated-cosigner-isolation.md): the co-signer runs in its
 own Railway **project**, inside the same workspace as the application, for the
@@ -62,16 +73,13 @@ Build `COSIGNER_DATABASE_URL` from the Postgres service's **public** connection
 details (`DATABASE_PUBLIC_URL`, or the host and port on its Connect tab), with
 your new user and password substituted in.
 
-**It must be the public host, not `postgres.railway.internal`.** Railway's
-private networking carries service-to-service traffic *within a project*, and the
-co-signer lives in a different project by design. The internal hostname does not
-resolve from there, and the failure presents as a hung connection rather than a
-clear error.
+**Use the internal host: `postgres.railway.internal`.** Railway's private
+networking carries service-to-service traffic within a project, and under the
+amended topology the co-signer shares `centient-work` with the database. The
+read-only credential therefore never leaves Railway's network.
 
-Because that connection therefore leaves Railway's network, append
-`?sslmode=require` so the read-only credential is never sent in the clear. This
-is a direct cost of the separate-project choice, recorded in ADR-0001 alongside
-the access-control benefit that bought it.
+(Had the co-signer stayed in its own project, this would have had to use the
+public host with `?sslmode=require`. That hop is what the amendment buys back.)
 
 ## 2. Generate the keys and secrets
 
