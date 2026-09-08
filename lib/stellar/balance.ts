@@ -11,6 +11,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 import { REWARD_TOKEN_SYMBOL } from "../constants";
 import { sendDedupedDiscordAlert } from "../health-alert";
 import { walletBalanceAlerts } from "../wallet-balance-alerts";
+import { withDeadline } from "../deadline";
 import { server, usdcAsset, usdcToUnits } from "./config";
 
 /**
@@ -29,6 +30,11 @@ interface HorizonBalanceLine {
   selling_liabilities?: string;
 }
 
+/**
+ * Public key of the pooled platform account, or null when the seed is unset or
+ * malformed. Never throws: this module is imported at load time by routes and
+ * workers, so a bad seed must degrade to "unconfigured", not crash them.
+ */
 function platformPublicKey(): string | null {
   const secret = process.env.STELLAR_PLATFORM_SECRET;
   if (!secret) return null;
@@ -109,6 +115,7 @@ export function xlmToStroops(xlm: string): bigint {
   return BigInt(match[1]) * STROOPS_PER_XLM + BigInt((match[2] ?? "").padEnd(7, "0"));
 }
 
+/** Render stroops as a fixed-point string. The bigint-to-display boundary. */
 function stroopsToDisplay(stroops: bigint, decimalPlaces = 4): string {
   if (stroops < 0n) throw new Error("XLM stroops must be non-negative");
   const whole = stroops / STROOPS_PER_XLM;
@@ -116,11 +123,29 @@ function stroopsToDisplay(stroops: bigint, decimalPlaces = 4): string {
   return `${whole}.${fraction.slice(0, decimalPlaces)}`;
 }
 
+const DEFAULT_HORIZON_TIMEOUT_MS = 10_000;
+
+/**
+ * Deadline for the Horizon reads behind a wallet-health check. `@stellar/
+ * stellar-sdk` defaults to `Config.timeout = 0` (wait forever), which would let
+ * a stalled Horizon hang the cron route and the admin page instead of degrading
+ * to `monitoringStatus: "error"`. Bound locally rather than through the SDK's
+ * global `Config` so payout submission timeouts stay untouched.
+ */
+function horizonTimeoutMs(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number {
+  const value = Number(env.STELLAR_HORIZON_TIMEOUT_MS ?? DEFAULT_HORIZON_TIMEOUT_MS);
+  return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_HORIZON_TIMEOUT_MS;
+}
+
+/** Read a non-negative reserve count from Horizon, rejecting anything else. */
 function countFromHorizon(value: unknown, name: string): number {
   if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return value;
   throw new Error(`Invalid Horizon ${name}`);
 }
 
+/** Read the live base reserve from the latest ledger, in stroops. */
 function baseReserveStroopsFromLedger(value: unknown): bigint {
   if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) {
     return BigInt(value);
@@ -129,6 +154,14 @@ function baseReserveStroopsFromLedger(value: unknown): bigint {
   throw new Error("Invalid Horizon base_reserve_in_stroops");
 }
 
+/**
+ * XLM actually available to pay fees, in stroops.
+ *
+ * Stellar locks a base reserve per account entry: two for the account itself,
+ * one per subentry, one per sponsorship the account extends, less the entries
+ * another account sponsors on its behalf. Selling liabilities are committed to
+ * open offers. Gross balance therefore overstates what a payout can spend.
+ */
 export function calculateSpendableXlm({
   totalStroops,
   sellingLiabilitiesStroops,
@@ -180,6 +213,7 @@ function thresholdStroops(name: BalanceThresholdName, env: BalanceEnvironment): 
 
 type BalanceEnvironment = Readonly<Record<string, string | undefined>>;
 
+/** Every balance threshold, normalized once into exact stroops. */
 export function parseBalanceThresholdStroops(
   env: BalanceEnvironment = process.env,
 ): StroopThresholds {
@@ -234,6 +268,11 @@ export interface StroopThresholds {
   pageXlmStroops: bigint;
 }
 
+/**
+ * Compare both balances against their thresholds using exact stroop arithmetic,
+ * and describe each breach. USDC and XLM are judged independently: a healthy
+ * float on an XLM-starved account still cannot submit a payout.
+ */
 export function evaluateStroopThresholds({
   xlmStroops,
   usdcStroops,
@@ -287,6 +326,14 @@ export function evaluateStroopThresholds({
   };
 }
 
+/**
+ * Current dual-asset health of the pooled platform account.
+ *
+ * Never throws and never guesses: an unset seed or asset yields
+ * `monitoringStatus: "unconfigured"`, a Horizon failure or stall yields
+ * `"error"`, and in both cases balances render as em dashes and reserve counts
+ * as null rather than as a zero that would read like a live measurement.
+ */
 export async function getWalletHealth(): Promise<WalletHealth> {
   const thresholdStroops = parseBalanceThresholdStroops();
   const thresholds = parseBalanceThresholds();
@@ -323,7 +370,12 @@ export async function getWalletHealth(): Promise<WalletHealth> {
     if (!issuer) throw new Error("Configured USDC asset has no issuer");
     configuredUsdcCode = asset.getCode();
     configuredUsdcIssuer = issuer;
-  } catch {
+  } catch (error) {
+    // Class only: asset/config errors can quote the configured issuer and seed.
+    console.error(
+      "[stellar/balance] configured USDC asset unusable",
+      error instanceof Error ? (error.constructor?.name ?? "Error") : typeof error,
+    );
     return {
       address,
       monitoringStatus: "unconfigured",
@@ -355,10 +407,16 @@ export async function getWalletHealth(): Promise<WalletHealth> {
   let numSponsored: number;
   try {
     const horizon = server();
-    const [account, ledgerPage] = await Promise.all([
-      horizon.loadAccount(address),
-      horizon.ledgers().order("desc").limit(1).call(),
-    ]);
+    // Abandoned on timeout: the in-flight requests are left to settle on their
+    // own, and this check degrades to an explicit monitoring error.
+    const [account, ledgerPage] = await withDeadline(
+      "Horizon wallet health",
+      Promise.all([
+        horizon.loadAccount(address),
+        horizon.ledgers().order("desc").limit(1).call(),
+      ]),
+      horizonTimeoutMs(),
+    );
     const native = (account.balances as HorizonBalanceLine[]).find(
       (balance) => balance.asset_type === "native",
     );
@@ -381,7 +439,13 @@ export async function getWalletHealth(): Promise<WalletHealth> {
         balance.asset_issuer === configuredUsdcIssuer,
     );
     usdcStroops = usdcLine ? usdcToUnits(usdcLine.balance) : 0n;
-  } catch {
+  } catch (error) {
+    // Distinguishes a Horizon outage, a stall (OperationTimeoutError), and
+    // malformed account data — without logging a URL-bearing message.
+    console.error(
+      "[stellar/balance] Horizon wallet monitoring unavailable",
+      error instanceof Error ? (error.constructor?.name ?? "Error") : typeof error,
+    );
     return {
       address,
       monitoringStatus: "error",
@@ -443,6 +507,7 @@ export async function getWalletHealth(): Promise<WalletHealth> {
   };
 }
 
+/** Read wallet health and deliver whatever balance alerts it warrants. */
 export async function checkAndAlert(): Promise<void> {
   const health = await getWalletHealth();
   for (const alert of walletBalanceAlerts(health)) {

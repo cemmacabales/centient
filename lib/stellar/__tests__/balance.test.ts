@@ -281,6 +281,56 @@ describe("optional balance threshold normalization", () => {
   });
 });
 
+describe("wallet monitoring diagnostics", () => {
+  it("logs the error class for a Horizon failure without leaking its message", async () => {
+    const secret = "synthetic-horizon-credential";
+    const logs = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockLoadAccount.mockRejectedValue(new Error(`https://user:${secret}@horizon/accounts`));
+
+    const health = await getWalletHealth();
+
+    expect(health.monitoringStatus).toBe("error");
+    expect(logs).toHaveBeenCalled();
+    expect(logs.mock.calls.flat().some((value) => typeof value === "object")).toBe(false);
+    expect(JSON.stringify(logs.mock.calls)).not.toContain(secret);
+    expect(JSON.stringify(logs.mock.calls)).toContain("Horizon wallet monitoring unavailable");
+    logs.mockRestore();
+  });
+
+  it("distinguishes an unusable configured asset from a Horizon failure", async () => {
+    const logs = vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env.STELLAR_USDC_ISSUER = "not-a-valid-issuer";
+
+    const health = await getWalletHealth();
+
+    expect(health.monitoringStatus).toBe("unconfigured");
+    expect(JSON.stringify(logs.mock.calls)).toContain("configured USDC asset unusable");
+    logs.mockRestore();
+  });
+});
+
+describe("Horizon request deadline", () => {
+  it("reports a monitoring error when Horizon never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      mockLoadAccount.mockImplementation(() => new Promise(() => {}));
+
+      let health: Awaited<ReturnType<typeof getWalletHealth>> | undefined;
+      const pending = getWalletHealth().then((result) => {
+        health = result;
+      });
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      expect(health?.monitoringStatus).toBe("error");
+      expect(health?.usdcBalance).toBe("—");
+      expect(health?.assetStatus).toEqual({ usdc: "unknown", xlm: "unknown" });
+      await pending;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("wallet reserve count availability", () => {
   it("reports reserve counts as null when the platform wallet is unconfigured", async () => {
     delete process.env.STELLAR_PLATFORM_SECRET;
