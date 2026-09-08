@@ -178,12 +178,15 @@ Neither is new, and neither is closed by anything above.
   and the job requeues without it. Closing this needs the hash persisted before
   submit and reconciled before reissue — a payout state-machine change tracked on
   the roadmap. `lib/payout-service.ts`'s retry claim now holds a lease *and*
-  refreshes it for as long as the broadcast is in flight, so the lease cannot
-  expire under a live payout; what remains is exactly the process-death case — a
-  worker that dies mid-submit stops refreshing, the lease expires, and the row is
-  reclaimed without the envelope hash the first attempt never persisted. The
-  failure runbook routes that case through reconciliation rather than implying a
-  bare retry is safe.
+  refreshes it while the broadcast is in flight, which narrows the window in
+  which a slow submit loses a claim it still holds — but does not close it. The
+  refresh is a best-effort write whose failures are swallowed so they can never
+  turn into a payment failure, and a stalled event loop delays it, so a
+  sufficiently degraded process can still be reclaimed mid-payout. **This is a
+  lease, not a fence.** Process death is the case it cannot help with at all:
+  refreshes stop, the lease expires, and the row is reclaimed without the
+  envelope hash the first attempt never persisted. The failure runbook routes
+  that case through reconciliation rather than implying a bare retry is safe.
 - **The submit lock is process-local.** `submitMultisigPayout`'s sequence mutex
   serializes payouts inside one Node process and nothing beyond it, so the
   deployment must run exactly one payout submitter. A second instance costs
