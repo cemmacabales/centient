@@ -75,14 +75,24 @@ openssl rand -hex 32
 
 1. In the Railway dashboard, **New Project** → **Deploy from GitHub repo** →
    pick `webnxt-2030/Centient`. Name the project `centient-cosigner`.
-2. Open the created service → **Settings**:
-   - **Start Command:** `pnpm cosign`
-   - **Watch Paths:** `services/cosigner/**`, `lib/stellar/**`, `prisma/**`,
-     `package.json`. The co-signer shares `lib/` with the application, so
-     scoping it to its own directory alone would leave it running stale
-     decision logic after a change to the checks it depends on.
-   - **Health Check Path:** `/health`
-3. **Variables** — these belong here and in no other project:
+2. Open the created service → **Settings** → **Config as Code**, and set the
+   config path to `services/cosigner/railway.json`.
+
+   This is not cosmetic. The repo-root `railway.json` runs
+   `npx prisma migrate deploy` before every deploy, which the co-signer must
+   never do: it holds a read-only credential and has no `DATABASE_URL` at all,
+   so the deploy would fail — and "fixing" that by adding `DATABASE_URL` would
+   hand this service the application's read-write connection and dissolve the
+   separation it exists to provide. Its own config carries no migration step.
+
+   The co-signer's config already sets the start command (`npm run cosign`) and
+   the health check path (`/health`).
+
+3. Still in **Settings**, set **Watch Paths**: `services/cosigner/**`,
+   `lib/stellar/**`, `prisma/**`, `package.json`. The co-signer shares `lib/`
+   with the application, so scoping it to its own directory alone would leave it
+   running stale decision logic after a change to the checks it depends on.
+4. **Variables** — these belong here and in no other project:
 
    | Variable | Value |
    | --- | --- |
@@ -95,8 +105,8 @@ openssl rand -hex 32
    | `STELLAR_USDC_ISSUER` | the same issuer the app pays in |
    | `PORT` | Railway sets this; the service reads it |
 
-4. **Settings → Networking → Generate Domain.** Note the URL.
-5. Deploy, then confirm: `curl https://<domain>/health` returns
+5. **Settings → Networking → Generate Domain.** Note the URL.
+6. Deploy, then confirm: `curl https://<domain>/health` returns
    `{"status":"ok","isolation":"same-workspace"}`.
 
 ## 4. Point the application at it, and take the key away
@@ -142,6 +152,7 @@ submission, and the #12 suite regression-guards it).
 | Refused 409 "already carries broadcast hash" | Working as intended — that payout settled already. Do not retry it; reconcile. |
 | Refused 503 "same-workspace is never permitted on the public network" | `STELLAR_NETWORK=public` under the MVP topology. This is the mainnet gate; see the ADR's exit criteria. |
 | Co-signer exits at boot | A required variable is missing. There are no fallbacks by design; the log names the one. |
+| Deploy fails in a pre-deploy step running `prisma migrate deploy` | The service is using the repo-root `railway.json`. Point Config as Code at `services/cosigner/railway.json`. Do not add `DATABASE_URL` to make it pass. |
 | Payout fails "co-signature is not the configured co-signer" | `STELLAR_POLICY_SIGNER_PUBLIC` in the app does not match the seed the co-signer holds. |
 
 ## Operating notes
