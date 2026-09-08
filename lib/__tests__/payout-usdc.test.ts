@@ -99,6 +99,7 @@ describe("payReward → multisig USDC payout", () => {
       PayoutCapError,
     );
     expect(mockSubmitMultisigPayout).not.toHaveBeenCalled();
+    expect(mockMaybeSendCapAlert).toHaveBeenCalledOnce();
   });
 
   it("refuses to broadcast when no co-signer is configured", async () => {

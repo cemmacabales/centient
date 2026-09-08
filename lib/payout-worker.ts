@@ -511,15 +511,18 @@ async function processSubmissionPayout(
       await prisma.$transaction([
         prisma.submission.update({
           where: { id: submissionId },
-          data: { payoutStatus: "skipped" },
+          data: { payoutStatus: "pending" },
         }),
         prisma.payoutJob.update({
           where: { id: jobId },
-          data: { status: "failed", completedAt: new Date(), lastError: `payout cap exceeded: ${message}`, retryCount: MAX_RETRIES },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            lastError: `payout cap exceeded: ${message}`,
+          },
         }),
       ]);
-      await refundCampaignBalance(submission.task, submissionId, amount, "refund: payout cap reached");
-      console.warn(`[payout-worker] submission job ${jobId} failed: daily cap reached`);
+      console.warn(`[payout-worker] submission job ${jobId} deferred: daily cap reached`);
       return;
     }
 
