@@ -42,8 +42,29 @@ STELLAR_COLD_MIN_RETAIN_UNITS=500000000
 
 The example policy triggers at 25 USDC, restores exactly 100 USDC, and refuses
 any refill that would leave less than 50 USDC cold. Set values from the measured
-daily payout budget. The worst-case USDC loss after a complete hot-wallet
-compromise is the configured target, never the remaining cold balance.
+daily payout budget.
+
+### Worst-case loss
+
+A complete hot-wallet compromise can spend at most what the hot wallet holds,
+and the hot wallet never holds more than the refill target, because every
+refill restores *exactly* the target and nothing else deposits into it. The
+cold reserve is untouched: no deployed service holds a cold seed, and a
+refill needs two of the three cold signers. So the bound is the target, not
+the reserve.
+
+| Quantity | Source | Example policy |
+|---|---|---|
+| Hot float target | `STELLAR_HOT_FLOAT_TARGET_UNITS` | 100 USDC |
+| Daily payout cap | `DAILY_PAYOUT_CAP_UNITS` | set ≤ target so one day's payouts cannot outrun the float |
+| Measured daily payout budget | `getPayoutActivitySince` over the trailing 7 days, or the admin status page | fill in before choosing the target |
+| **Worst-case loss** | = hot float target | **100 USDC** |
+| Cold balance at risk | none | 0 USDC |
+
+Choose the target as a small multiple of the measured daily budget (two to three
+days covers a weekend without a refill ceremony). Raising the target raises the
+worst-case loss one-for-one; that trade is the only policy decision here, and it
+is re-made whenever the daily budget changes materially.
 
 The cold account also needs XLM for its base reserve, USDC trustline, and rare
 refill fees. Keep at least 5 XLM spendable above its ledger reserve. The refill
@@ -128,7 +149,10 @@ unattended scheduler must not create competing stale envelopes.
 ## Wallet-health schedule and authenticated check
 
 Wallet health is checked by the authenticated `POST /api/cron/wallet-health`
-endpoint. Configure the scheduler with `CRON_SECRET` in its secret store and
+endpoint. **Nothing in this repository schedules it** — `railway.json` only
+runs migrations before deploy, and the same is true of `/api/cron/payout-retry`
+and `/api/cron/reserve-refill`. Provision a scheduler outside the app (a Railway
+cron service or equivalent) with `CRON_SECRET` in its own secret store and
 invoke it at least once per minute in production so short-lived balance and
 activity breaches are observed promptly:
 
@@ -140,7 +164,12 @@ curl -X POST https://APP_HOST/api/cron/wallet-health \
 The response contains the current USDC and spendable XLM status, payout and
 failure metrics, reserve state, configured thresholds, and alert delivery
 results. A `sent` result means Discord accepted the alert; `suppressed` means
-the alert identity is inside its cooldown window. Alert identities include
+the alert identity is inside its cooldown window. Every identity shares one
+cooldown, `HEALTH_ALERT_COOLDOWN_MS` (default 15 minutes). That includes
+`payout-cap`, which before #72 had its own 60-minute cooldown in the payout
+path; the shorter, shared window is deliberate, because the payout path and the
+health monitor raise the same identity through one Redis lease and must agree
+on its length. Alert identities include
 `wallet-usdc-warn`, `wallet-usdc-page`, `wallet-xlm-warn`,
 `wallet-xlm-page`, `payout-rate-spike`, `payout-volume-spike`, `payout-cap`,
 `repeated-payout-failures`, `reserve-refill-overdue`,
