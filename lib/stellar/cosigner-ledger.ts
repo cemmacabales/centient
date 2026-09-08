@@ -118,6 +118,14 @@ export interface LedgerReader {
     } | null>;
   };
   payoutJob: {
+    aggregate(args: {
+      _sum: { amountUnits: true };
+      where: {
+        broadcastAt: { gte: Date };
+        txHash: { not: null };
+        amountUnits: { not: null };
+      };
+    }): Promise<{ _sum: { amountUnits: bigint | null } }>;
     findUnique(args: {
       where: { id: string };
       select: { destinationAddress: true; amountUnits: true; status: true; txHash: true };
@@ -175,4 +183,30 @@ export async function readLedgerPayout(
     destination: row.destinationAddress,
     amountUnits: row.amountUnits,
   };
+}
+
+/**
+ * Units broadcast since `since`, as the co-signer's own cap sees them.
+ *
+ * Deliberately the same rule the payout service uses — a job counts once it
+ * carries a hash, whatever its status became afterwards, because a hash means
+ * Horizon accepted the payment and the funds have left the wallet. The
+ * *independence* the second cap provides comes from being computed by a separate
+ * process against a separately configured limit, not from counting differently:
+ * a co-signer that measured spend some other way would disagree with the payout
+ * service about the truth rather than about the policy.
+ */
+export async function readBroadcastVolumeSince(
+  client: LedgerReader,
+  since: Date,
+): Promise<bigint> {
+  const result = await client.payoutJob.aggregate({
+    _sum: { amountUnits: true },
+    where: {
+      broadcastAt: { gte: since },
+      txHash: { not: null },
+      amountUnits: { not: null },
+    },
+  });
+  return result._sum.amountUnits ?? 0n;
 }
