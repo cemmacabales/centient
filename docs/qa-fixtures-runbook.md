@@ -107,6 +107,22 @@ an ephemeral friendbot-funded sponsor, so the shape can be produced on a machine
 holding no platform secret. Running it twice against one run is refused: the
 sponsorship happens once per address, so a second one needs a fresh run.
 
+**If it refuses with an unfinished or unreconciled sponsorship.** Horizon
+accepting the sponsorship is irreversible and consumes real platform reserves, so
+the command writes the recipient key to the run *before* it submits. That means a
+crash leaves a marker rather than silence, and the command refuses to mint a
+second account against the same run — a second one would strand the first, which
+holds reserves nothing points at.
+
+| Refusal | What happened | What to do |
+| --- | --- | --- |
+| unfinished sponsorship for `G…` | It wrote the marker; the submit may or may not have landed | Look the account up on Horizon. Exists → reconcile it. Does not exist → the submit never landed. Either way, reset and re-seed. |
+| sponsorship awaiting reconciliation (tx `…`) | Horizon accepted, but the fixture rows did not get written | The account is real. Reconcile it against that hash before minting another, then reset and re-seed. |
+
+This is the same failure shape as D1-TC-011 — an accepted transaction whose
+record did not land — and it is handled the same way: record for reconciliation,
+never roll back, never silently retry.
+
 ### Twelve payable references
 
 `qa-payable-01` … `qa-payable-12`, all pending against the trustline recipient,
