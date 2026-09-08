@@ -111,7 +111,21 @@ export function localPolicyCoSigner(policy: Keypair, asset?: Asset): PayoutCoSig
 export function resolvePayoutCoSigner(
   env: PayoutCoSignerEnvironment = process.env,
 ): PayoutCoSigner {
+  const remoteUrl = env.COSIGNER_URL?.trim();
   const secret = env.STELLAR_POLICY_SIGNER_SECRET?.trim();
+
+  // The deployment boundary is asserted here rather than assumed. A process
+  // configured to call the separate co-signer must not also be able to produce
+  // its signature: if it can, the two signing boundaries have collapsed into one
+  // and the multisig is decorative. Refusing to start is the only safe response —
+  // silently preferring the remote signer would leave the key sitting in a
+  // process that is one code change away from using it.
+  if (remoteUrl && secret) {
+    throw new Error(
+      "this process is configured with both COSIGNER_URL and STELLAR_POLICY_SIGNER_SECRET — the app deployment must never hold the policy signing key (ADR-0001)",
+    );
+  }
+
   if (!secret) {
     throw new Error(
       "no payout co-signer is configured — set STELLAR_POLICY_SIGNER_SECRET for the gated local signer, or wire the issue #8 policy service",

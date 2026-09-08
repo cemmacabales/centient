@@ -187,6 +187,21 @@ describe("resolvePayoutCoSigner", () => {
     ).toThrow(/does not match/i);
   });
 
+  it("refuses to run the app process holding both the co-signer URL and the policy key", () => {
+    // The whole point of deploying the co-signer separately (ADR-0001) is that
+    // this process cannot produce both signatures. If it can see the policy
+    // secret at all, the boundary does not exist and the deployment is wrong —
+    // so this is a refusal to start, not a preference for the remote signer.
+    expect(() =>
+      resolvePayoutCoSigner({
+        ...baseEnv,
+        COSIGNER_URL: "https://cosigner.example",
+        COSIGNER_SHARED_SECRET: "s".repeat(32),
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+      }),
+    ).toThrow(/both/i);
+  });
+
   it("fails closed when no co-signer is configured at all", () => {
     expect(() =>
       resolvePayoutCoSigner({ ...baseEnv, STELLAR_POLICY_SIGNER_SECRET: undefined }),
