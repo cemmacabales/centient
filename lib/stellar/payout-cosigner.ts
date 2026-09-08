@@ -39,6 +39,29 @@ export function localPolicyCoSigner(policy: Keypair, asset?: Asset): PayoutCoSig
 }
 
 /**
+ * Refuse an application deployment that can produce both payout signatures.
+ *
+ * A process configured to call the separate co-signer must not also hold the
+ * policy signing key: if it does, the two signing boundaries have collapsed into
+ * one and the multisig is decorative. Silently preferring the remote signer
+ * would leave the key sitting in a process one code change away from using it.
+ *
+ * Called both at startup (`instrumentation.ts`) and on the payout path. Startup
+ * is where a collapsed boundary should surface — a deployment that has lost the
+ * separation is wrong the moment it comes up, not hours later when the first
+ * contributor tries to get paid.
+ */
+export function assertAppDeploymentSeparation(
+  env: PayoutCoSignerEnvironment = process.env,
+): void {
+  if (env.COSIGNER_URL?.trim() && env.STELLAR_POLICY_SIGNER_SECRET?.trim()) {
+    throw new Error(
+      "this process is configured with both COSIGNER_URL and STELLAR_POLICY_SIGNER_SECRET — the app deployment must never hold the policy signing key (ADR-0001)",
+    );
+  }
+}
+
+/**
  * The co-signer this deployment may use. Throws rather than returning a
  * single-signature fallback: there is no configuration of this rail that pays out
  * on one signature.
@@ -49,17 +72,7 @@ export function resolvePayoutCoSigner(
   const remoteUrl = env.COSIGNER_URL?.trim();
   const secret = env.STELLAR_POLICY_SIGNER_SECRET?.trim();
 
-  // The deployment boundary is asserted here rather than assumed. A process
-  // configured to call the separate co-signer must not also be able to produce
-  // its signature: if it can, the two signing boundaries have collapsed into one
-  // and the multisig is decorative. Refusing to start is the only safe response —
-  // silently preferring the remote signer would leave the key sitting in a
-  // process that is one code change away from using it.
-  if (remoteUrl && secret) {
-    throw new Error(
-      "this process is configured with both COSIGNER_URL and STELLAR_POLICY_SIGNER_SECRET — the app deployment must never hold the policy signing key (ADR-0001)",
-    );
-  }
+  assertAppDeploymentSeparation(env);
 
   // The deployed service is the real co-signer and takes precedence: the local
   // signer below exists only so the refusal paths stay exercised in development.

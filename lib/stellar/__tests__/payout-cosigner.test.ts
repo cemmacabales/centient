@@ -7,7 +7,11 @@ import {
   signAsPlatform,
   type PayoutCoSignRequest,
 } from "../payout-envelope";
-import { localPolicyCoSigner, resolvePayoutCoSigner } from "../payout-cosigner";
+import {
+  assertAppDeploymentSeparation,
+  localPolicyCoSigner,
+  resolvePayoutCoSigner,
+} from "../payout-cosigner";
 
 const policy = Keypair.random();
 const platform = Keypair.random();
@@ -275,5 +279,33 @@ describe("resolvePayoutCoSigner", () => {
     expect(() =>
       resolvePayoutCoSigner({ ...baseEnv, STELLAR_POLICY_SIGNER_SECRET: undefined }),
     ).toThrow(/no payout co-signer is configured/i);
+  });
+});
+
+describe("assertAppDeploymentSeparation", () => {
+  it("refuses an app deployment that can see both the URL and the policy key", () => {
+    // Checked at startup, not only when a payout is attempted: a deployment that
+    // has collapsed the two signing boundaries should be visible the moment it
+    // comes up, not hours later when the first contributor tries to get paid.
+    expect(() =>
+      assertAppDeploymentSeparation({
+        COSIGNER_URL: "https://cosigner.example/cosign",
+        STELLAR_POLICY_SIGNER_SECRET: policy.secret(),
+      }),
+    ).toThrow(/both/i);
+  });
+
+  it("permits an app deployment carrying only the co-signer URL", () => {
+    expect(() =>
+      assertAppDeploymentSeparation({ COSIGNER_URL: "https://cosigner.example/cosign" }),
+    ).not.toThrow();
+  });
+
+  it("permits a development deployment with no co-signer URL at all", () => {
+    // The gated local signer is still a supported development path, so holding
+    // the policy seed alone is not by itself a misconfiguration.
+    expect(() =>
+      assertAppDeploymentSeparation({ STELLAR_POLICY_SIGNER_SECRET: policy.secret() }),
+    ).not.toThrow();
   });
 });
