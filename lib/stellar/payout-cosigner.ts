@@ -71,6 +71,24 @@ export function resolvePayoutCoSigner(
         "COSIGNER_SHARED_SECRET must be set to authenticate requests to the co-signer at COSIGNER_URL",
       );
     }
+    // The HMAC proves who sent the request and that it arrived intact; it does
+    // not conceal it. Over plaintext the destination, the amount, the envelope
+    // XDR, and the signature coming back are all readable in transit — and the
+    // co-signer's own Railway project means this crosses the public internet.
+    // Loopback stays exempt so a local co-signer is still usable in development.
+    let parsed: URL;
+    try {
+      parsed = new URL(remoteUrl);
+    } catch {
+      throw new Error(`COSIGNER_URL is not a usable URL: "${remoteUrl}"`);
+    }
+    const loopback = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+    if (parsed.protocol !== "https:" && !loopback) {
+      throw new Error(
+        `COSIGNER_URL must use https (got "${parsed.protocol}") — payout details are never sent to the co-signer over plaintext`,
+      );
+    }
+
     return remotePolicyCoSigner({ url: remoteUrl, secret: sharedSecret });
   }
 
