@@ -7,7 +7,10 @@ beforeEach(async () => {
 });
 
 describe("getPayoutActivitySince", () => {
-  it("counts only broadcast processing and done withdrawal jobs within the window", async () => {
+  it("counts every job carrying a broadcast hash within the window, whatever its status", async () => {
+    // A hash is written only after Horizon accepted the payment, so the funds
+    // have left the wallet regardless of what happened to the job afterwards. A
+    // quarantined (`failed`) accepted payment is still spend against the cap.
     const since = new Date("2026-09-07T12:00:00.000Z");
     const recentBroadcast = new Date("2026-09-07T13:00:00.000Z");
 
@@ -52,8 +55,8 @@ describe("getPayoutActivitySince", () => {
     });
 
     await expect(getPayoutActivitySince(since)).resolves.toEqual({
-      count: 2,
-      volumeUnits: 750_000_000n,
+      count: 4,
+      volumeUnits: 2_650_000_000n,
     });
   });
 });

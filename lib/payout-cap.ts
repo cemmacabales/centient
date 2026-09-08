@@ -40,16 +40,18 @@ export interface PayoutActivity {
 /**
  * Payout count and volume broadcast since `since`.
  *
- * Counts only `processing`/`done` jobs carrying a hash, an amount, and a
- * broadcast time — the exact set of payouts that actually reached the network.
- * Withdrawals have no Submission row, so this is the only complete source.
+ * Counts every job carrying a hash, an amount, and a broadcast time, whatever
+ * its status. A hash is written only after Horizon accepted the payment, so the
+ * funds have left the wallet even when the job was later quarantined as
+ * `failed` for manual reconciliation (#73). Excluding those would let the daily
+ * cap under-count real spend. Withdrawals have no Submission row, so this is
+ * the only complete source.
  */
 export async function getPayoutActivitySince(since: Date): Promise<PayoutActivity> {
   const result = await prisma.payoutJob.aggregate({
     _count: { _all: true },
     _sum: { amountUnits: true },
     where: {
-      status: { in: ["processing", "done"] },
       broadcastAt: { gte: since },
       txHash: { not: null },
       amountUnits: { not: null },
