@@ -41,7 +41,16 @@ describe("/api/cron/wallet-health", () => {
     mockRunHealthMonitor.mockResolvedValueOnce({
       checkedAt: "2026-09-08T00:00:00.000Z",
       wallet: { usdcBalance: "5.0000", availableXlmBalance: "1.0000" },
-      metrics: { dailyCapPercent: 80, reserveStatus: "refill_required" },
+      metrics: {
+        dailyCapPercent: 80,
+        reserveStatus: "refill_required",
+        sourceStatus: {
+          wallet: "healthy",
+          payouts: "healthy",
+          reserve: "healthy",
+          refillTimer: "healthy",
+        },
+      },
       thresholds: { capPercentThreshold: 80 },
       alerts: [{ key: "wallet-usdc-page" }],
       deliveries: [{ key: "wallet-usdc-page", status: "sent" }],
@@ -51,7 +60,16 @@ describe("/api/cron/wallet-health", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
-      metrics: { dailyCapPercent: 80, reserveStatus: "refill_required" },
+      metrics: {
+        dailyCapPercent: 80,
+        reserveStatus: "refill_required",
+        sourceStatus: {
+          wallet: "healthy",
+          payouts: "healthy",
+          reserve: "healthy",
+          refillTimer: "healthy",
+        },
+      },
       deliveries: [{ key: "wallet-usdc-page", status: "sent" }],
     });
   });

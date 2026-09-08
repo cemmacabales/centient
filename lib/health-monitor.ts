@@ -1,5 +1,9 @@
 import prisma from "./prisma";
-import { getDailyPayoutCapUnits, getRolling24hPayoutSum } from "./payout-cap";
+import {
+  getDailyPayoutCapUnits,
+  getPayoutActivitySince,
+  getRolling24hPayoutSum,
+} from "./payout-cap";
 import { redis } from "./redis";
 import { getWalletHealth, type BalanceStatus, type WalletHealth } from "./stellar/balance";
 import {
@@ -7,7 +11,11 @@ import {
   type HealthAlert,
   type HealthAlertDelivery,
 } from "./health-alert";
-import { loadReserveRefillStatus, type ReserveRefillPlan } from "./stellar/reserve-refill";
+import {
+  loadReserveRefillStatus,
+  parseReserveRefillPolicy,
+  type ReserveRefillPlan,
+} from "./stellar/reserve-refill";
 import { walletBalanceAlerts } from "./wallet-balance-alerts";
 
 const REFILL_DUE_REDIS_KEY = "t2p:reserve-refill:due-since";
@@ -22,6 +30,25 @@ const DEFAULT_THRESHOLDS = {
   refillOverdueMinutes: 30,
 } satisfies HealthMonitorThresholds;
 
+export type MonitoringStatus = "healthy" | "unconfigured" | "error";
+
+type ReserveStatus = ReserveRefillPlan["status"] | "unconfigured" | null;
+
+type NullablePayoutMetrics = {
+  payoutCount: number | null;
+  payoutVolumeUnits: bigint | null;
+  failedPayoutCount: number | null;
+  dailySpentUnits: bigint | null;
+  status: MonitoringStatus;
+};
+
+type SourceStatus = {
+  wallet: MonitoringStatus;
+  payouts: MonitoringStatus;
+  reserve: MonitoringStatus;
+  refillTimer: MonitoringStatus;
+};
+
 export interface HealthMonitorThresholds {
   payoutWindowMinutes: number;
   payoutCountThreshold: number;
@@ -35,32 +62,37 @@ export interface HealthMonitorThresholds {
 export interface HealthMonitorInput {
   wallet: {
     address: string;
+    monitoringStatus: MonitoringStatus;
     usdcBalance: string;
     availableXlmBalance: string;
     sponsoredReserveXlm: string;
     assetStatus: { usdc: BalanceStatus; xlm: BalanceStatus };
   };
-  payoutCount: number;
-  payoutVolumeUnits: bigint;
-  failedPayoutCount: number;
-  dailyCapUnits: bigint;
-  dailySpentUnits: bigint;
-  reserveStatus: "healthy" | "refill_required" | "insufficient_reserve" | "unconfigured";
+  payoutCount: number | null;
+  payoutVolumeUnits: bigint | null;
+  failedPayoutCount: number | null;
+  dailyCapUnits: bigint | null;
+  dailySpentUnits: bigint | null;
+  reserveStatus: ReserveStatus;
   refillDueSinceMs: number | null;
+  payoutStatus: MonitoringStatus;
+  reserveMonitoringStatus: MonitoringStatus;
+  refillTimerStatus: MonitoringStatus;
   nowMs: number;
 }
 
 export interface HealthMonitorMetrics {
-  payoutCount: number;
-  payoutVolumeUnits: string;
-  failedPayoutCount: number;
-  dailyCapUnits: string;
-  dailySpentUnits: string;
-  dailyCapPercent: number;
+  payoutCount: number | null;
+  payoutVolumeUnits: string | null;
+  failedPayoutCount: number | null;
+  dailyCapUnits: string | null;
+  dailySpentUnits: string | null;
+  dailyCapPercent: number | null;
   reserveStatus: HealthMonitorInput["reserveStatus"];
   hotBalanceUnits: string | null;
   coldBalanceUnits: string | null;
   refillDueSince: string | null;
+  sourceStatus: SourceStatus;
 }
 
 export interface HealthMonitorSnapshot {
@@ -128,7 +160,10 @@ export function evaluateHealthAlerts(
 ): HealthAlert[] {
   const alerts = walletBalanceAlerts(input.wallet);
 
-  if (input.payoutCount >= thresholds.payoutCountThreshold) {
+  if (
+    input.payoutCount !== null &&
+    input.payoutCount >= thresholds.payoutCountThreshold
+  ) {
     alerts.push({
       key: "payout-rate-spike",
       severity: "WARN",
@@ -140,7 +175,10 @@ export function evaluateHealthAlerts(
     });
   }
 
-  if (input.payoutVolumeUnits >= thresholds.payoutVolumeUnitsThreshold) {
+  if (
+    input.payoutVolumeUnits !== null &&
+    input.payoutVolumeUnits >= thresholds.payoutVolumeUnitsThreshold
+  ) {
     alerts.push({
       key: "payout-volume-spike",
       severity: "WARN",
@@ -152,7 +190,11 @@ export function evaluateHealthAlerts(
     });
   }
 
-  if (input.dailyCapUnits > 0n) {
+  if (
+    input.dailyCapUnits !== null &&
+    input.dailySpentUnits !== null &&
+    input.dailyCapUnits > 0n
+  ) {
     const capPercent = Number((input.dailySpentUnits * 10_000n) / input.dailyCapUnits) / 100;
     if (capPercent >= thresholds.capPercentThreshold) {
       alerts.push({
@@ -167,7 +209,10 @@ export function evaluateHealthAlerts(
     }
   }
 
-  if (input.failedPayoutCount >= thresholds.failureCountThreshold) {
+  if (
+    input.failedPayoutCount !== null &&
+    input.failedPayoutCount >= thresholds.failureCountThreshold
+  ) {
     alerts.push({
       key: "repeated-payout-failures",
       severity: "PAGE",
@@ -180,6 +225,7 @@ export function evaluateHealthAlerts(
   }
 
   if (
+    input.reserveStatus !== null &&
     input.reserveStatus !== "healthy" &&
     input.reserveStatus !== "unconfigured" &&
     input.refillDueSinceMs !== null &&
@@ -193,6 +239,40 @@ export function evaluateHealthAlerts(
         `Reserve status: ${input.reserveStatus}`,
         `Refill has remained due for at least ${thresholds.refillOverdueMinutes} minutes`,
       ],
+    });
+  }
+
+  if (input.payoutStatus === "error") {
+    alerts.push({
+      key: "payout-monitoring-unavailable",
+      severity: "PAGE",
+      title: "Payout monitoring is unavailable",
+      lines: ["Rolling payout and failure metrics could not be loaded"],
+    });
+  }
+
+  if (input.reserveMonitoringStatus === "unconfigured") {
+    alerts.push({
+      key: "reserve-monitoring-unconfigured",
+      severity: "WARN",
+      title: "Reserve monitoring is not configured",
+      lines: ["Configure the cold reserve policy before relying on refill alerts"],
+    });
+  } else if (input.reserveMonitoringStatus === "error") {
+    alerts.push({
+      key: "reserve-monitoring-unavailable",
+      severity: "PAGE",
+      title: "Reserve monitoring is unavailable",
+      lines: ["Hot and cold reserve balances could not be loaded"],
+    });
+  }
+
+  if (input.refillTimerStatus === "error") {
+    alerts.push({
+      key: "refill-timer-unavailable",
+      severity: "PAGE",
+      title: "Reserve refill timing is unavailable",
+      lines: ["The time since a reserve refill became due could not be loaded"],
     });
   }
 
@@ -211,38 +291,94 @@ function reserveBalanceUnits(plan: ReserveRefillPlan): {
 
 async function loadReserveStatus(): Promise<{
   plan: ReserveRefillPlan | null;
-  status: HealthMonitorInput["reserveStatus"];
+  reserveStatus: ReserveStatus;
+  status: MonitoringStatus;
 }> {
   try {
-    const plan = await loadReserveRefillStatus();
-    return { plan, status: plan.status };
+    parseReserveRefillPolicy(process.env);
   } catch (error) {
     console.warn(
+      "[health-monitor] reserve monitoring unconfigured",
+      error instanceof Error ? error.name : typeof error,
+    );
+    return { plan: null, reserveStatus: "unconfigured", status: "unconfigured" };
+  }
+
+  try {
+    const plan = await loadReserveRefillStatus({ env: process.env });
+    return { plan, reserveStatus: plan.status, status: "healthy" };
+  } catch (error) {
+    console.error(
       "[health-monitor] reserve monitoring unavailable",
       error instanceof Error ? error.name : typeof error,
     );
-    return { plan: null, status: "unconfigured" };
+    return { plan: null, reserveStatus: null, status: "error" };
+  }
+}
+
+async function loadPayoutMetrics(
+  payoutSince: Date,
+  failureSince: Date,
+): Promise<NullablePayoutMetrics> {
+  try {
+    const [activity, dailySpentUnits, failedPayoutCount] = await Promise.all([
+      getPayoutActivitySince(payoutSince),
+      getRolling24hPayoutSum(),
+      prisma.payoutJob.count({
+        where: { status: "failed", completedAt: { gte: failureSince } },
+      }),
+    ]);
+    return {
+      payoutCount: activity.count,
+      payoutVolumeUnits: activity.volumeUnits,
+      failedPayoutCount,
+      dailySpentUnits,
+      status: "healthy",
+    };
+  } catch (error) {
+    console.error(
+      "[health-monitor] payout monitoring unavailable",
+      error instanceof Error ? error.name : typeof error,
+    );
+    return {
+      payoutCount: null,
+      payoutVolumeUnits: null,
+      failedPayoutCount: null,
+      dailySpentUnits: null,
+      status: "error",
+    };
   }
 }
 
 async function updateRefillDueSince(
   status: HealthMonitorInput["reserveStatus"],
   nowMs: number,
-): Promise<number | null> {
+): Promise<{ dueSinceMs: number | null; status: MonitoringStatus }> {
+  if (status === null || status === "unconfigured") {
+    return { dueSinceMs: null, status: "unconfigured" };
+  }
+
   try {
     if (status === "healthy") {
       await redis.del(REFILL_DUE_REDIS_KEY);
-      return null;
+      return { dueSinceMs: null, status: "healthy" };
     }
-    if (status === "unconfigured") return null;
 
     const created = await redis.set(REFILL_DUE_REDIS_KEY, String(nowMs), "NX");
     const stored = await redis.get(REFILL_DUE_REDIS_KEY);
-    if (stored && /^\d+$/.test(stored)) return Number(stored);
-    return created === "OK" ? nowMs : null;
+    if (stored && /^\d+$/.test(stored)) {
+      return { dueSinceMs: Number(stored), status: "healthy" };
+    }
+    return {
+      dueSinceMs: created === "OK" ? nowMs : null,
+      status: "healthy",
+    };
   } catch (error) {
-    console.error("[health-monitor] refill timer unavailable", error);
-    return null;
+    console.error(
+      "[health-monitor] refill timer unavailable",
+      error instanceof Error ? error.name : typeof error,
+    );
+    return { dueSinceMs: null, status: "error" };
   }
 }
 
@@ -255,69 +391,60 @@ export async function getHealthMonitorSnapshot({
 } = {}): Promise<HealthMonitorSnapshot> {
   const payoutSince = new Date(nowMs - thresholds.payoutWindowMinutes * 60 * 1000);
   const failureSince = new Date(nowMs - thresholds.failureWindowMinutes * 60 * 1000);
-  const dailyCapUnits = getDailyPayoutCapUnits();
+  const dailyCapUnits: bigint | null = getDailyPayoutCapUnits();
 
-  const [
-    wallet,
-    payoutCount,
-    payoutVolume,
-    failedPayoutCount,
-    dailySpentUnits,
-    reserve,
-  ] = await Promise.all([
+  const [wallet, payouts, reserve] = await Promise.all([
     getWalletHealth(),
-    prisma.submission.count({
-      where: {
-        payoutStatus: { in: ["sent", "confirmed"] },
-        createdAt: { gte: payoutSince },
-      },
-    }),
-    prisma.submission.aggregate({
-      _sum: { payoutAmountUnits: true },
-      where: {
-        payoutStatus: { in: ["sent", "confirmed"] },
-        createdAt: { gte: payoutSince },
-      },
-    }),
-    prisma.payoutJob.count({
-      where: { status: "failed", completedAt: { gte: failureSince } },
-    }),
-    getRolling24hPayoutSum(),
+    loadPayoutMetrics(payoutSince, failureSince),
     loadReserveStatus(),
   ]);
 
-  const payoutVolumeUnits = payoutVolume._sum.payoutAmountUnits ?? 0n;
-  const refillDueSinceMs = await updateRefillDueSince(reserve.status, nowMs);
+  const refillTimer = await updateRefillDueSince(reserve.reserveStatus, nowMs);
   const input: HealthMonitorInput = {
     wallet,
-    payoutCount,
-    payoutVolumeUnits,
-    failedPayoutCount,
+    payoutCount: payouts.payoutCount,
+    payoutVolumeUnits: payouts.payoutVolumeUnits,
+    failedPayoutCount: payouts.failedPayoutCount,
     dailyCapUnits,
-    dailySpentUnits,
-    reserveStatus: reserve.status,
-    refillDueSinceMs,
+    dailySpentUnits: payouts.dailySpentUnits,
+    reserveStatus: reserve.reserveStatus,
+    refillDueSinceMs: refillTimer.dueSinceMs,
+    payoutStatus: payouts.status,
+    reserveMonitoringStatus: reserve.status,
+    refillTimerStatus: refillTimer.status,
     nowMs,
   };
   const reserveBalances = reserve.plan ? reserveBalanceUnits(reserve.plan) : null;
   const dailyCapPercent =
-    dailyCapUnits > 0n ? Number((dailySpentUnits * 10_000n) / dailyCapUnits) / 100 : 0;
+    dailyCapUnits !== null && payouts.dailySpentUnits !== null
+      ? dailyCapUnits > 0n
+        ? Number((payouts.dailySpentUnits * 10_000n) / dailyCapUnits) / 100
+        : 0
+      : null;
 
   return {
     checkedAt: new Date(nowMs).toISOString(),
     wallet,
     metrics: {
-      payoutCount,
-      payoutVolumeUnits: payoutVolumeUnits.toString(),
-      failedPayoutCount,
-      dailyCapUnits: dailyCapUnits.toString(),
-      dailySpentUnits: dailySpentUnits.toString(),
+      payoutCount: payouts.payoutCount,
+      payoutVolumeUnits: payouts.payoutVolumeUnits?.toString() ?? null,
+      failedPayoutCount: payouts.failedPayoutCount,
+      dailyCapUnits: dailyCapUnits?.toString() ?? null,
+      dailySpentUnits: payouts.dailySpentUnits?.toString() ?? null,
       dailyCapPercent,
-      reserveStatus: reserve.status,
+      reserveStatus: reserve.reserveStatus,
       hotBalanceUnits: reserveBalances?.hotBalanceUnits.toString() ?? null,
       coldBalanceUnits: reserveBalances?.coldBalanceUnits.toString() ?? null,
       refillDueSince:
-        refillDueSinceMs === null ? null : new Date(refillDueSinceMs).toISOString(),
+        refillTimer.dueSinceMs === null
+          ? null
+          : new Date(refillTimer.dueSinceMs).toISOString(),
+      sourceStatus: {
+        wallet: wallet.monitoringStatus,
+        payouts: payouts.status,
+        reserve: reserve.status,
+        refillTimer: refillTimer.status,
+      },
     },
     thresholds: {
       ...thresholds,
@@ -332,7 +459,18 @@ export async function runHealthMonitor(
 ): Promise<HealthMonitorSnapshot & {
   deliveries: Array<{ key: string; status: HealthAlertDelivery }>;
 }> {
-  const snapshot = await getHealthMonitorSnapshot(options);
+  let snapshot: HealthMonitorSnapshot;
+  try {
+    snapshot = await getHealthMonitorSnapshot(options);
+  } catch (error) {
+    await sendDedupedDiscordAlert({
+      key: "health-monitor-unavailable",
+      severity: "PAGE",
+      title: "Wallet-health monitor failed",
+      lines: ["The health snapshot could not be assembled"],
+    });
+    throw error;
+  }
   const deliveries = [];
   for (const alert of snapshot.alerts) {
     deliveries.push({ key: alert.key, status: await sendDedupedDiscordAlert(alert) });
