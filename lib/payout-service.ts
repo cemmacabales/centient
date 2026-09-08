@@ -31,7 +31,7 @@ const RETRY_CLAIM_LEASE_MS = 60_000;
  * broadcast would let a second claimant broadcast before the first stores its
  * hash — the double-payment the lease is there to prevent.
  */
-const RETRY_CLAIM_HEARTBEAT_MS = 20_000;
+export const RETRY_CLAIM_HEARTBEAT_MS = 20_000;
 
 /**
  * Claim a submission for one retry under a per-wallet advisory lock. Returns the
@@ -54,13 +54,17 @@ const RETRY_CLAIM_HEARTBEAT_MS = 20_000;
  * and the worker's `claimNextJob` already use for their own rows.
  *
  * A live retry refreshes the lease while it broadcasts (see
- * `heartbeatRetryClaim`), so the lease cannot expire underneath a payout that is
- * still in flight. What remains is the process-death case: a worker that dies
- * mid-submit stops refreshing, the lease expires, and the row is reclaimed
- * without the envelope hash the first attempt never got to persist. Closing that
- * needs the hash persisted *before* submit and reconciled before reissue — the
- * same gap tracked on the roadmap, and a payout state-machine change rather than
- * a locking one.
+ * `heartbeatRetryClaim`), which is what keeps a slow submit from losing a claim
+ * it still holds. It reduces that risk rather than eliminating it: refreshes are
+ * best-effort writes whose failures are swallowed, and a stalled event loop
+ * delays them, so a sufficiently degraded process can still have its lease
+ * expire while its payout is in flight.
+ *
+ * Process death is the case it cannot help with at all — refreshes simply stop,
+ * the lease expires, and the row is reclaimed without the envelope hash the
+ * first attempt never got to persist. Closing either outright needs the hash
+ * persisted *before* submit and reconciled before reissue: the same gap tracked
+ * on the roadmap, and a payout state-machine change rather than a locking one.
  */
 async function claimForRetry(
   tx: any,
@@ -102,8 +106,11 @@ async function claimForRetry(
  * heartbeat that fires between the persist and `clearInterval` from writing a
  * later `lastRetriedAt` over the recorded broadcast time.
  *
- * Failures are swallowed: a missed refresh costs at most a reclaimed lease, and
- * turning a bookkeeping error into a payment error is exactly backwards.
+ * Failures are swallowed and never interrupt the payout: turning a bookkeeping
+ * error into a payment error is backwards. The cost is that this is best-effort
+ * — enough consecutive failed refreshes, or a long enough event-loop stall, and
+ * the lease lapses under a live broadcast anyway. It narrows the window; it does
+ * not fence the payout.
  */
 function heartbeatRetryClaim(submissionId: string): NodeJS.Timeout {
   return setInterval(() => {
