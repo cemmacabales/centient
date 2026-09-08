@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { payReward, PayoutCapError } from "./payout";
+import { maybeSendCapAlert } from "./payout-cap";
 import { StellarPaymentError } from "./stellar/client";
 import { isValidStellarAddress } from "./stellar/signature";
 import { abandonAcceptedPayment, persistAcceptedPayment } from "./payout-broadcast";
@@ -196,6 +197,11 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
       });
   }), quarantine);
   if (!persisted) return;
+
+  // Raised only once the broadcast tuple is in the ledger the alert reads. Doing
+  // it inside `payReward` would sum a total that excludes this payout and could
+  // skip the threshold crossing it just caused.
+  maybeSendCapAlert().catch(() => {});
 
   try {
     await creditUserTotals(walletAddress, amount);
