@@ -325,11 +325,6 @@ async function processWithdrawalJob(
 }
 
 /**
- * Settle one submission reward: pay the linked wallet, then record the hash and
- * credit totals. On failure it refunds the campaign balance and applies the same
- * retryable / non-retryable classification as a withdrawal.
- */
-/**
  * Settle one submission reward: pay the linked wallet, record the broadcast
  * tuple, then credit the submission and user bookkeeping. The tuple is persisted
  * before the bookkeeping so a bookkeeping failure cannot unwind a paid reward.
@@ -511,15 +506,18 @@ async function processSubmissionPayout(
       await prisma.$transaction([
         prisma.submission.update({
           where: { id: submissionId },
-          data: { payoutStatus: "skipped" },
+          data: { payoutStatus: "pending" },
         }),
         prisma.payoutJob.update({
           where: { id: jobId },
-          data: { status: "failed", completedAt: new Date(), lastError: `payout cap exceeded: ${message}`, retryCount: MAX_RETRIES },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            lastError: `payout cap exceeded: ${message}`,
+          },
         }),
       ]);
-      await refundCampaignBalance(submission.task, submissionId, amount, "refund: payout cap reached");
-      console.warn(`[payout-worker] submission job ${jobId} failed: daily cap reached`);
+      console.warn(`[payout-worker] submission job ${jobId} deferred: daily cap reached`);
       return;
     }
 

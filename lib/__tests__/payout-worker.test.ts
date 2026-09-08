@@ -1,10 +1,8 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 // Payouts are async: the route debits the campaign balance up front and enqueues a
-// PayoutJob; the worker performs the on-chain transfer. When the worker ends in a
-// terminal non-paid state (daily cap reached, or permanently failed), it must reverse
-// the debit. These tests cover that refund behaviour (previously tested at the route
-// level, before payouts moved off the request path).
+// PayoutJob; the worker performs the on-chain transfer. Permanent failures reverse
+// that debit, while a transient daily-cap refusal leaves it reserved for retry.
 
 vi.mock("@/lib/payout", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/payout")>();
@@ -33,10 +31,16 @@ const RETRY_BUDGET_EXHAUSTED = 2;
 const AMOUNT_UNITS = 50000000000000000n;
 const TX_HASH = "payout-broadcast-hash";
 
+// Two independent counters guard a submission payout. `PayoutJob.retryCount` is
+// the worker's own budget, spent only while the job is still claimable. Once the
+// job is terminal it is inert, and the counter that decides whether a deferred
+// payout is ever retried is `Submission.retryCount`, which
+// `/api/cron/payout-retry` checks against its own MAX_RETRIES.
 async function enqueuePendingPayout(opts: {
   campaignId?: string | null;
   isGold?: boolean;
   retryCount?: number;
+  submissionRetryCount?: number;
 } = {}) {
   const user = await createUser();
   const task = await createTask({
@@ -52,6 +56,7 @@ async function enqueuePendingPayout(opts: {
       reason: VALID_REASON,
       payoutAmountUnits: AMOUNT_UNITS,
       payoutStatus: "pending",
+      retryCount: opts.submissionRetryCount ?? 0,
     },
   });
   const job = await prisma.payoutJob.create({
@@ -89,24 +94,28 @@ describe("payout-worker accepted submission payments", () => {
 });
 
 describe("payout-worker campaign balance refunds", () => {
-  it("refunds the campaign balance when the daily payout cap is reached", async () => {
+  it("leaves a cap-blocked submission pending without refunding or burning a retry", async () => {
     vi.mocked(payReward).mockRejectedValueOnce(new PayoutCapError(1n, 1n));
     const campaign = await createCampaign();
-    const { submission, job, user } = await enqueuePendingPayout({ campaignId: campaign.id });
+    const { submission, job, user } = await enqueuePendingPayout({
+      campaignId: campaign.id,
+      retryCount: 2,
+      submissionRetryCount: 1,
+    });
 
     await processJob(job.id, submission.id, user.id, submission.payoutAmountUnits, "SUBMISSION_PAYOUT");
 
-    expect(creditBalance).toHaveBeenCalledOnce();
-    expect(creditBalance).toHaveBeenCalledWith(
-      campaign.id,
-      expect.any(BigInt),
-      expect.stringContaining("payout cap reached"),
-      "REFUND",
-    );
+    expect(creditBalance).not.toHaveBeenCalled();
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
-    expect(updated?.payoutStatus).toBe("skipped");
+    expect(updated?.payoutStatus).toBe("pending");
+    // The assertion that matters for recovery: `/api/cron/payout-retry` selects
+    // pending submissions whose own retryCount is still under budget, so leaving
+    // this untouched is what keeps the deferred payout eligible.
+    expect(updated?.retryCount).toBe(1);
     const updatedJob = await prisma.payoutJob.findUnique({ where: { id: job.id } });
     expect(updatedJob?.status).toBe("failed");
+    expect(updatedJob?.retryCount).toBe(2);
+    expect(updatedJob?.lastError).toContain("payout cap exceeded");
   });
 
   it("refunds the campaign balance when the payout fails permanently", async () => {
@@ -161,33 +170,6 @@ describe("payout-worker campaign balance refunds", () => {
     expect(creditBalance).not.toHaveBeenCalled();
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
     expect(updated?.payoutStatus).toBe("failed");
-  });
-
-  it("does not refund a gold task", async () => {
-    vi.mocked(payReward).mockRejectedValueOnce(new PayoutCapError(1n, 1n));
-    const campaign = await createCampaign();
-    const { submission, job, user } = await enqueuePendingPayout({
-      campaignId: campaign.id,
-      isGold: true,
-    });
-
-    await processJob(job.id, submission.id, user.id, submission.payoutAmountUnits, "SUBMISSION_PAYOUT");
-
-    expect(creditBalance).not.toHaveBeenCalled();
-    const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
-    expect(updated?.payoutStatus).toBe("skipped");
-  });
-
-  it("still marks the submission skipped when the cap refund itself fails", async () => {
-    vi.mocked(payReward).mockRejectedValueOnce(new PayoutCapError(1n, 1n));
-    vi.mocked(creditBalance).mockRejectedValueOnce(new Error("refund failed"));
-    const campaign = await createCampaign();
-    const { submission, job, user } = await enqueuePendingPayout({ campaignId: campaign.id });
-
-    await expect(processJob(job.id, submission.id, user.id, submission.payoutAmountUnits, "SUBMISSION_PAYOUT")).resolves.toBeUndefined();
-
-    const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
-    expect(updated?.payoutStatus).toBe("skipped");
   });
 
   it("still marks the submission failed when the failure refund itself fails", async () => {
