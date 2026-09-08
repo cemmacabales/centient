@@ -56,7 +56,9 @@ export async function payReward(
     { coSigner },
   );
 
-  maybeSendCapAlert(amount).catch(() => {});
+  // No argument here: the caller records this broadcast's tuple once `payReward`
+  // returns, so passing the amount would race that write and count it twice.
+  maybeSendCapAlert().catch(() => {});
 
   return hash;
 }

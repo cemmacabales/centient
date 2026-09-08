@@ -31,10 +31,16 @@ const RETRY_BUDGET_EXHAUSTED = 2;
 const AMOUNT_UNITS = 50000000000000000n;
 const TX_HASH = "payout-broadcast-hash";
 
+// Two independent counters guard a submission payout. `PayoutJob.retryCount` is
+// the worker's own budget, spent only while the job is still claimable. Once the
+// job is terminal it is inert, and the counter that decides whether a deferred
+// payout is ever retried is `Submission.retryCount`, which
+// `/api/cron/payout-retry` checks against its own MAX_RETRIES.
 async function enqueuePendingPayout(opts: {
   campaignId?: string | null;
   isGold?: boolean;
   retryCount?: number;
+  submissionRetryCount?: number;
 } = {}) {
   const user = await createUser();
   const task = await createTask({
@@ -50,6 +56,7 @@ async function enqueuePendingPayout(opts: {
       reason: VALID_REASON,
       payoutAmountUnits: AMOUNT_UNITS,
       payoutStatus: "pending",
+      retryCount: opts.submissionRetryCount ?? 0,
     },
   });
   const job = await prisma.payoutJob.create({
@@ -93,6 +100,7 @@ describe("payout-worker campaign balance refunds", () => {
     const { submission, job, user } = await enqueuePendingPayout({
       campaignId: campaign.id,
       retryCount: 2,
+      submissionRetryCount: 1,
     });
 
     await processJob(job.id, submission.id, user.id, submission.payoutAmountUnits, "SUBMISSION_PAYOUT");
@@ -100,6 +108,10 @@ describe("payout-worker campaign balance refunds", () => {
     expect(creditBalance).not.toHaveBeenCalled();
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
     expect(updated?.payoutStatus).toBe("pending");
+    // The assertion that matters for recovery: `/api/cron/payout-retry` selects
+    // pending submissions whose own retryCount is still under budget, so leaving
+    // this untouched is what keeps the deferred payout eligible.
+    expect(updated?.retryCount).toBe(1);
     const updatedJob = await prisma.payoutJob.findUnique({ where: { id: job.id } });
     expect(updatedJob?.status).toBe("failed");
     expect(updatedJob?.retryCount).toBe(2);

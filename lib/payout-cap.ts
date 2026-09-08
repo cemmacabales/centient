@@ -130,43 +130,71 @@ export function capPercentConsumed(spentUnits: bigint, capUnits: bigint): number
  * threshold. Both the payout path (`maybeSendCapAlert`) and the health monitor
  * raise this identity, and they share one Redis deduplication lease — whichever
  * fires first is the message the operator sees, so both must build it here.
+ *
+ * `blockedAttemptUnits` is a payout the cap just refused. It has to raise the
+ * alarm even though it was never broadcast, so it counts toward the decision to
+ * alert and toward the severity — but never toward the reported spend, which
+ * stays exactly what the ledger holds. Reporting a refused payout as spent would
+ * tell whoever is on call that the wallet is drained when it is not, and would
+ * put a different number behind the same alert identity than the health monitor
+ * builds from the same ledger.
  */
 export function buildPayoutCapAlert(
   spentUnits: bigint,
   capUnits: bigint,
   thresholdPercent: number = parseCapPercentThreshold(),
+  blockedAttemptUnits: bigint = 0n,
 ): HealthAlert | null {
   if (capUnits <= 0n) return null;
-  const pct = capPercentConsumed(spentUnits, capUnits);
-  if (pct < thresholdPercent) return null;
 
-  const exhausted = pct >= 100;
+  // With nothing blocked these two are the same number, so the health monitor's
+  // three-argument call behaves exactly as it did before.
+  const decisionPct = capPercentConsumed(spentUnits + blockedAttemptUnits, capUnits);
+  if (decisionPct < thresholdPercent) return null;
+
+  const pct = capPercentConsumed(spentUnits, capUnits);
+  const exhausted = decisionPct >= 100;
+  const lines = [
+    `${pct}% consumed`,
+    `${spentUnits} of ${capUnits} units spent`,
+    `${capUnits > spentUnits ? capUnits - spentUnits : 0n} units remain`,
+  ];
+  // Named separately so the gap between the reported spend and a paging severity
+  // reads as the refusal it is, rather than as an arithmetic error.
+  if (blockedAttemptUnits > 0n) {
+    lines.push(`blocked attempt: ${blockedAttemptUnits} units`);
+  }
+
   return {
     key: "payout-cap",
     severity: exhausted ? "PAGE" : "WARN",
     // Severity and title are derived from the same number: a paging alert that
     // says "approaching" understates an exhausted cap to whoever is on call.
     title: exhausted ? "Daily payout cap is exhausted" : "Daily payout cap is approaching",
-    lines: [
-      `${pct}% consumed`,
-      `${spentUnits} of ${capUnits} units spent`,
-      `${capUnits > spentUnits ? capUnits - spentUnits : 0n} units remain`,
-    ],
+    lines,
   };
 }
 
 /**
- * Deliver the cap alert if recorded spend plus an optional payout that has not
- * reached the ledger yet has reached the threshold.
+ * Deliver the cap alert if recorded spend — plus a payout the cap has just
+ * refused, which no ledger reflects — has reached the threshold.
+ *
+ * Only the rejection path passes an amount. A payout that succeeded is recorded
+ * by its caller, so counting it here as well would count it twice.
  */
 export async function maybeSendCapAlert(
-  pendingAmountUnits: bigint = 0n,
+  blockedAttemptUnits: bigint = 0n,
 ): Promise<HealthAlertDelivery | "not-triggered"> {
   const cap = getDailyPayoutCapUnits();
   if (cap === 0n) return "not-triggered";
 
   const recordedSpend = await getRolling24hPayoutSum();
-  const alert = buildPayoutCapAlert(recordedSpend + pendingAmountUnits, cap);
+  const alert = buildPayoutCapAlert(
+    recordedSpend,
+    cap,
+    parseCapPercentThreshold(),
+    blockedAttemptUnits,
+  );
   if (!alert) return "not-triggered";
 
   return sendDedupedDiscordAlert(alert);

@@ -4,7 +4,7 @@ import { handleCoSignRequest, type CoSignerDeps } from "../cosigner-service";
 import { signCoSignRequest, type NonceStore } from "../cosigner-transport";
 import { buildPayoutPayment, signAsPlatform } from "../payout-envelope";
 import type { LedgerPayout } from "../cosigner-ledger";
-import { checkPayoutCap } from "../../payout-cap";
+import { checkPayoutCap } from "@/lib/payout-cap";
 
 const policy = Keypair.random();
 const platform = Keypair.random();

@@ -222,6 +222,43 @@ describe("buildPayoutCapAlert", () => {
     expect(buildPayoutCapAlert(799n, 1000n, 80)).toBeNull();
     expect(buildPayoutCapAlert(800n, 0n, 80)).toBeNull();
   });
+
+  it("counts a blocked attempt toward the decision but never toward reported spend", () => {
+    // A refused payout is in no ledger. It has to raise the alarm, but reporting
+    // it as spent would tell the on-call that the wallet is drained when it is
+    // not — and would put a different number behind the same alert identity than
+    // the health monitor builds from the same ledger.
+    const alert = buildPayoutCapAlert(700n, 1000n, 80, 400n);
+
+    expect(alert).toMatchObject({
+      key: "payout-cap",
+      severity: "PAGE",
+      title: "Daily payout cap is exhausted",
+    });
+    expect(alert!.lines).toEqual([
+      "70% consumed",
+      "700 of 1000 units spent",
+      "300 units remain",
+      "blocked attempt: 400 units",
+    ]);
+  });
+
+  it("lifts a sub-threshold ledger over the line when an attempt is blocked", () => {
+    // The refusal itself is the signal: 500 of 1000 alone would stay silent.
+    expect(buildPayoutCapAlert(500n, 1000n, 80, 400n)).toMatchObject({
+      severity: "WARN",
+      title: "Daily payout cap is approaching",
+    });
+    expect(buildPayoutCapAlert(500n, 1000n, 80)).toBeNull();
+  });
+
+  it("is unchanged for the health monitor's three-argument call", () => {
+    // Both callers share one Redis deduplication lease, so a zero blocked amount
+    // must build byte-for-byte what it built before the parameter existed.
+    expect(buildPayoutCapAlert(800n, 1000n, 80, 0n)).toEqual(
+      buildPayoutCapAlert(800n, 1000n, 80),
+    );
+  });
 });
 
 describe("maybeSendCapAlert", () => {
@@ -244,7 +281,10 @@ describe("maybeSendCapAlert", () => {
     });
   });
 
-  it("includes an attempted payout that has not reached the ledger yet", async () => {
+  it("pages on a refused payout while reporting the ledger's own spend", async () => {
+    // The shape of a real rejection: 300 units remain and 400 were requested, so
+    // `checkPayoutCap` threw. The alert must fire, but "700 of 1000 spent" and
+    // "300 units remain" are what the payout account actually holds.
     process.env.DAILY_PAYOUT_CAP_UNITS = "1000";
     mockPayoutJobAggregate.mockResolvedValueOnce({
       _count: { _all: 1 },
@@ -252,14 +292,38 @@ describe("maybeSendCapAlert", () => {
     });
     mockSendAlert.mockResolvedValueOnce("sent");
 
-    const result = await maybeSendCapAlert(300n);
+    const result = await maybeSendCapAlert(400n);
 
     expect(result).toBe("sent");
     expect(mockSendAlert).toHaveBeenCalledWith({
       key: "payout-cap",
       severity: "PAGE",
       title: "Daily payout cap is exhausted",
-      lines: ["100% consumed", "1000 of 1000 units spent", "0 units remain"],
+      lines: [
+        "70% consumed",
+        "700 of 1000 units spent",
+        "300 units remain",
+        "blocked attempt: 400 units",
+      ],
     });
+  });
+
+  it("still alerts when the refusal alone crosses the threshold", async () => {
+    // The case the alert exists for: recorded spend is quiet at 50%, and without
+    // the blocked attempt the refusal would pass unreported.
+    process.env.DAILY_PAYOUT_CAP_UNITS = "1000";
+    mockPayoutJobAggregate.mockResolvedValueOnce({
+      _count: { _all: 1 },
+      _sum: { amountUnits: 500n },
+    });
+    mockSendAlert.mockResolvedValueOnce("sent");
+
+    expect(await maybeSendCapAlert(400n)).toBe("sent");
+    expect(mockSendAlert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: "WARN",
+        lines: expect.arrayContaining(["500 of 1000 units spent", "blocked attempt: 400 units"]),
+      }),
+    );
   });
 });
