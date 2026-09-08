@@ -38,7 +38,14 @@ export async function payReward(
 ): Promise<string> {
   const amount = amountUnits ?? rewardInUnits();
 
-  await checkPayoutCap(amount);
+  try {
+    await checkPayoutCap(amount);
+  } catch (err) {
+    if (err instanceof PayoutCapError) {
+      maybeSendCapAlert().catch(() => {});
+    }
+    throw err;
+  }
 
   // Resolved before submission so a missing co-signer fails the payout outright
   // rather than after an envelope has been built and a sequence number spent.

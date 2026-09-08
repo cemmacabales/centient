@@ -44,7 +44,7 @@ beforeEach(() => {
 
 describe("getDailyPayoutCapUnits", () => {
   it("returns default when env var is not set", () => {
-    expect(getDailyPayoutCapUnits()).toBe(2_000_000_000n); // 200 XLM
+    expect(getDailyPayoutCapUnits()).toBe(2_000_000_000n); // 200 USDC
   });
 
   it("parses custom env var", () => {
@@ -54,7 +54,7 @@ describe("getDailyPayoutCapUnits", () => {
 
   it("falls back to default for negative values", () => {
     process.env.DAILY_PAYOUT_CAP_UNITS = "-1";
-    expect(getDailyPayoutCapUnits()).toBe(2_000_000_000n); // 200 XLM
+    expect(getDailyPayoutCapUnits()).toBe(2_000_000_000n); // 200 USDC
   });
 
   it("returns 0n when explicitly set to 0", () => {
@@ -151,6 +151,26 @@ describe("checkPayoutCap", () => {
       code: "daily_cap_reached",
       currentUnits: 190000000000000000000n,
       capUnits: 200000000000000000000n,
+    });
+  });
+
+  it("still rejects when the co-signer cap is configured above the app cap", async () => {
+    // Bypassing the policy gate with a generous independent setting must not
+    // change the payout service's own decision.
+    process.env.DAILY_PAYOUT_CAP_UNITS = "30000000";
+    process.env.COSIGNER_DAILY_CAP_UNITS = "200000000";
+    mockPayoutJobAggregate.mockResolvedValueOnce({
+      _sum: { amountUnits: 20_000_000n },
+      _count: { _all: 1 },
+      _avg: null,
+      _min: null,
+      _max: null,
+    });
+
+    await expect(checkPayoutCap(25_000_000n)).rejects.toMatchObject({
+      code: "daily_cap_reached",
+      currentUnits: 20_000_000n,
+      capUnits: 30_000_000n,
     });
   });
 
