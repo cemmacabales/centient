@@ -155,12 +155,18 @@ export function buildPayoutCapAlert(
   };
 }
 
-/** Deliver the cap alert if spend has reached the threshold. */
-export async function maybeSendCapAlert(): Promise<HealthAlertDelivery | "not-triggered"> {
+/**
+ * Deliver the cap alert if recorded spend plus an optional payout that has not
+ * reached the ledger yet has reached the threshold.
+ */
+export async function maybeSendCapAlert(
+  pendingAmountUnits: bigint = 0n,
+): Promise<HealthAlertDelivery | "not-triggered"> {
   const cap = getDailyPayoutCapUnits();
   if (cap === 0n) return "not-triggered";
 
-  const alert = buildPayoutCapAlert(await getRolling24hPayoutSum(), cap);
+  const recordedSpend = await getRolling24hPayoutSum();
+  const alert = buildPayoutCapAlert(recordedSpend + pendingAmountUnits, cap);
   if (!alert) return "not-triggered";
 
   return sendDedupedDiscordAlert(alert);

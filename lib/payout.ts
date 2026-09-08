@@ -42,7 +42,7 @@ export async function payReward(
     await checkPayoutCap(amount);
   } catch (err) {
     if (err instanceof PayoutCapError) {
-      maybeSendCapAlert().catch(() => {});
+      maybeSendCapAlert(amount).catch(() => {});
     }
     throw err;
   }
@@ -56,7 +56,7 @@ export async function payReward(
     { coSigner },
   );
 
-  maybeSendCapAlert().catch(() => {});
+  maybeSendCapAlert(amount).catch(() => {});
 
   return hash;
 }

@@ -14,11 +14,12 @@ All values are integer Stellar USDC units. One USDC is `10000000` units, so:
 
 ```text
 cap units = USDC amount × 10000000
-200 USDC = 2000000000 units
+100 USDC = 1000000000 units
 ```
 
-Do not add decimal points, commas, or an XLM stroop value. The current 200-USDC
-example is `2000000000`, not `200000000000` (which is 20,000 USDC).
+Do not add decimal points, commas, or an XLM stroop value. The recommended
+100-USDC example is `1000000000`. If policy requires 200 USDC, its correct
+conversion is `2000000000`, not `200000000000` (which is 20,000 USDC).
 
 ## The two independent gates
 

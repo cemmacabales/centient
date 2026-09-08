@@ -66,6 +66,12 @@ SET LOCAL ROLE centient_cosigner;
 SELECT count(*) FROM public.submissions;
 ROLLBACK;
 
+-- The payout-job request path reads a different table. This must also succeed.
+BEGIN;
+SET LOCAL ROLE centient_cosigner;
+SELECT count(*) FROM public.payout_jobs;
+ROLLBACK;
+
 -- Run each refusal probe as its own transaction. After PostgreSQL rejects a
 -- statement, that transaction is aborted until ROLLBACK; combining the probes
 -- would make every later one fail without proving its own permission boundary.
@@ -106,9 +112,10 @@ ROLLBACK;
 `"payoutStatus"` is the real mapped column name, and `queued` is a valid
 `PayoutJobStatus` value. Those details matter: a nonexistent column or invalid
 enum value would fail before PostgreSQL checked the role's permissions and would
-certify nothing. If any write succeeds, or the `users` read succeeds, stop — the
-grant is wrong and the isolation is cosmetic. The transactions make every probe
-safe even if a grant is accidentally too broad.
+certify nothing. If either allowed read fails, any write succeeds, or the
+`users` read succeeds, stop — the grant is wrong and the isolation is cosmetic.
+The transactions make every probe safe even if a grant is accidentally too
+broad.
 
 Build `COSIGNER_DATABASE_URL` from the Postgres service's **public** connection
 details (`DATABASE_PUBLIC_URL`, or the host and port on its Connect tab), with
@@ -181,7 +188,7 @@ openssl rand -hex 32
    | `STELLAR_POLICY_SIGNER_SECRET` | the policy seed (`S…`) |
    | `COSIGNER_SHARED_SECRET` | the `openssl rand -hex 32` output |
    | `COSIGNER_DATABASE_URL` | `postgresql://centient_cosigner:…@PUBLIC_HOST:PORT/railway?sslmode=require` |
-   | `COSIGNER_DAILY_CAP_UNITS` | e.g. `2000000000` (200 USDC) — set it independently of the app's cap; see the [daily-cap runbook](stellar-daily-payout-cap-runbook.md) |
+   | `COSIGNER_DAILY_CAP_UNITS` | e.g. `1000000000` (100 USDC) — set it independently of the app's cap and at or below the hot-float target; see the [daily-cap runbook](stellar-daily-payout-cap-runbook.md) |
    | `COSIGNER_ISOLATION_LEVEL` | `same-workspace` |
    | `STELLAR_NETWORK` | `testnet` |
    | `STELLAR_USDC_ISSUER` | the same issuer the app pays in |

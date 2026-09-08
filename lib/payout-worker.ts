@@ -325,11 +325,6 @@ async function processWithdrawalJob(
 }
 
 /**
- * Settle one submission reward: pay the linked wallet, then record the hash and
- * credit totals. On failure it refunds the campaign balance and applies the same
- * retryable / non-retryable classification as a withdrawal.
- */
-/**
  * Settle one submission reward: pay the linked wallet, record the broadcast
  * tuple, then credit the submission and user bookkeeping. The tuple is persisted
  * before the bookkeeping so a bookkeeping failure cannot unwind a paid reward.
