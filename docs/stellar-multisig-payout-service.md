@@ -189,5 +189,12 @@ with `DAILY_PAYOUT_CAP_UNITS=0` so the proof did not depend on a database.
 - It did not originally enforce a daily cap at the co-signer. **#9** now supplies
   that second, independent gate; see the
   [daily payout cap runbook](stellar-daily-payout-cap-runbook.md).
-- It does not remove every remaining single-key broadcast path elsewhere in the
-  codebase, nor add the lane-wide signature-count regression guard. That is **#12**.
+- It did not remove every remaining single-key broadcast path elsewhere in the
+  codebase, nor add the lane-wide signature-count regression guard. **#12 closed
+  that**: `lib/stellar/__tests__/no-single-key-payout.test.ts` scans `lib/`,
+  `app/`, `services/` and `scripts/` and fails if any module outside a justified
+  allowlist reaches Horizon's submit, builds a USDC payment, or reads the
+  platform signing secret — paired with boundary cases proving this submitter
+  refuses anything short of two distinct verified signatures on both envelopes.
+  See [the payments-lane evidence](payments-lane-evidence.md), which also names
+  the residual risks the guard does not cover.
