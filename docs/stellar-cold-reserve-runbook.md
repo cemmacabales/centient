@@ -143,7 +143,9 @@ results. A `sent` result means Discord accepted the alert; `suppressed` means
 the alert identity is inside its cooldown window. Alert identities include
 `wallet-usdc-warn`, `wallet-usdc-page`, `wallet-xlm-warn`,
 `wallet-xlm-page`, `payout-rate-spike`, `payout-volume-spike`, `payout-cap`,
-`repeated-payout-failures`, and `reserve-refill-overdue`.
+`repeated-payout-failures`, `reserve-refill-overdue`,
+`payout-monitoring-unavailable`, `reserve-monitoring-unconfigured`,
+`reserve-monitoring-unavailable`, and `refill-timer-unavailable`.
 
 ## Test-environment alert simulations
 
@@ -161,12 +163,15 @@ record. Restore the original thresholds and balances after each simulation.
    reserves) below `BALANCE_PAGE_XLM` (2 XLM). Run the request and verify
    `wallet-xlm-page` is present with `PAGE` severity. Check the reported
    spendable amount, not the gross XLM balance.
-3. **Anomaly threshold:** set a test-only threshold such as
-   `HEALTH_PAYOUT_COUNT_THRESHOLD=1`, while keeping
-   `HEALTH_PAYOUT_WINDOW_MINUTES` longer than the activity interval. Create
-   at least one successful test payout, run the request, and verify the
-   `payout-rate-spike` identity and observed count are reported. Do not lower
-   production thresholds as part of this test.
+3. **Anomaly threshold:** first set a high, test-only threshold (for example,
+   `HEALTH_PAYOUT_COUNT_THRESHOLD=100000`) and set
+   `HEALTH_PAYOUT_WINDOW_MINUTES` longer than the activity interval. Create at
+   least two successful test payouts, run the request, and record the observed
+   payout count `N` from its metrics (confirm `N >= 2`). Then set the threshold
+   below that already observed activity, such as
+   `HEALTH_PAYOUT_COUNT_THRESHOLD=N-1`, run the request again, and verify the
+   `payout-rate-spike` identity and the same observed count are reported. Do
+   not lower production thresholds as part of this test.
 4. **Cooldown suppression:** keep one breach active, run the request once and
    verify its alert is delivered, then repeat the same request within
    `HEALTH_ALERT_COOLDOWN_MS` (900000 ms by default). Verify the second result
