@@ -12,14 +12,12 @@ const {
   mockMaybeSendCapAlert,
   mockSubmitMultisigPayout,
   mockResolveCoSigner,
-  mockPayUsdc,
   mockGetTxStatus,
 } = vi.hoisted(() => ({
   mockCheckPayoutCap: vi.fn(),
   mockMaybeSendCapAlert: vi.fn(),
   mockSubmitMultisigPayout: vi.fn(),
   mockResolveCoSigner: vi.fn(),
-  mockPayUsdc: vi.fn(),
   mockGetTxStatus: vi.fn(),
 }));
 
@@ -34,7 +32,7 @@ vi.mock("../payout-cap", async (importActual) => {
 
 vi.mock("../stellar/client", async (importActual) => {
   const actual = await importActual<typeof import("../stellar/client")>();
-  return { ...actual, payUsdc: mockPayUsdc, getTxStatus: mockGetTxStatus };
+  return { ...actual, getTxStatus: mockGetTxStatus };
 });
 
 vi.mock("../stellar/payout-submitter", async (importActual) => {
@@ -75,12 +73,11 @@ describe("payReward → multisig USDC payout", () => {
     expect(hash).not.toMatch(/^0x/);
   });
 
-  it("never falls back to the single-key payUsdc broadcast", async () => {
-    mockSubmitMultisigPayout.mockResolvedValueOnce({ hash: "abc123def456" });
-
-    await payReward(G_DEST, 5_000_000n, reference);
-
-    expect(mockPayUsdc).not.toHaveBeenCalled();
+  it("has no single-key broadcast to fall back to", async () => {
+    // #7's DoD: no code path can submit a payout with one signature. That holds
+    // by construction only if the single-key submit no longer exists.
+    const client = await vi.importActual<Record<string, unknown>>("../stellar/client");
+    expect(client).not.toHaveProperty("payUsdc");
   });
 
   it("carries the payout reference through so the co-signer can re-derive it", async () => {

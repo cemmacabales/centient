@@ -1,10 +1,11 @@
 import prisma from "./prisma";
-import { redis } from "./redis";
-import { REWARD_TOKEN_DECIMALS } from "./constants";
+import {
+  sendDedupedDiscordAlert,
+  type HealthAlert,
+  type HealthAlertDelivery,
+} from "./health-alert";
 
-const DEFAULT_DAILY_CAP_UNITS = 2_000_000_000n; // 200 XLM (200 * 10^7 units)
-const DISCORD_ALERT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
-const DISCORD_ALERT_REDIS_KEY = "t2p:cap_alert:last_sent";
+const DEFAULT_DAILY_CAP_UNITS = 2_000_000_000n; // 200 USDC (200 * 10^7 units)
 
 export class PayoutCapError extends Error {
   readonly code = "daily_cap_reached";
@@ -19,6 +20,7 @@ export class PayoutCapError extends Error {
   }
 }
 
+/** Configured daily payout cap in units; a negative setting uses the default. */
 export function getDailyPayoutCapUnits(): bigint {
   const raw = process.env.DAILY_PAYOUT_CAP_UNITS;
   if (!raw) return DEFAULT_DAILY_CAP_UNITS;
@@ -30,18 +32,51 @@ export function getDailyPayoutCapUnits(): bigint {
   return value;
 }
 
-export async function getRolling24hPayoutSum(): Promise<bigint> {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const aggregate = await prisma.submission.aggregate({
-    _sum: { payoutAmountUnits: true },
-    where: {
-      payoutStatus: { in: ["sent", "confirmed"] },
-      createdAt: { gte: since },
-    },
-  });
-  return aggregate._sum.payoutAmountUnits ?? 0n;
+export interface PayoutActivity {
+  count: number;
+  volumeUnits: bigint;
 }
 
+/**
+ * Payout count and volume broadcast since `since`.
+ *
+ * Counts every job carrying a hash, an amount, and a broadcast time, whatever
+ * its status. A hash is written only after Horizon accepted the payment, so the
+ * funds have left the wallet even when the job was later quarantined as
+ * `failed` for manual reconciliation (#73). Excluding those would let the daily
+ * cap under-count real spend. Withdrawals have no Submission row, so this is
+ * the only complete source.
+ */
+export async function getPayoutActivitySince(since: Date): Promise<PayoutActivity> {
+  const result = await prisma.payoutJob.aggregate({
+    _count: { _all: true },
+    _sum: { amountUnits: true },
+    where: {
+      broadcastAt: { gte: since },
+      txHash: { not: null },
+      amountUnits: { not: null },
+    },
+  });
+  return {
+    count: result._count._all,
+    volumeUnits: result._sum.amountUnits ?? 0n,
+  };
+}
+
+/** Units broadcast in the trailing 24 hours — the daily cap's spend side. */
+export async function getRolling24hPayoutSum(): Promise<bigint> {
+  const activity = await getPayoutActivitySince(new Date(Date.now() - 86_400_000));
+  return activity.volumeUnits;
+}
+
+/**
+ * Authorize one payout against the rolling daily cap, throwing `PayoutCapError`
+ * when it would exceed it. A cap of zero disables the limit entirely.
+ *
+ * This is a check, not a reservation: concurrent payouts can each pass and
+ * together exceed the cap. That is a deliberate trade-off against distributed
+ * reservation, bounded by the cap alert.
+ */
 export async function checkPayoutCap(amount: bigint): Promise<{
   allowed: boolean;
   current: bigint;
@@ -68,45 +103,65 @@ export async function checkPayoutCap(amount: bigint): Promise<{
   return { allowed: true, current, cap, remaining };
 }
 
-export async function maybeSendCapAlert(): Promise<void> {
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
-  if (!webhookUrl) return;
+export const DEFAULT_CAP_PERCENT_THRESHOLD = 80;
 
+/**
+ * Percentage of the daily cap at which the `payout-cap` alert fires. Accepts any
+ * finite percentage in (0, 100]; anything else falls back to the documented
+ * default. Shared so the payout path and the health monitor cannot disagree on
+ * when the same alert identity is due.
+ */
+export function parseCapPercentThreshold(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number {
+  const value = Number(env.HEALTH_CAP_PERCENT_THRESHOLD ?? DEFAULT_CAP_PERCENT_THRESHOLD);
+  return Number.isFinite(value) && value > 0 && value <= 100
+    ? value
+    : DEFAULT_CAP_PERCENT_THRESHOLD;
+}
+
+/** Consumed percentage of the cap, to two decimals, using exact bigint math. */
+export function capPercentConsumed(spentUnits: bigint, capUnits: bigint): number {
+  return Number((spentUnits * 10_000n) / capUnits) / 100;
+}
+
+/**
+ * Build the `payout-cap` alert, or null when the cap is unset or still below the
+ * threshold. Both the payout path (`maybeSendCapAlert`) and the health monitor
+ * raise this identity, and they share one Redis deduplication lease — whichever
+ * fires first is the message the operator sees, so both must build it here.
+ */
+export function buildPayoutCapAlert(
+  spentUnits: bigint,
+  capUnits: bigint,
+  thresholdPercent: number = parseCapPercentThreshold(),
+): HealthAlert | null {
+  if (capUnits <= 0n) return null;
+  const pct = capPercentConsumed(spentUnits, capUnits);
+  if (pct < thresholdPercent) return null;
+
+  const exhausted = pct >= 100;
+  return {
+    key: "payout-cap",
+    severity: exhausted ? "PAGE" : "WARN",
+    // Severity and title are derived from the same number: a paging alert that
+    // says "approaching" understates an exhausted cap to whoever is on call.
+    title: exhausted ? "Daily payout cap is exhausted" : "Daily payout cap is approaching",
+    lines: [
+      `${pct}% consumed`,
+      `${spentUnits} of ${capUnits} units spent`,
+      `${capUnits > spentUnits ? capUnits - spentUnits : 0n} units remain`,
+    ],
+  };
+}
+
+/** Deliver the cap alert if spend has reached the threshold. */
+export async function maybeSendCapAlert(): Promise<HealthAlertDelivery | "not-triggered"> {
   const cap = getDailyPayoutCapUnits();
-  if (cap === 0n) return;
+  if (cap === 0n) return "not-triggered";
 
-  const current = await getRolling24hPayoutSum();
-  const pct = Number((current * 10000n) / cap) / 100; // two-decimal precision
-  if (pct < 80) return;
+  const alert = buildPayoutCapAlert(await getRolling24hPayoutSum(), cap);
+  if (!alert) return "not-triggered";
 
-  try {
-    const lastSent = await redis.get(DISCORD_ALERT_REDIS_KEY);
-    if (lastSent) {
-      const elapsed = Date.now() - parseInt(lastSent, 10);
-      if (elapsed < DISCORD_ALERT_COOLDOWN_MS) return;
-    }
-
-    const message = [
-      `Daily payout cap alert — **${pct}%** consumed`,
-      `Current 24h spend: **${current}** units`,
-      `Cap: **${cap}** units`,
-      `Remaining: **${cap - current}** units`,
-      `Token decimals: ${REWARD_TOKEN_DECIMALS}`,
-    ].join("\n");
-
-    const res = await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: message }),
-    });
-
-    if (!res.ok) {
-      console.error(`[payout-cap] Discord webhook returned ${res.status}`);
-      return;
-    }
-
-    await redis.set(DISCORD_ALERT_REDIS_KEY, String(Date.now()), "PX", DISCORD_ALERT_COOLDOWN_MS);
-  } catch (err) {
-    console.error("[payout-cap] Discord alert failed", err);
-  }
+  return sendDedupedDiscordAlert(alert);
 }

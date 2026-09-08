@@ -1,0 +1,9 @@
+# The policy co-signer is one half of a two-signature control (issue #8).
+# Changes to the signer or to the modules that decide what it will sign must not
+# ride along in an unrelated review.
+/services/cosigner/            @cemmacabales
+/lib/stellar/cosigner-*.ts     @cemmacabales
+# The co-signer checks the envelope's asset against this file's configuration,
+# so which asset and network a payout is valid on is decided here too.
+/lib/stellar/config.ts         @cemmacabales
+/docs/adr/                     @cemmacabales

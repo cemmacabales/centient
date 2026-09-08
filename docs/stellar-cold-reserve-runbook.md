@@ -42,8 +42,29 @@ STELLAR_COLD_MIN_RETAIN_UNITS=500000000
 
 The example policy triggers at 25 USDC, restores exactly 100 USDC, and refuses
 any refill that would leave less than 50 USDC cold. Set values from the measured
-daily payout budget. The worst-case USDC loss after a complete hot-wallet
-compromise is the configured target, never the remaining cold balance.
+daily payout budget.
+
+### Worst-case loss
+
+A complete hot-wallet compromise can spend at most what the hot wallet holds,
+and the hot wallet never holds more than the refill target, because every
+refill restores *exactly* the target and nothing else deposits into it. The
+cold reserve is untouched: no deployed service holds a cold seed, and a
+refill needs two of the three cold signers. So the bound is the target, not
+the reserve.
+
+| Quantity | Source | Example policy |
+|---|---|---|
+| Hot float target | `STELLAR_HOT_FLOAT_TARGET_UNITS` | 100 USDC |
+| Daily payout cap | `DAILY_PAYOUT_CAP_UNITS` | set ≤ target so one day's payouts cannot outrun the float |
+| Measured daily payout budget | `getPayoutActivitySince` over the trailing 7 days, or the admin status page | fill in before choosing the target |
+| **Worst-case loss** | = hot float target | **100 USDC** |
+| Cold balance at risk | none | 0 USDC |
+
+Choose the target as a small multiple of the measured daily budget (two to three
+days covers a weekend without a refill ceremony). Raising the target raises the
+worst-case loss one-for-one; that trade is the only policy decision here, and it
+is re-made whenever the daily budget changes materially.
 
 The cold account also needs XLM for its base reserve, USDC trustline, and rare
 refill fees. Keep at least 5 XLM spendable above its ledger reserve. The refill
@@ -125,6 +146,164 @@ Responses:
 The cron does not generate XDR. A refill XDR expires after 15 minutes, so an
 unattended scheduler must not create competing stale envelopes.
 
+## Wallet-health schedule and authenticated check
+
+Wallet health is checked by the authenticated `POST /api/cron/wallet-health`
+endpoint. **Nothing in this repository schedules it** — `railway.json` only
+runs migrations before deploy, and the same is true of `/api/cron/payout-retry`
+and `/api/cron/reserve-refill`. Provision a scheduler outside the app (a Railway
+cron service or equivalent) with `CRON_SECRET` in its own secret store and
+invoke it at least once per minute in production so short-lived balance and
+activity breaches are observed promptly:
+
+```bash
+curl -X POST https://APP_HOST/api/cron/wallet-health \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+The response contains the current USDC and spendable XLM status, payout and
+failure metrics, reserve state, configured thresholds, and alert delivery
+results. A `sent` result means Discord accepted the alert; `suppressed` means
+the alert identity is inside its cooldown window. Every identity shares one
+cooldown, `HEALTH_ALERT_COOLDOWN_MS` (default 15 minutes). That includes
+`payout-cap`, which before #72 had its own 60-minute cooldown in the payout
+path; the shorter, shared window is deliberate, because the payout path and the
+health monitor raise the same identity through one Redis lease and must agree
+on its length. Alert identities include
+`wallet-usdc-warn`, `wallet-usdc-page`, `wallet-xlm-warn`,
+`wallet-xlm-page`, `payout-rate-spike`, `payout-volume-spike`, `payout-cap`,
+`repeated-payout-failures`, `reserve-refill-overdue`,
+`payout-monitoring-unavailable`, `reserve-monitoring-unconfigured`,
+`reserve-monitoring-unavailable`, and `refill-timer-unavailable`.
+
+## Rollout order: migrate before deploying the application
+
+`prisma/migrations/20260908090000_add_payout_broadcast_monitoring` adds the
+`PayoutJob.broadcastAt` column and the indexes the monitor queries. Apply it
+**before** the application that reads it:
+
+1. `npx prisma migrate deploy` against the target database.
+2. Deploy the application build (`prisma generate` runs as part of `npm run build`).
+3. Only then enable or resume the `POST /api/cron/wallet-health` schedule.
+
+Deploying first makes every payout-activity, cap, and anomaly query fail against
+the old table; the monitor reports those sources as `error` and pages rather
+than reporting false zeros, but the rollout is still wrong in that order. The
+migration is additive, so an application deployed before it is applied recovers
+as soon as the migration lands — no rollback of the migration is required.
+
+Its two indexes are built with `CREATE INDEX CONCURRENTLY` so the payout worker
+can keep claiming jobs and writing heartbeats to `payout_jobs` while the
+migration runs. A concurrent build that fails leaves an **invalid** index
+behind, and the re-run then fails with "already exists". Check and clean up
+before re-running:
+
+```sql
+SELECT indexrelid::regclass AS index, indisvalid
+FROM pg_index WHERE indrelid = 'payout_jobs'::regclass AND NOT indisvalid;
+
+DROP INDEX CONCURRENTLY "payout_jobs_broadcastAt_idx";
+DROP INDEX CONCURRENTLY "payout_jobs_status_completedAt_idx";
+```
+
+## Alert delivery results and what they mean
+
+Every alert result in the cron response is one of:
+
+| Result | Meaning | Operator action |
+|---|---|---|
+| `sent` | Discord accepted the alert and Redis holds the cooldown. | None. |
+| `suppressed` | The alert identity is inside its Redis cooldown window. | None. |
+| `sent-degraded` | Discord accepted the alert, but Redis could not lease or extend the cooldown. Deduplication for this identity is process-local only. | Check Redis; expect repeats across processes while it is down. |
+| `suppressed-degraded` | A concurrent or recent delivery in this process already covered the identity while Redis was unavailable. | Check Redis. |
+| `failed` | Discord did not accept the alert, or a WARN alert could not be deduplicated safely. | Treat the underlying condition as unnotified and check it directly. |
+| `disabled` | `DISCORD_WEBHOOK_URL` is unset. | Configure the webhook before relying on alerting. |
+
+Delivery logs deliberately record only an error's class, an HTTP status, and the
+alert identity. Webhook URLs, seeds, and full error messages are never logged.
+
+## Redis failure policy
+
+Redis backs alert deduplication and the reserve refill-due timer. It is never
+the source of truth for money.
+
+- Every Redis call the health path makes is bounded by
+  `REDIS_OPERATION_TIMEOUT_MS` (2000 ms by default). A command that lands after
+  its deadline is abandoned. The Horizon reads are bounded the same way by
+  `STELLAR_HORIZON_TIMEOUT_MS` (10000 ms by default) — the Stellar SDK itself
+  waits forever, so a stalled Horizon would otherwise hang the whole check.
+- **PAGE** alerts still deliver when Redis is unavailable, deduplicated within
+  the process, and report `sent-degraded` / `suppressed-degraded`. A PAGE is
+  never dropped because Redis is down.
+- **WARN** alerts fail closed (`failed`) when Redis is unavailable, so a warning
+  storm cannot be amplified across processes.
+- The refill-due timer refuses to issue a new set/get/delete while an earlier
+  command has not settled, and reports `refillTimer: "error"` until it does.
+  `refill-timer-unavailable` pages; `refillDueSince` stays `null` rather than
+  resetting the clock.
+- Restarting Redis clears cooldowns, so a still-active breach may re-page once.
+
+## Complete alert identity list
+
+Balance and rail conditions:
+
+`wallet-usdc-warn`, `wallet-usdc-page`, `wallet-xlm-warn`, `wallet-xlm-page`,
+`payout-rate-spike`, `payout-volume-spike`, `payout-cap`,
+`repeated-payout-failures`, `reserve-refill-overdue`.
+
+Monitoring-source and top-level failures (these say the check itself could not
+run — never read a missing metric as healthy):
+
+| Identity | Severity | Meaning |
+|---|---|---|
+| `wallet-monitoring-unconfigured` | WARN | `STELLAR_PLATFORM_SECRET` or the USDC asset is not configured. |
+| `wallet-monitoring-unavailable` | PAGE | Horizon account/ledger lookup failed; balances and reserve counts are `null`. |
+| `payout-monitoring-unavailable` | PAGE | Payout activity, cap spend, or failure counts could not be queried. |
+| `reserve-monitoring-unconfigured` | WARN | The cold reserve policy is not configured. |
+| `reserve-monitoring-unavailable` | PAGE | Hot and cold reserve balances could not be loaded. |
+| `refill-timer-unavailable` | PAGE | The refill-due timer could not be read or written. |
+| `health-monitor-unavailable` | PAGE | The snapshot itself could not be assembled. |
+| `payout-persistence-unavailable` | PAGE | A payment was accepted on-chain but its broadcast tuple or bookkeeping could not be recorded. **Reconcile the transaction hash before any refund or reissue** — the payout already left the wallet. |
+
+A malformed optional balance threshold is a configuration error, not an
+outage: the affected threshold falls back to its documented default, a warning
+is logged, and Horizon monitoring stays live.
+
+## Test-environment alert simulations
+
+Run these checks only against a disposable Stellar testnet wallet and a test
+Discord webhook. Use secret-manager injection for `CRON_SECRET` and the
+platform seed; do not place either value in a command, commit, or evidence
+record. Restore the original thresholds and balances after each simulation.
+
+1. **Low USDC:** fund the test platform account, then transfer enough USDC
+   away that its float is below `BALANCE_PAGE_USDC` (10 USDC in the example
+   configuration). Run the authenticated request above and verify
+   `wallet-usdc-page` is present with `PAGE` severity.
+2. **Low spendable XLM:** leave the account funded enough to query Horizon but
+   reduce spendable XLM (after ledger reserve, liabilities, and sponsored
+   reserves) below `BALANCE_PAGE_XLM` (2 XLM). Run the request and verify
+   `wallet-xlm-page` is present with `PAGE` severity. Check the reported
+   spendable amount, not the gross XLM balance.
+3. **Anomaly threshold:** first set a high, test-only threshold (for example,
+   `HEALTH_PAYOUT_COUNT_THRESHOLD=100000`) and set
+   `HEALTH_PAYOUT_WINDOW_MINUTES` longer than the activity interval. Create at
+   least two successful test payouts, run the request, and record the observed
+   payout count `N` from its metrics (confirm `N >= 2`). Then set the threshold
+   below that already observed activity, such as
+   `HEALTH_PAYOUT_COUNT_THRESHOLD=N-1`, run the request again, and verify the
+   `payout-rate-spike` identity and the same observed count are reported. Do
+   not lower production thresholds as part of this test.
+4. **Cooldown suppression:** keep one breach active, run the request once and
+   verify its alert is delivered, then repeat the same request within
+   `HEALTH_ALERT_COOLDOWN_MS` (900000 ms by default). Verify the second result
+   is `suppressed` and no duplicate Discord notification is emitted. After the
+   cooldown, a still-active breach may be delivered again.
+
+Record only the test network, public account, observed status, alert identity,
+delivery result, and timestamps. Never record webhook URLs, secrets, private
+keys, or real production endpoints.
+
 ## Prepare the exact refill
 
 On an online operator host with public policy configuration and Horizon access:
@@ -169,9 +348,16 @@ asset issuer, fee, expiry, and hash to the approved request before signing.
 Return the twice-signed XDR to the online operator host:
 
 ```bash
+STELLAR_RESERVE_REFILL_AMOUNT_UNITS=<amount from prepare> \
 STELLAR_RESERVE_REFILL_XDR='<twice-signed XDR>' \
 npm run stellar:reserve:refill -- submit
 ```
+
+`STELLAR_RESERVE_REFILL_AMOUNT_UNITS` is required and must be the same value
+the custodians signed against in the `sign` step. The command refuses to run
+without it: an envelope carrying any other amount is refused before Horizon is
+contacted, which is the only amount check at submit that does not read its
+expectation from the envelope itself.
 
 Immediately before submission, the command reloads hot and cold balances and
 re-checks both policy invariants against the exact amount the custodians
@@ -237,21 +423,53 @@ updated worst-case calculation.
 
 ## Public evidence record
 
-Record only public facts after the live testnet proof:
+Record only public facts after the live testnet proof. Testnet proof taken
+2026-09-08 for #10 / #73, all values verified through Horizon:
 
 ```text
-Network:
-Cold account:
-Cold ops public key:
-Cold policy public key:
-Thresholds and weights:
-Trustline transaction hash:
-Multisig setup transaction hash:
-Refill transaction hash:
-Hot USDC before -> after:
-Cold USDC before -> after:
-Trigger / target / retained floor:
+Network:                          testnet
+Cold account:                     GDPGRS4P6UZZK23CKKELGLJAYTCAWPV4C7TH6Q322SF735A5H6U5XK5G
+Cold ops public key:              GDERX2QG4LY4SK6VHBX5VRKE2PFDB25ZCD3OLUM4RDVAY43EOXBRZ4BC
+Cold policy public key:           GAOTECDRSB5HHAJAMOOMUYTDOR5HTFNSSETEDNWJDXDFRBZVQMOOXD6V
+Thresholds and weights:           low/med/high 2/2/2; master, ops, policy each weight 1
+Trustline transaction hash:       fddea73e981194f020bcf531f96140c3117f8c400915228e6901c2312b4a8c6a
+Multisig setup transaction hash:  05bbe397033a7984700b8d844cf1d247e04db7537fd9a0293a5bda6c1506d14a
+Cold funding (hot -> cold, via the multisig payout service, 2 signatures + fee-bump):
+                                  452fd68061ecae052ebd681ee47010adbc2e05c01c86afb9bba685a77fb1d836
+Refill transaction hash:          3a5969cdac22dad6646630c90cdb3ae3919a727f2abd8f663863b7e9e6b9ef3e
+                                  (source = cold account, 1 payment op, 2 signatures: cold master + cold ops,
+                                   fee 100 stroops paid by the cold account, ledger 4563417)
+Hot USDC before -> after:         8.9000000 -> 12.0000000
+Cold USDC before -> after:        10.0000000 -> 6.9000000
+Trigger / target / retained floor: 100000000 / 120000000 / 50000000 units (10 / 12 / 5 USDC)
+Refill amount:                    31000000 units (3.1 USDC) = target - hot, passed to submit as
+                                  STELLAR_RESERVE_REFILL_AMOUNT_UNITS
 stellar.expert account and transaction links:
+  https://stellar.expert/explorer/testnet/account/GDPGRS4P6UZZK23CKKELGLJAYTCAWPV4C7TH6Q322SF735A5H6U5XK5G
+  https://stellar.expert/explorer/testnet/tx/fddea73e981194f020bcf531f96140c3117f8c400915228e6901c2312b4a8c6a
+  https://stellar.expert/explorer/testnet/tx/05bbe397033a7984700b8d844cf1d247e04db7537fd9a0293a5bda6c1506d14a
+  https://stellar.expert/explorer/testnet/tx/452fd68061ecae052ebd681ee47010adbc2e05c01c86afb9bba685a77fb1d836
+  https://stellar.expert/explorer/testnet/tx/3a5969cdac22dad6646630c90cdb3ae3919a727f2abd8f663863b7e9e6b9ef3e
 ```
+
+The three cold seeds for this testnet proof were generated on the provisioning
+machine and live only in a mode-600 file outside the repository. They were
+never placed in `.env.local` or exported into the shell. Each `sign` step was
+run with a one-line env file holding exactly one `STELLAR_COLD_SIGNER_SECRET`,
+and `submit` was run without any such file, so no seed variable existed in its
+process.
+
+Note what that does and does not guarantee. `node --env-file` *adds* variables;
+it does not remove ones already in the ambient environment, and every command
+here also loads `.env.local` through `dotenv/config`. Seed isolation therefore
+comes from the operator's environment, not from the flag: run `submit` from a
+shell where no `STELLAR_COLD_*_SECRET` variable is set (for example
+`env -u STELLAR_COLD_SIGNER_SECRET npm run stellar:reserve:refill -- submit`),
+and never put a cold seed in `.env.local`. The exact `sign` and `submit`
+commands are in "Collect two independent signatures" and "Submit once" above.
+
+That is the same custody gap the payout account has (see
+`docs/stellar-multisig-runbook.md`, "Key custody — current state"), and it is
+acceptable for a disposable testnet proof only.
 
 Never record a seed, secret-manager reference, or signed XDR.

@@ -474,7 +474,18 @@ export function assertReserveRefillStillPermitted({
   }
 }
 
-/** Validate and submit one signed refill envelope without automatic retries. */
+/**
+ * Validate and submit one signed refill envelope without automatic retries.
+ *
+ * The amount is read from the envelope itself, so `validateReserveRefillTransaction`
+ * cannot catch a wrong amount here — that check is tautological at submit and
+ * exists for the shape, fee, time-bound, and signature rules. What bounds the
+ * amount at submit time is `assertReserveRefillStillPermitted` (never above the
+ * target, never below the cold floor) plus, when the operator passes the amount
+ * the custodians agreed to as `expectedAmountUnits`, an equality check against
+ * that independent reading. The CLI takes it from
+ * `STELLAR_RESERVE_REFILL_AMOUNT_UNITS`, the same value the `sign` step used.
+ */
 export async function submitReserveRefill({
   signedXdr,
   policy,
@@ -482,6 +493,7 @@ export async function submitReserveRefill({
   hotBalanceUnits,
   coldBalanceUnits,
   nowSeconds,
+  expectedAmountUnits,
   submit,
   log,
 }: {
@@ -491,6 +503,8 @@ export async function submitReserveRefill({
   hotBalanceUnits: bigint;
   coldBalanceUnits: bigint;
   nowSeconds: number;
+  /** The amount the custodians signed for, when the operator supplies it. */
+  expectedAmountUnits?: bigint;
   submit: (transaction: Transaction) => Promise<{ hash: string }>;
   log: (message: string) => void;
 }): Promise<{ hash: string }> {
@@ -500,6 +514,11 @@ export async function submitReserveRefill({
   }
 
   const amountUnits = readSignedRefillAmountUnits(decoded);
+  if (expectedAmountUnits !== undefined && amountUnits !== expectedAmountUnits) {
+    throw new Error(
+      `reserve refill amount ${amountUnits} does not match the agreed amount ${expectedAmountUnits}`,
+    );
+  }
   validateReserveRefillTransaction({
     transaction: decoded,
     policy,
