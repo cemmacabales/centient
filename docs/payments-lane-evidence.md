@@ -179,7 +179,10 @@ Neither is new, and neither is closed by anything above.
   submit and reconciled before reissue — a payout state-machine change tracked on
   the roadmap. `lib/payout-service.ts`'s retry claim now holds a lease *and*
   refreshes it while the broadcast is in flight, which narrows the window in
-  which a slow submit loses a claim it still holds — but does not close it. The
+  which a slow submit loses a claim it still holds — but does not close it. Every
+  claimant honours the lease: the cron stands down on a live one, and the admin
+  retry route refuses with a 409 rather than resetting a lease it does not own,
+  both reading the single `retryClaimIsLive` definition. The
   refresh is a best-effort write whose failures are swallowed so they can never
   turn into a payment failure, and a stalled event loop delays it, so a
   sufficiently degraded process can still be reclaimed mid-payout. **This is a

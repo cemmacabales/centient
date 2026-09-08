@@ -73,6 +73,12 @@ const REPO_ROOT = path.resolve(__dirname, "../../..");
  * payment-builder and signing-secret checks below are what stand in its way —
  * a payout that is never constructed and can never be platform-signed cannot be
  * broadcast by any transport.
+ *
+ * Comments are stripped before matching but string literals are not, so an error
+ * message naming the method puts its file on the list too. That is the intended
+ * reading of "naming the method at all" rather than a hole in the scan: it fails
+ * closed, and the fix is to allowlist the file with a reason or to not name the
+ * method — never to narrow the pattern back to a call.
  */
 const SUBMIT_PATTERN = /\bsubmit(?:Async)?Transaction\b/;
 /** Construction of a payment operation — the only op that moves USDC. */
