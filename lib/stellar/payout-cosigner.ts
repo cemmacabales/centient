@@ -95,8 +95,17 @@ export function resolvePayoutCoSigner(
     } catch {
       throw new Error(`COSIGNER_URL is not a usable URL: "${remoteUrl}"`);
     }
-    const loopback = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
-    if (parsed.protocol !== "https:" && !loopback) {
+    // Two exemptions, both cases where the request provably does not traverse a
+    // network a stranger can read: the local machine, and Railway's per-project
+    // private network. The co-signer shares a project with the app under
+    // ADR-0001's amendment, so the private domain is the normal path there and
+    // forcing TLS would push the request out through a public domain instead —
+    // more exposure, not less. The suffix is matched with a leading dot so a
+    // public host cannot claim it by merely ending with the same characters.
+    const { hostname } = parsed;
+    const loopback = hostname === "localhost" || hostname === "127.0.0.1";
+    const railwayPrivate = hostname.endsWith(".railway.internal");
+    if (parsed.protocol !== "https:" && !loopback && !railwayPrivate) {
       throw new Error(
         `COSIGNER_URL must use https (got "${parsed.protocol}") — payout details are never sent to the co-signer over plaintext`,
       );
