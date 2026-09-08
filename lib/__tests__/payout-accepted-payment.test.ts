@@ -8,8 +8,15 @@ const db = vi.hoisted(() => ({
   $executeRaw: vi.fn(),
 }));
 const effects = vi.hoisted(() => ({ pay: vi.fn(), page: vi.fn(), refund: vi.fn(), credit: vi.fn() }));
-vi.mock("../prisma", () => ({ default: { ...db, $transaction: (fn: any) =>
-  typeof fn === "function" ? fn(db) : Promise.all(fn) } }));
+// Interactive transactions roll back on throw. Tests that model row state hook
+// `begin` to snapshot it and `rollback` to restore it, so a write that lands
+// inside a failing transaction is undone the way Postgres would undo it.
+const txn = vi.hoisted(() => ({ begin: undefined as (() => void) | undefined, rollback: undefined as (() => void) | undefined }));
+vi.mock("../prisma", () => ({ default: { ...db, $transaction: async (fn: any) => {
+  if (typeof fn !== "function") return Promise.all(fn);
+  txn.begin?.();
+  try { return await fn(db); } catch (err) { txn.rollback?.(); throw err; }
+} } }));
 vi.mock("../payout", () => ({ payReward: effects.pay, PayoutCapError: class extends Error {} }));
 vi.mock("../health-alert", () => ({ sendDedupedDiscordAlert: effects.page }));
 vi.mock("../user-balance", () => ({ refundReversal: effects.refund }));
@@ -112,6 +119,31 @@ describe("accepted payment persistence boundary", () => {
       ),
     ).toBe(true);
     expect(effects.page).toHaveBeenCalledWith(expect.objectContaining({ severity: "PAGE" }));
+  });
+
+  it("submission: bookkeeping failure after broadcast leaves a hash the retry cron refuses", async () => {
+    // Model the submission row with real transaction semantics: a write that
+    // lands inside the failing bookkeeping transaction is rolled back.
+    const row: Record<string, unknown> = { ...submission };
+    let snapshot = { ...row };
+    txn.begin = () => { snapshot = { ...row }; };
+    txn.rollback = () => { Object.assign(row, snapshot); };
+    db.submission.findUnique.mockImplementation(async () => ({ ...row }));
+    db.submission.update.mockImplementation(async ({ data }: any) => { Object.assign(row, data); return { ...row }; });
+    db.user.update.mockRejectedValue(new Error(secret));
+
+    await processJob("job", "sub", "user", 123n, "SUBMISSION_PAYOUT");
+    expect(effects.pay).toHaveBeenCalledTimes(1);
+
+    // The hash must survive the rollback: it has to be written in the same unit
+    // as the job's hash, not in the bookkeeping transaction that failed.
+    expect(row.payoutTxHash).toBe(hash);
+
+    // /api/cron/payout-retry selects `pending` submissions and re-broadcasts any
+    // without a hash. It must find nothing to do here.
+    await reprocessPayoutWithNonceSafety("sub");
+    expect(effects.pay).toHaveBeenCalledTimes(1);
+    txn.begin = txn.rollback = undefined;
   });
 
   it("legacy: totals failure stays inside the accepted-payment boundary", async () => {

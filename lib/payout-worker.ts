@@ -402,23 +402,28 @@ async function processSubmissionPayout(
     const broadcastAt = new Date();
     accepted = { reference: `payout_job:${jobId}`, txHash, amountUnits: amount, broadcastAt };
 
+    // The job's tuple and the submission's hash land in one write. The retry cron
+    // re-broadcasts any `pending` submission without a hash, so writing the hash
+    // in the bookkeeping transaction below would let a bookkeeping failure roll
+    // it back and re-pay a settled payment (#73).
     const persisted = await persistAcceptedPayment(
       accepted,
       () =>
-        prisma.payoutJob.update({
-          where: { id: jobId },
-          data: { txHash, amountUnits: amount, broadcastAt, workerHeartbeatAt: broadcastAt },
-        }),
+        prisma.$transaction([
+          prisma.payoutJob.update({
+            where: { id: jobId },
+            data: { txHash, amountUnits: amount, broadcastAt, workerHeartbeatAt: broadcastAt },
+          }),
+          prisma.submission.update({
+            where: { id: submissionId },
+            data: { payoutStatus: "sent", payoutTxHash: txHash },
+          }),
+        ]),
       quarantinePayoutJob(jobId),
     );
     if (!persisted) return;
 
     await prisma.$transaction(async (tx) => {
-      await tx.submission.update({
-        where: { id: submissionId },
-        data: { payoutStatus: "sent", payoutTxHash: txHash },
-      });
-
       // Identity is the FK `userId` (ST-5d), not the wallet — the wallet is just the
       // on-chain destination validated above.
       await tx.user.update({
