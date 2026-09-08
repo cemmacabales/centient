@@ -20,17 +20,117 @@ import { sendDedupedDiscordAlert } from "../health-alert";
 const ORIGINAL_ENV = { ...process.env };
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   process.env = { ...ORIGINAL_ENV, DISCORD_WEBHOOK_URL: "https://discord.test/webhook" };
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   process.env = { ...ORIGINAL_ENV };
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("sendDedupedDiscordAlert", () => {
+  // A live Redis is not available to this suite (no Redis service in CI or
+  // docker-compose), so the promotion contract is pinned two ways: the exact
+  // values a real Redis can answer with, and the script's own return shape.
+  it.each([
+    ["the fixed script's explicit 1", 1],
+    ["an unconverted PSETEX reply", "OK"],
+  ])("reports sent when Redis promotion answers %s", async (_label, promoted) => {
+    mockSet.mockResolvedValueOnce("OK");
+    mockEval.mockResolvedValueOnce(promoted);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 204 }));
+
+    expect(
+      await sendDedupedDiscordAlert(
+        { key: randomUUID(), severity: "WARN", title: "Contract", lines: [] },
+        { cooldownMs: 90_000 },
+      ),
+    ).toBe("sent");
+    expect(mockEval.mock.calls[0][4]).toBe("90000");
+  });
+
+  it("promotes an owned lease with a script that answers 1 rather than PSETEX's OK", async () => {
+    mockSet.mockResolvedValueOnce("OK");
+    mockEval.mockResolvedValueOnce(1);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 204 }));
+
+    await sendDedupedDiscordAlert({
+      key: randomUUID(),
+      severity: "WARN",
+      title: "Contract",
+      lines: [],
+    });
+
+    const script = String(mockEval.mock.calls[0][0]);
+    expect(script).toMatch(/psetex/);
+    expect(script).not.toMatch(/return\s+redis\.call\(\s*"psetex"/);
+    expect(script).toMatch(/\breturn\s+1\b/);
+  });
+
+  it.each([true, false])("coordinates PAGE ownership across mixed Redis availability (first fails: %s)", async (firstFails) => {
+    const alert = { key: randomUUID(), severity: "PAGE" as const, title: "Mixed", lines: [] };
+    if (firstFails) mockSet.mockRejectedValueOnce(new Error("offline")).mockResolvedValue("OK");
+    else mockSet.mockResolvedValueOnce("OK").mockRejectedValue(new Error("offline"));
+    mockEval.mockResolvedValue(1);
+    let finish!: (response: { ok: boolean; status: number }) => void;
+    let started!: () => void;
+    const fetching = new Promise<void>((resolve) => { started = resolve; });
+    const fetchMock = vi.fn(() => new Promise<{ ok: boolean; status: number }>((resolve) => {
+      finish = resolve; started();
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const first = sendDedupedDiscordAlert(alert);
+    await fetching;
+    const second = sendDedupedDiscordAlert(alert);
+    // Allow either Redis branch to start before releasing all webhook promises.
+    await Promise.resolve(); await Promise.resolve();
+    const deliveries = fetchMock.mock.calls.length;
+    finish({ ok: true, status: 204 });
+    // On RED the second fetch replaced finish; assert before awaiting the first.
+    expect(deliveries).toBe(1);
+    expect(await second).toMatch(/^suppressed/);
+    expect(await first).toBe(firstFails ? "sent-degraded" : "sent");
+  });
+
+  it.each(["lease", "promotion", "delete"])("bounds a never-settling Redis %s operation", async (operation) => {
+    vi.useFakeTimers();
+    mockSet.mockResolvedValue("OK");
+    mockEval.mockResolvedValue(1);
+    (operation === "lease" ? mockSet : mockEval).mockImplementation(() => new Promise(() => {}));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: operation !== "delete", status: operation === "delete" ? 503 : 204 }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let outcome: string | undefined;
+    const pending = sendDedupedDiscordAlert({ key: randomUUID(), severity: "PAGE", title: "Timeout", lines: [] })
+      .then((result) => { outcome = result; });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(outcome).toBe(operation === "delete" ? "failed" : "sent-degraded");
+    await pending;
+  });
+
+  it.each(["fetch", "lease", "promotion", "delete"])("does not log nested URL credentials on %s errors", async (source) => {
+    const secret = "synthetic-webhook-token";
+    const error = new TypeError(`Invalid URL: https://discord.test/${secret}`, {
+      cause: { input: `https://user:${secret}@host`, error: new Error(secret) },
+    });
+    error.name = secret;
+    mockSet.mockResolvedValue("OK");
+    mockEval.mockResolvedValue(1);
+    const fetchMock = vi.fn().mockResolvedValue({ ok: source !== "delete", status: 503 });
+    if (source === "fetch") fetchMock.mockRejectedValue(error);
+    if (source === "lease") mockSet.mockRejectedValue(error);
+    if (source === "promotion" || source === "delete") mockEval.mockRejectedValue(error);
+    vi.stubGlobal("fetch", fetchMock);
+    const logs = vi.spyOn(console, "error").mockImplementation(() => {});
+    await sendDedupedDiscordAlert({ key: randomUUID(), severity: "PAGE", title: "Safe", lines: [] });
+    expect(logs).toHaveBeenCalled();
+    expect(logs.mock.calls.flat().some((value) => typeof value === "object")).toBe(false);
+    expect(JSON.stringify(logs.mock.calls)).not.toContain(secret);
+  });
+
   it("promotes an owned 30-second delivery lease to the configured cooldown after delivery", async () => {
     mockSet.mockResolvedValueOnce("OK");
     mockEval.mockResolvedValueOnce(1);

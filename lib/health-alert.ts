@@ -1,14 +1,17 @@
-import { randomUUID } from "node:crypto";
 import { redis } from "./redis";
+import { withRedisTimeout } from "./redis-bounded";
 
 const DEFAULT_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
 const DEFAULT_ALERT_DELIVERY_TIMEOUT_MS = 10_000;
 const ALERT_DELIVERY_LEASE_MS = 30_000;
 const ALERT_KEY_PREFIX = "t2p:health-alert:";
 
+// PSETEX answers "OK"; return an explicit 1 so the caller's success check is a
+// single unambiguous value rather than a Redis command's own reply type.
 const PROMOTE_OWNED_LEASE = `
 if redis.call("get", KEYS[1]) == ARGV[1] then
-  return redis.call("psetex", KEYS[1], ARGV[2], ARGV[1])
+  redis.call("psetex", KEYS[1], ARGV[2], ARGV[1])
+  return 1
 end
 return 0`;
 
@@ -18,6 +21,9 @@ if redis.call("get", KEYS[1]) == ARGV[1] then
 end
 return 0`;
 
+// Local PAGE bookkeeping shared by BOTH the Redis and the degraded path: a peer
+// whose Redis call failed delivers through the fallback, and a Redis lease alone
+// cannot see that in-flight delivery. Ownership is claimed before any webhook.
 const pageFallbackExpiries = new Map<string, number>();
 const pageFallbackOwners = new Map<string, string>();
 
@@ -37,6 +43,20 @@ export type HealthAlertDelivery =
   | "suppressed"
   | "sent-degraded"
   | "suppressed-degraded";
+
+/**
+ * Never log an error object, its message, or its name: Discord webhook URLs and
+ * Redis connection strings surface inside URL/connection errors, their `cause`
+ * chains, and attacker-influenced `name` fields. Only the class is safe.
+ */
+function safeErrorLabel(error: unknown): string {
+  if (error instanceof Error) return error.constructor?.name ?? "Error";
+  return typeof error;
+}
+
+function deliveryToken(): string {
+  return globalThis.crypto.randomUUID();
+}
 
 function configuredCooldownMs(): number {
   const value = Number(process.env.HEALTH_ALERT_COOLDOWN_MS ?? DEFAULT_ALERT_COOLDOWN_MS);
@@ -77,9 +97,39 @@ async function deliverDiscordAlert(
     if (response.ok) return true;
     console.error(`[health-alert] Discord webhook returned ${response.status}`);
   } catch (error) {
-    console.error("[health-alert] Discord webhook failed", error);
+    console.error("[health-alert] Discord webhook failed", safeErrorLabel(error));
   }
   return false;
+}
+
+function pruneExpiredPageFallbacks(nowMs: number): void {
+  for (const [key, expiresAt] of pageFallbackExpiries) {
+    if (expiresAt <= nowMs) pageFallbackExpiries.delete(key);
+  }
+}
+
+/** Take local delivery ownership of a PAGE key, or report that a peer holds it. */
+function claimLocalPage(alertKey: string, token: string, nowMs: number): boolean {
+  pruneExpiredPageFallbacks(nowMs);
+  if (pageFallbackExpiries.has(alertKey) || pageFallbackOwners.has(alertKey)) return false;
+  pageFallbackOwners.set(alertKey, token);
+  return true;
+}
+
+function releaseLocalPage(alertKey: string, token: string): void {
+  if (pageFallbackOwners.get(alertKey) === token) pageFallbackOwners.delete(alertKey);
+}
+
+function completeLocalPage(
+  alertKey: string,
+  token: string,
+  cooldownMs: number,
+  nowMs: number,
+): void {
+  if (pageFallbackOwners.get(alertKey) !== token) return;
+  pageFallbackOwners.delete(alertKey);
+  pruneExpiredPageFallbacks(nowMs);
+  pageFallbackExpiries.set(alertKey, nowMs + cooldownMs);
 }
 
 async function deliverPageWithoutRedis(
@@ -90,34 +140,15 @@ async function deliverPageWithoutRedis(
   cooldownMs: number,
   nowMs: number,
 ): Promise<HealthAlertDelivery> {
-  pruneExpiredPageFallbacks(nowMs);
-
-  if (pageFallbackExpiries.has(alertKey) || pageFallbackOwners.has(alertKey)) {
-    return "suppressed-degraded";
-  }
-  pageFallbackOwners.set(alertKey, token);
+  if (!claimLocalPage(alertKey, token, nowMs)) return "suppressed-degraded";
 
   if (!(await deliverDiscordAlert(webhookUrl, alert, nowMs))) {
-    if (pageFallbackOwners.get(alertKey) === token) pageFallbackOwners.delete(alertKey);
+    releaseLocalPage(alertKey, token);
     return "failed";
   }
 
-  if (pageFallbackOwners.get(alertKey) === token) {
-    pageFallbackOwners.delete(alertKey);
-    recordPageFallbackCooldown(alertKey, cooldownMs, nowMs);
-  }
+  completeLocalPage(alertKey, token, cooldownMs, nowMs);
   return "sent-degraded";
-}
-
-function pruneExpiredPageFallbacks(nowMs: number): void {
-  for (const [key, expiresAt] of pageFallbackExpiries) {
-    if (expiresAt <= nowMs) pageFallbackExpiries.delete(key);
-  }
-}
-
-function recordPageFallbackCooldown(alertKey: string, cooldownMs: number, nowMs: number): void {
-  pruneExpiredPageFallbacks(nowMs);
-  pageFallbackExpiries.set(alertKey, nowMs + cooldownMs);
 }
 
 export async function sendDedupedDiscordAlert(
@@ -131,43 +162,48 @@ export async function sendDedupedDiscordAlert(
   if (!webhookUrl) return "disabled";
 
   const redisKey = `${ALERT_KEY_PREFIX}${alert.key}`;
-  const token = randomUUID();
+  const token = deliveryToken();
+  const isPage = alert.severity === "PAGE";
+
+  let acquired: unknown;
   try {
-    const acquired = await redis.set(redisKey, token, "PX", ALERT_DELIVERY_LEASE_MS, "NX");
-    if (acquired !== "OK") return "suppressed";
+    // A lease that lands after this deadline is abandoned but harmless: it holds
+    // our own token and expires on its own after ALERT_DELIVERY_LEASE_MS.
+    acquired = await withRedisTimeout(
+      "alert lease",
+      redis.set(redisKey, token, "PX", ALERT_DELIVERY_LEASE_MS, "NX"),
+    );
   } catch (error) {
-    console.error("[health-alert] Redis delivery lease unavailable", error);
-    if (alert.severity === "WARN") return "failed";
+    console.error("[health-alert] Redis delivery lease unavailable", safeErrorLabel(error));
+    if (!isPage) return "failed";
     return deliverPageWithoutRedis(alert.key, token, webhookUrl, alert, cooldownMs, nowMs);
   }
+  if (acquired !== "OK") return "suppressed";
+
+  if (isPage && !claimLocalPage(alert.key, token, nowMs)) return "suppressed";
 
   if (await deliverDiscordAlert(webhookUrl, alert, nowMs)) {
+    // Record the local cooldown before promotion so a degraded peer sees this
+    // delivery whether or not Redis keeps the lease.
+    if (isPage) completeLocalPage(alert.key, token, cooldownMs, nowMs);
     try {
-      const promoted = await redis.eval(
-        PROMOTE_OWNED_LEASE,
-        1,
-        redisKey,
-        token,
-        String(cooldownMs),
+      const promoted = await withRedisTimeout(
+        "alert promotion",
+        redis.eval(PROMOTE_OWNED_LEASE, 1, redisKey, token, String(cooldownMs)),
       );
-      if (promoted === 1) return "sent";
-      if (alert.severity === "PAGE") {
-        recordPageFallbackCooldown(alert.key, cooldownMs, nowMs);
-      }
+      if (promoted === 1 || promoted === "OK") return "sent";
       return "sent-degraded";
     } catch (error) {
-      console.error("[health-alert] Failed to promote delivery lease", error);
-      if (alert.severity === "PAGE") {
-        recordPageFallbackCooldown(alert.key, cooldownMs, nowMs);
-      }
+      console.error("[health-alert] Failed to promote delivery lease", safeErrorLabel(error));
       return "sent-degraded";
     }
   }
 
+  if (isPage) releaseLocalPage(alert.key, token);
   try {
-    await redis.eval(DELETE_OWNED_LEASE, 1, redisKey, token);
+    await withRedisTimeout("alert lease release", redis.eval(DELETE_OWNED_LEASE, 1, redisKey, token));
   } catch (error) {
-    console.error("[health-alert] Failed to release delivery lease", error);
+    console.error("[health-alert] Failed to release delivery lease", safeErrorLabel(error));
   }
   return "failed";
 }
