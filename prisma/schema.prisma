@@ -296,6 +296,7 @@ model PayoutJob {
   amountUnits          BigInt?
   destinationAddress String?
   txHash             String?
+  broadcastAt        DateTime?
   status             PayoutJobStatus @default(queued)
   workerHeartbeatAt  DateTime?
   startedAt          DateTime?
@@ -310,6 +311,8 @@ model PayoutJob {
 
   @@index([status, createdAt])
   @@index([status, workerHeartbeatAt])
+  @@index([broadcastAt])
+  @@index([status, completedAt])
   @@index([userId])
   @@unique([userId], name: "payout_jobs_user_inflight_withdrawal_key", map: "payout_jobs_user_inflight_withdrawal_key", where: raw("\"type\" = 'WITHDRAWAL' AND \"status\" IN ('queued', 'processing')"))
   @@map("payout_jobs")

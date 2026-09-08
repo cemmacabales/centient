@@ -1,6 +1,6 @@
 # Payout Account Multisig Runbook (native Stellar 2-of-3)
 
-**Issue:** [#2](https://github.com/cemmacabales/centient/issues/2) · Deliverable 1 · Week 1 · Blocks #3, #4, #5
+**Issue:** [#5](https://github.com/webnxt-2030/Centient/issues/5) · Deliverable 1 · Week 1 · Blocks #6, #7, #8
 
 The payout (hot) account is a **native Stellar multisig**: no single key can move
 contributor funds. Payments require **2 of 3** signatures. This runbook is the
@@ -40,7 +40,7 @@ Idempotent — safe to re-run; it no-ops once the account already matches the ta
 # Testnet, generating throwaway keys (prints secrets once — store them):
 STELLAR_NETWORK=testnet pnpm stellar:multisig:setup
 
-# Initial setup with pre-provisioned keys (from the secrets store):
+# Initial setup with pre-provisioned keys (see "Key custody" below for where they live):
 STELLAR_NETWORK=testnet \
 STELLAR_PLATFORM_SECRET=S… \
 STELLAR_OPS_SIGNER_PUBLIC=G… \
@@ -144,13 +144,32 @@ one the payout rail uses.
 
 **Custody lesson:** a multisig proof is only useful if the signing material
 survives with it. Whoever provisions the mainnet account records all three keys
-in the secrets store *before* the `set-options` transaction is submitted.
+in the shared secrets store *before* the `set-options` transaction is submitted.
 
-> ⚠️ **Open custody gap on the account above.** Its three secrets currently exist
-> only in the gitignored `.env.local` of the machine that provisioned it. That is
-> enough to develop and run the #6 spike locally, and it is *not* enough for any
-> other checkout, teammate, or CI runner — for them the account is as inoperable
-> as the superseded one. Before anything beyond local spike work depends on it,
-> copy all three secrets into the shared secrets store. If they are lost first,
-> re-run `pnpm stellar:multisig:setup`, take a new proof, and update this section
-> again.
+## Key custody — current state
+
+There is **no secrets-store integration today.** Every script and the payout
+service read plain environment variables (`STELLAR_PLATFORM_SECRET`,
+`STELLAR_OPS_SIGNER_SECRET`, `STELLAR_POLICY_SIGNER_SECRET`); nothing fetches a
+key from a vault at runtime. On testnet the three secrets for the account above
+exist only in the gitignored `.env.local` of the machine that provisioned it.
+
+That is enough to develop and run the #6 spike and the #7 payout service
+locally, and it is *not* enough for any other checkout, teammate, or CI runner —
+for them the account is as inoperable as the superseded one. Before anything
+beyond local work depends on this account:
+
+1. Copy all three secrets into the shared secrets store (owner: whoever holds
+   the provisioning machine; tracked in #73).
+2. Wire the deployment to inject **only** `STELLAR_PLATFORM_SECRET` and
+   `STELLAR_OPS_SIGNER_SECRET` from that store. The policy signer's seed is
+   never placed in the application deployment: its only consumer is the
+   independent co-signer service (#8), which runs on separate infrastructure
+   with its own key store. `STELLAR_POLICY_SIGNER_SECRET` in an application
+   environment is a testnet-only affordance for local proofs and is refused
+   on the public network, so until #8 exists production payouts fail closed —
+   the payout service throws before building anything rather than degrading
+   to a single signature.
+
+If the secrets are lost first, re-run `pnpm stellar:multisig:setup`, take a new
+proof, and update this section again.
