@@ -125,6 +125,58 @@ Responses:
 The cron does not generate XDR. A refill XDR expires after 15 minutes, so an
 unattended scheduler must not create competing stale envelopes.
 
+## Wallet-health schedule and authenticated check
+
+Wallet health is checked by the authenticated `POST /api/cron/wallet-health`
+endpoint. Configure the scheduler with `CRON_SECRET` in its secret store and
+invoke it at least once per minute in production so short-lived balance and
+activity breaches are observed promptly:
+
+```bash
+curl -X POST https://APP_HOST/api/cron/wallet-health \
+  -H "Authorization: Bearer $CRON_SECRET"
+```
+
+The response contains the current USDC and spendable XLM status, payout and
+failure metrics, reserve state, configured thresholds, and alert delivery
+results. A `sent` result means Discord accepted the alert; `suppressed` means
+the alert identity is inside its cooldown window. Alert identities include
+`wallet-usdc-warn`, `wallet-usdc-page`, `wallet-xlm-warn`,
+`wallet-xlm-page`, `payout-rate-spike`, `payout-volume-spike`, `payout-cap`,
+`repeated-payout-failures`, and `reserve-refill-overdue`.
+
+## Test-environment alert simulations
+
+Run these checks only against a disposable Stellar testnet wallet and a test
+Discord webhook. Use secret-manager injection for `CRON_SECRET` and the
+platform seed; do not place either value in a command, commit, or evidence
+record. Restore the original thresholds and balances after each simulation.
+
+1. **Low USDC:** fund the test platform account, then transfer enough USDC
+   away that its float is below `BALANCE_PAGE_USDC` (10 USDC in the example
+   configuration). Run the authenticated request above and verify
+   `wallet-usdc-page` is present with `PAGE` severity.
+2. **Low spendable XLM:** leave the account funded enough to query Horizon but
+   reduce spendable XLM (after ledger reserve, liabilities, and sponsored
+   reserves) below `BALANCE_PAGE_XLM` (2 XLM). Run the request and verify
+   `wallet-xlm-page` is present with `PAGE` severity. Check the reported
+   spendable amount, not the gross XLM balance.
+3. **Anomaly threshold:** set a test-only threshold such as
+   `HEALTH_PAYOUT_COUNT_THRESHOLD=1`, while keeping
+   `HEALTH_PAYOUT_WINDOW_MINUTES` longer than the activity interval. Create
+   at least one successful test payout, run the request, and verify the
+   `payout-rate-spike` identity and observed count are reported. Do not lower
+   production thresholds as part of this test.
+4. **Cooldown suppression:** keep one breach active, run the request once and
+   verify its alert is delivered, then repeat the same request within
+   `HEALTH_ALERT_COOLDOWN_MS` (900000 ms by default). Verify the second result
+   is `suppressed` and no duplicate Discord notification is emitted. After the
+   cooldown, a still-active breach may be delivered again.
+
+Record only the test network, public account, observed status, alert identity,
+delivery result, and timestamps. Never record webhook URLs, secrets, private
+keys, or real production endpoints.
+
 ## Prepare the exact refill
 
 On an online operator host with public policy configuration and Horizon access:
