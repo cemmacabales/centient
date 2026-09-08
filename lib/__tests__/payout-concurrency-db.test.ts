@@ -69,6 +69,34 @@ let broadcasts: { destination: string; amountUnits: bigint; reference: string }[
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Optional rendezvous inside the fake broadcast. When set, no broadcast resolves
+ * until `size` callers have entered it, so a case that needs every payout to be
+ * mid-flight at once gets that by construction rather than by hoping a delay was
+ * long enough. Bounded, so a case that never fills the barrier fails on its own
+ * assertion instead of hanging out to the suite timeout.
+ */
+let barrier: { arrive: () => Promise<void>; arrivedCount: () => number } | null = null;
+
+function makeBarrier(size: number, timeoutMs = 5_000) {
+  let arrived = 0;
+  let release!: () => void;
+  const open = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const timer = setTimeout(release, timeoutMs);
+  return {
+    async arrive() {
+      if (++arrived >= size) {
+        clearTimeout(timer);
+        release();
+      }
+      await open;
+    },
+    arrivedCount: () => arrived,
+  };
+}
+
+/**
  * A labeler with a payable `G…` destination. The shared factory still mints
  * EVM-shaped addresses, which `reprocessPayoutWithNonceSafety` StrKey-rejects
  * before it ever reaches the rail — so these cases would pass for the wrong
@@ -86,14 +114,17 @@ beforeEach(async () => {
   // about the cap sets its own.
   process.env.DAILY_PAYOUT_CAP_UNITS = "0";
   broadcasts = [];
+  barrier = null;
   mockSubmitMultisigPayout.mockImplementation(async (request: {
     destination: string;
     amountUnits: bigint;
     reference: { kind: string; id: string };
   }) => {
-    // Held open long enough that every racing caller is inside the broadcast at
-    // the same time — the window a double-pay would have to open in.
-    await delay(15);
+    // Held open so racing callers are inside the broadcast together — the
+    // window a double-pay would have to open in. A case needing that guaranteed
+    // rather than likely installs a barrier.
+    if (barrier) await barrier.arrive();
+    else await delay(15);
     broadcasts.push({
       destination: request.destination,
       amountUnits: request.amountUnits,
@@ -212,6 +243,77 @@ describe("N concurrent payouts settle once each", () => {
     expect(settled?.payoutTxHash).toBeTruthy();
   });
 
+  it("keeps refreshing the claim while the broadcast is still in flight", async () => {
+    // The lease's failure mode if it were only taken once: a Horizon submit that
+    // outlives RETRY_CLAIM_LEASE_MS would let a second claimant broadcast before
+    // the first stores its hash — the double-payment the lease exists to stop.
+    // Only setInterval/clearInterval are faked, so Prisma's own I/O and timeouts
+    // run normally and this stays a test of the heartbeat, not of the clock.
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const user = await createPayableUser();
+      const task = await createTask({ campaignId: null, isGold: false });
+      const submission = await prisma.submission.create({
+        data: {
+          walletAddress: user.walletAddress,
+          userId: user.id,
+          taskId: task.id,
+          choice: "A",
+          reason: VALID_REASON,
+          payoutAmountUnits: AMOUNT_UNITS,
+          payoutStatus: "pending",
+        },
+      });
+
+      let claimedAt: Date | null = null;
+      let refreshedAt: Date | null = null;
+      mockSubmitMultisigPayout.mockImplementationOnce(async () => {
+        claimedAt = (
+          await prisma.submission.findUnique({
+            where: { id: submission.id },
+            select: { lastRetriedAt: true },
+          })
+        )?.lastRetriedAt ?? null;
+
+        // One heartbeat period inside the still-open broadcast.
+        await vi.advanceTimersByTimeAsync(20_000);
+        await vi.waitFor(async () => {
+          const row = await prisma.submission.findUnique({
+            where: { id: submission.id },
+            select: { lastRetriedAt: true },
+          });
+          expect(row?.lastRetriedAt?.getTime()).toBeGreaterThan(claimedAt!.getTime());
+          refreshedAt = row!.lastRetriedAt;
+        });
+
+        return { hash: "heartbeat-hash" };
+      });
+
+      await reprocessPayoutWithNonceSafety(submission.id);
+
+      expect(claimedAt).toBeInstanceOf(Date);
+      expect(refreshedAt!.getTime()).toBeGreaterThan(claimedAt!.getTime());
+
+      // And the heartbeat stops mattering once the tuple lands: it is scoped to
+      // rows without a hash, so it can never overwrite the recorded broadcast
+      // time with a later refresh.
+      const settled = await prisma.submission.findUnique({
+        where: { id: submission.id },
+        select: { payoutStatus: true, payoutTxHash: true, lastRetriedAt: true },
+      });
+      expect(settled?.payoutStatus).toBe("sent");
+      expect(settled?.payoutTxHash).toBe("heartbeat-hash");
+      await vi.advanceTimersByTimeAsync(60_000);
+      const afterMore = await prisma.submission.findUnique({
+        where: { id: submission.id },
+        select: { lastRetriedAt: true },
+      });
+      expect(afterMore?.lastRetriedAt?.getTime()).toBe(settled?.lastRetriedAt?.getTime());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("retries again once the in-flight lease has expired, so no payout is stranded", async () => {
     // The other half of the lease. A guard that only ever refuses would convert
     // a double-pay into a payout that never happens: a crash between claim and
@@ -300,7 +402,21 @@ describe("accepted residual risk: the daily cap is a check, not a reservation", 
     process.env.DAILY_PAYOUT_CAP_UNITS = (AMOUNT_UNITS * 2n).toString();
     const jobs = await enqueueWithdrawals(WORKERS);
 
+    // The barrier is what makes the overshoot a property rather than a
+    // coincidence. `checkPayoutCap` reads the ledger *before* the broadcast
+    // persists its tuple, so without one, database scheduling decides how many
+    // workers read a still-empty ledger: some runs overshoot by eight payouts,
+    // some by two, and a run that happened to serialize would not overshoot at
+    // all. Holding every broadcast open until all eight have passed their cap
+    // check makes each of them read the same empty ledger every time.
+    const rendezvous = makeBarrier(WORKERS);
+    barrier = rendezvous;
+
     await Promise.all(Array.from({ length: WORKERS }, () => workerTick()));
+
+    // If the barrier timed out, the premise did not hold and the numbers below
+    // would be measuring scheduling rather than the cap. Fail on the premise.
+    expect(rendezvous.arrivedCount()).toBe(WORKERS);
 
     const ledger = await prisma.payoutJob.aggregate({
       _sum: { amountUnits: true },
@@ -308,7 +424,8 @@ describe("accepted residual risk: the daily cap is a check, not a reservation", 
     });
     const spent = ledger._sum.amountUnits ?? 0n;
     expect(spent).toBeGreaterThan(AMOUNT_UNITS * 2n);
-    // Still exactly one broadcast per job: over the cap, never paid twice.
+    // Over the cap, and still never one job broadcast twice — the overshoot is
+    // many payouts the cap each authorized, not one payout settled repeatedly.
     expect(broadcasts).toHaveLength(jobs.length);
     expect(new Set(broadcasts.map((b) => b.reference)).size).toBe(jobs.length);
   });
