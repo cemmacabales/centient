@@ -24,33 +24,16 @@ import {
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
 import { horizonUrl, networkPassphrase, usdcAsset } from "../lib/stellar/config";
+import { friendbotFund } from "../lib/qa-fixtures/friendbot";
 import { requireTestnet } from "../lib/qa-fixtures/gate";
 import { defaultManifestPath, parseRecipientManifest } from "../lib/qa-fixtures/manifest";
-
-const FRIENDBOT_URL = "https://friendbot.stellar.org";
 
 function log(message: string): void {
   console.log(`[qa-provision] ${message}`);
 }
 
-async function friendbotFund(publicKey: string): Promise<void> {
-  for (let attempt = 1; attempt <= 4; attempt++) {
-    const response = await fetch(`${FRIENDBOT_URL}?addr=${encodeURIComponent(publicKey)}`);
-    if (response.ok) return;
-    // Friendbot answers 400 for an account it has already funded, which is a
-    // success for our purposes — the account exists and holds XLM.
-    const body = await response.text();
-    if (response.status === 400 && body.includes("createAccountAlreadyExist")) {
-      log(`  ${publicKey.slice(0, 8)}… already funded`);
-      return;
-    }
-    if (attempt === 4) {
-      throw new Error(`friendbot funding failed (HTTP ${response.status}): ${body.slice(0, 200)}`);
-    }
-    log(`  friendbot attempt ${attempt} failed (HTTP ${response.status}); retrying`);
-    await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
-  }
-}
+const fund = (publicKey: string) =>
+  friendbotFund(publicKey, { onRetry: (message) => log(`  ${message}`) });
 
 async function addTrustline(
   server: Horizon.Server,
@@ -84,14 +67,14 @@ async function main(): Promise<void> {
   // ── withTrustline: funded, holds the USDC trustline ──────────────────────
   const withTrustline = Keypair.random();
   log(`withTrustline  ${withTrustline.publicKey()}`);
-  await friendbotFund(withTrustline.publicKey());
+  await fund(withTrustline.publicKey());
   const trustlineHash = await addTrustline(server, withTrustline, asset);
   log(`  trustline established in ${trustlineHash}`);
 
   // ── withoutTrustline: funded, deliberately no trustline ──────────────────
   const withoutTrustline = Keypair.random();
   log(`withoutTrustline ${withoutTrustline.publicKey()}`);
-  await friendbotFund(withoutTrustline.publicKey());
+  await fund(withoutTrustline.publicKey());
   log("  funded, no trustline added — this is the op_no_trust case");
 
   // ── neverCreated: a valid key that has never existed on-chain ────────────

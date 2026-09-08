@@ -124,8 +124,15 @@ must carry a hash, so a blanket "skip anything with a hash" rule would make them
 permanently un-resettable. The discriminator is the hash's shape rather than a
 flag the seeder sets about itself: a Horizon transaction hash is 64 lowercase hex
 characters, and fixture hashes are minted as `qa-<runId>-<n>`, which can never
-match that pattern. Reset therefore deletes only rows where `payoutTxHash` is null
-or fails `/^[0-9a-f]{64}$/`.
+match that pattern.
+
+Deletion requires **both** halves: the hash must not look like a Horizon hash, and
+it must look like one this module minted. Rejecting only Horizon-shaped hashes
+would leave a third category — a value entered by hand, written by another tool,
+or truncated by a bad migration — falling through to deletion on the grounds that
+it is not recognisably real. Preserving a row that did not need preserving costs a
+stale fixture; deleting one that recorded a real payment destroys the evidence it
+happened. Those costs are not symmetric, so the unrecognised case is preserved.
 
 This matters more than it looks. A self-attested marker column would mean a reset
 trusts the seeder's own claim about which rows are synthetic; a row mislabelled by

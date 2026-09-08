@@ -10,6 +10,7 @@
 // here: D1-TC-006 tests the sponsorship event itself, which happens exactly once
 // per address, so it is minted fresh by its own command when that case is run.
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { StrKey } from "@stellar/stellar-sdk";
 
 /** The recipient shapes a fixture can pay to, and what each one proves. */
@@ -103,9 +104,16 @@ export function parseRecipientManifest(raw: unknown): RecipientManifest {
   };
 }
 
-/** Default location of the committed manifest, resolved from this module. */
+/**
+ * Default location of the committed manifest, resolved from this module.
+ *
+ * Via `fileURLToPath` rather than `URL.pathname`: the latter yields `/C:/…` on
+ * Windows and leaves percent-encoding intact, either of which turns a present
+ * manifest into a "run the provisioning command" error that sends the reader
+ * somewhere unhelpful.
+ */
 export function defaultManifestPath(): string {
-  return new URL("./recipients.testnet.json", import.meta.url).pathname;
+  return fileURLToPath(new URL("./recipients.testnet.json", import.meta.url));
 }
 
 /** Read and validate the manifest from disk. */

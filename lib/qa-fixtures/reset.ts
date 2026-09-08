@@ -110,7 +110,14 @@ export async function resetQaFixtures(
     });
     deletedCount += removed.count;
 
-    await prisma.task.deleteMany({ where: { id: { in: removableTaskIds } } });
+    // `submissions.taskId` is ON DELETE RESTRICT. The seeder writes one task per
+    // submission, so today every task here is empty by the time we reach this —
+    // but the schema permits several submissions on one task, and if one of them
+    // were preserved the delete would abort the whole reset partway through.
+    // Filtering on emptiness costs nothing and removes that failure mode.
+    await prisma.task.deleteMany({
+      where: { id: { in: removableTaskIds }, submissions: { none: {} } },
+    });
   }
 
   // ── Standalone payout jobs (the seeded cap usage) ────────────────────────
