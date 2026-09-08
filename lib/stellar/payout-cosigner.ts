@@ -12,79 +12,14 @@
 // wearing a multisig's clothes. It is therefore refused on the public network and
 // requires an explicit opt-in even on testnet, and the absence of any configured
 // co-signer fails closed rather than degrading to a single signature.
-import {
-  Keypair,
-  TransactionBuilder,
-  type Asset,
-  type FeeBumpTransaction,
-  type Transaction,
-} from "@stellar/stellar-sdk";
-import { networkPassphrase, stellarNetwork, usdcAsset } from "./config";
-import { payoutAmountString } from "./payout-amount";
+import { Keypair, type Asset } from "@stellar/stellar-sdk";
+import { stellarNetwork, usdcAsset } from "./config";
+import { assertIsolationPermitted } from "./cosigner-isolation";
+import { remotePolicyCoSigner } from "./cosigner-remote";
+import { assertEnvelopeMatchesRequest } from "./cosigner-verify";
 import type { PayoutCoSignRequest, PayoutCoSignature, PayoutCoSigner } from "./payout-envelope";
 
 export type PayoutCoSignerEnvironment = Readonly<Record<string, string | undefined>>;
-
-/** The payment operation an envelope actually settles, whatever wraps it. */
-function innerPayment(transaction: Transaction | FeeBumpTransaction): {
-  destination: string;
-  amount: string;
-  asset: Asset;
-} {
-  const tx =
-    "innerTransaction" in transaction
-      ? (transaction as FeeBumpTransaction).innerTransaction
-      : (transaction as Transaction);
-  const operations = tx.operations;
-  if (operations.length !== 1 || operations[0].type !== "payment") {
-    throw new Error(
-      `payout co-signer: envelope must carry exactly one payment operation, got [${operations
-        .map((o) => o.type)
-        .join(", ")}]`,
-    );
-  }
-  return operations[0] as unknown as {
-    destination: string;
-    amount: string;
-    asset: Asset;
-  };
-}
-
-/**
- * Re-derive what the envelope actually pays and refuse to sign unless it matches
- * the request. This is the check that makes the second signature meaningful: a
- * co-signer that signs whatever XDR it is handed adds a key, not a control.
- * Issue #8's service performs this same comparison against its own ledger copy.
- */
-function assertEnvelopeMatchesRequest(
-  request: PayoutCoSignRequest,
-  expectedAsset: Asset,
-): Transaction | FeeBumpTransaction {
-  const transaction = TransactionBuilder.fromXDR(request.xdr, networkPassphrase());
-  const payment = innerPayment(transaction);
-
-  // The asset is checked against the co-signer's own configuration, never against
-  // the request: a matching destination and numeric amount say nothing about
-  // which asset is actually moving, and the request is the very thing being
-  // independently verified.
-  if (!payment.asset.equals(expectedAsset)) {
-    throw new Error(
-      `payout co-signer: envelope pays asset ${payment.asset.getCode()}:${payment.asset.getIssuer()}, not the configured payout asset ${expectedAsset.getCode()}:${expectedAsset.getIssuer()}`,
-    );
-  }
-  if (payment.destination !== request.destination) {
-    throw new Error(
-      `payout co-signer: envelope destination ${payment.destination} does not match the requested destination ${request.destination}`,
-    );
-  }
-  const expected = payoutAmountString(request.amountUnits);
-  if (payment.amount !== expected) {
-    throw new Error(
-      `payout co-signer: envelope amount ${payment.amount} does not match the requested amount ${expected}`,
-    );
-  }
-  return transaction;
-}
 
 /**
  * An in-process co-signer holding the policy key directly. Signs only after
@@ -104,6 +39,29 @@ export function localPolicyCoSigner(policy: Keypair, asset?: Asset): PayoutCoSig
 }
 
 /**
+ * Refuse an application deployment that can produce both payout signatures.
+ *
+ * A process configured to call the separate co-signer must not also hold the
+ * policy signing key: if it does, the two signing boundaries have collapsed into
+ * one and the multisig is decorative. Silently preferring the remote signer
+ * would leave the key sitting in a process one code change away from using it.
+ *
+ * Called both at startup (`instrumentation.ts`) and on the payout path. Startup
+ * is where a collapsed boundary should surface — a deployment that has lost the
+ * separation is wrong the moment it comes up, not hours later when the first
+ * contributor tries to get paid.
+ */
+export function assertAppDeploymentSeparation(
+  env: PayoutCoSignerEnvironment = process.env,
+): void {
+  if (env.COSIGNER_URL?.trim() && env.STELLAR_POLICY_SIGNER_SECRET?.trim()) {
+    throw new Error(
+      "this process is configured with both COSIGNER_URL and STELLAR_POLICY_SIGNER_SECRET — the app deployment must never hold the policy signing key (ADR-0001)",
+    );
+  }
+}
+
+/**
  * The co-signer this deployment may use. Throws rather than returning a
  * single-signature fallback: there is no configuration of this rail that pays out
  * on one signature.
@@ -111,7 +69,42 @@ export function localPolicyCoSigner(policy: Keypair, asset?: Asset): PayoutCoSig
 export function resolvePayoutCoSigner(
   env: PayoutCoSignerEnvironment = process.env,
 ): PayoutCoSigner {
+  const remoteUrl = env.COSIGNER_URL?.trim();
   const secret = env.STELLAR_POLICY_SIGNER_SECRET?.trim();
+
+  assertAppDeploymentSeparation(env);
+
+  // The deployed service is the real co-signer and takes precedence: the local
+  // signer below exists only so the refusal paths stay exercised in development.
+  if (remoteUrl) {
+    assertIsolationPermitted(env);
+    const sharedSecret = env.COSIGNER_SHARED_SECRET?.trim();
+    if (!sharedSecret) {
+      throw new Error(
+        "COSIGNER_SHARED_SECRET must be set to authenticate requests to the co-signer at COSIGNER_URL",
+      );
+    }
+    // The HMAC proves who sent the request and that it arrived intact; it does
+    // not conceal it. Over plaintext the destination, the amount, the envelope
+    // XDR, and the signature coming back are all readable in transit — and the
+    // co-signer's own Railway project means this crosses the public internet.
+    // Loopback stays exempt so a local co-signer is still usable in development.
+    let parsed: URL;
+    try {
+      parsed = new URL(remoteUrl);
+    } catch {
+      throw new Error(`COSIGNER_URL is not a usable URL: "${remoteUrl}"`);
+    }
+    const loopback = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+    if (parsed.protocol !== "https:" && !loopback) {
+      throw new Error(
+        `COSIGNER_URL must use https (got "${parsed.protocol}") — payout details are never sent to the co-signer over plaintext`,
+      );
+    }
+
+    return remotePolicyCoSigner({ url: remoteUrl, secret: sharedSecret });
+  }
+
   if (!secret) {
     throw new Error(
       "no payout co-signer is configured — set STELLAR_POLICY_SIGNER_SECRET for the gated local signer, or wire the issue #8 policy service",
