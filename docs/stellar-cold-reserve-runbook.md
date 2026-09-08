@@ -147,6 +147,83 @@ the alert identity is inside its cooldown window. Alert identities include
 `payout-monitoring-unavailable`, `reserve-monitoring-unconfigured`,
 `reserve-monitoring-unavailable`, and `refill-timer-unavailable`.
 
+## Rollout order: migrate before deploying the application
+
+`prisma/migrations/20260908090000_add_payout_broadcast_monitoring` adds the
+`PayoutJob.broadcastAt` column and the indexes the monitor queries. Apply it
+**before** the application that reads it:
+
+1. `npx prisma migrate deploy` against the target database.
+2. Deploy the application build (`prisma generate` runs as part of `npm run build`).
+3. Only then enable or resume the `POST /api/cron/wallet-health` schedule.
+
+Deploying first makes every payout-activity, cap, and anomaly query fail against
+the old table; the monitor reports those sources as `error` and pages rather
+than reporting false zeros, but the rollout is still wrong in that order. The
+migration is additive, so an application deployed before it is applied recovers
+as soon as the migration lands — no rollback of the migration is required.
+
+## Alert delivery results and what they mean
+
+Every alert result in the cron response is one of:
+
+| Result | Meaning | Operator action |
+|---|---|---|
+| `sent` | Discord accepted the alert and Redis holds the cooldown. | None. |
+| `suppressed` | The alert identity is inside its Redis cooldown window. | None. |
+| `sent-degraded` | Discord accepted the alert, but Redis could not lease or extend the cooldown. Deduplication for this identity is process-local only. | Check Redis; expect repeats across processes while it is down. |
+| `suppressed-degraded` | A concurrent or recent delivery in this process already covered the identity while Redis was unavailable. | Check Redis. |
+| `failed` | Discord did not accept the alert, or a WARN alert could not be deduplicated safely. | Treat the underlying condition as unnotified and check it directly. |
+| `disabled` | `DISCORD_WEBHOOK_URL` is unset. | Configure the webhook before relying on alerting. |
+
+Delivery logs deliberately record only an error's class, an HTTP status, and the
+alert identity. Webhook URLs, seeds, and full error messages are never logged.
+
+## Redis failure policy
+
+Redis backs alert deduplication and the reserve refill-due timer. It is never
+the source of truth for money.
+
+- Every Redis call the health path makes is bounded by
+  `REDIS_OPERATION_TIMEOUT_MS` (2000 ms by default). A command that lands after
+  its deadline is abandoned.
+- **PAGE** alerts still deliver when Redis is unavailable, deduplicated within
+  the process, and report `sent-degraded` / `suppressed-degraded`. A PAGE is
+  never dropped because Redis is down.
+- **WARN** alerts fail closed (`failed`) when Redis is unavailable, so a warning
+  storm cannot be amplified across processes.
+- The refill-due timer refuses to issue a new set/get/delete while an earlier
+  command has not settled, and reports `refillTimer: "error"` until it does.
+  `refill-timer-unavailable` pages; `refillDueSince` stays `null` rather than
+  resetting the clock.
+- Restarting Redis clears cooldowns, so a still-active breach may re-page once.
+
+## Complete alert identity list
+
+Balance and rail conditions:
+
+`wallet-usdc-warn`, `wallet-usdc-page`, `wallet-xlm-warn`, `wallet-xlm-page`,
+`payout-rate-spike`, `payout-volume-spike`, `payout-cap`,
+`repeated-payout-failures`, `reserve-refill-overdue`.
+
+Monitoring-source and top-level failures (these say the check itself could not
+run — never read a missing metric as healthy):
+
+| Identity | Severity | Meaning |
+|---|---|---|
+| `wallet-monitoring-unconfigured` | WARN | `STELLAR_PLATFORM_SECRET` or the USDC asset is not configured. |
+| `wallet-monitoring-unavailable` | PAGE | Horizon account/ledger lookup failed; balances and reserve counts are `null`. |
+| `payout-monitoring-unavailable` | PAGE | Payout activity, cap spend, or failure counts could not be queried. |
+| `reserve-monitoring-unconfigured` | WARN | The cold reserve policy is not configured. |
+| `reserve-monitoring-unavailable` | PAGE | Hot and cold reserve balances could not be loaded. |
+| `refill-timer-unavailable` | PAGE | The refill-due timer could not be read or written. |
+| `health-monitor-unavailable` | PAGE | The snapshot itself could not be assembled. |
+| `payout-persistence-unavailable` | PAGE | A payment was accepted on-chain but its broadcast tuple or bookkeeping could not be recorded. **Reconcile the transaction hash before any refund or reissue** — the payout already left the wallet. |
+
+A malformed optional balance threshold is a configuration error, not an
+outage: the affected threshold falls back to its documented default, a warning
+is logged, and Horizon monitoring stays live.
+
 ## Test-environment alert simulations
 
 Run these checks only against a disposable Stellar testnet wallet and a test
