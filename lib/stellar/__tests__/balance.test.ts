@@ -247,6 +247,64 @@ describe("getWalletHealth sponsored-reserve accounting", () => {
   });
 });
 
+describe("optional balance threshold normalization", () => {
+  it("falls back to the documented defaults for malformed optional thresholds", () => {
+    process.env.BALANCE_WARN_USDC = "fifty";
+    process.env.BALANCE_PAGE_USDC = "";
+    process.env.BALANCE_WARN_XLM = "-5";
+    process.env.BALANCE_PAGE_XLM = "2.00000001";
+
+    expect(parseBalanceThresholds()).toEqual({
+      warnUsdc: 50,
+      pageUsdc: 10,
+      warnXlm: 5,
+      pageXlm: 2,
+    });
+  });
+
+  it("keeps Horizon monitoring live and compares against the normalized default", async () => {
+    process.env.BALANCE_WARN_USDC = "fifty";
+    mockLoadAccount.mockResolvedValue({
+      subentry_count: 0,
+      num_sponsoring: 0,
+      num_sponsored: 0,
+      balances: balances("40.0000000", "100.0000000"),
+    });
+
+    const health = await getWalletHealth();
+
+    expect(health.monitoringStatus).toBe("healthy");
+    expect(health.thresholds.warnUsdc).toBe(50);
+    expect(health.assetStatus.usdc).toBe("warn");
+    expect(health.warnings.join(" ")).toContain("below warning threshold 50.00 USDC");
+    expect(health.warnings.join(" ")).not.toMatch(/Horizon/);
+  });
+});
+
+describe("wallet reserve count availability", () => {
+  it("reports reserve counts as null when the platform wallet is unconfigured", async () => {
+    delete process.env.STELLAR_PLATFORM_SECRET;
+
+    const health = await getWalletHealth();
+
+    expect(health.monitoringStatus).toBe("unconfigured");
+    expect(health.numSubentries).toBeNull();
+    expect(health.numSponsoring).toBeNull();
+    expect(health.numSponsored).toBeNull();
+  });
+
+  it("reports reserve counts as null when Horizon monitoring is unavailable", async () => {
+    mockLoadAccount.mockResolvedValue({ balances: [{ asset_type: "native", balance: "50.0" }] });
+
+    const health = await getWalletHealth();
+
+    expect(health.monitoringStatus).toBe("error");
+    expect(health.numSubentries).toBeNull();
+    expect(health.numSponsoring).toBeNull();
+    expect(health.numSponsored).toBeNull();
+  });
+});
+
 describe("calculateSpendableXlm", () => {
   it("subtracts live protocol reserves and native selling liabilities", () => {
     const result = calculateSpendableXlm({
