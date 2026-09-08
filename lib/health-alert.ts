@@ -1,5 +1,5 @@
 import { redis } from "./redis";
-import { withRedisTimeout } from "./redis-bounded";
+import { withRedisTimeout } from "./deadline";
 
 const DEFAULT_ALERT_COOLDOWN_MS = 15 * 60 * 1000;
 const DEFAULT_ALERT_DELIVERY_TIMEOUT_MS = 10_000;
@@ -54,15 +54,21 @@ function safeErrorLabel(error: unknown): string {
   return typeof error;
 }
 
+/** Unique owner token for one delivery attempt's Redis lease. */
 function deliveryToken(): string {
   return globalThis.crypto.randomUUID();
 }
 
+/** Cooldown between repeats of one alert identity; invalid values use the default. */
 function configuredCooldownMs(): number {
   const value = Number(process.env.HEALTH_ALERT_COOLDOWN_MS ?? DEFAULT_ALERT_COOLDOWN_MS);
   return Number.isSafeInteger(value) && value > 0 ? value : DEFAULT_ALERT_COOLDOWN_MS;
 }
 
+/**
+ * Webhook timeout, capped just under the delivery lease so a slow Discord call
+ * can never outlive the lease that is suppressing everyone else.
+ */
 function configuredDeliveryTimeoutMs(): number {
   const value = Number(
     process.env.HEALTH_ALERT_DELIVERY_TIMEOUT_MS ?? DEFAULT_ALERT_DELIVERY_TIMEOUT_MS,
@@ -71,6 +77,10 @@ function configuredDeliveryTimeoutMs(): number {
   return Math.min(value, ALERT_DELIVERY_LEASE_MS - 1);
 }
 
+/**
+ * POST one alert to Discord. Returns whether Discord accepted it; never throws,
+ * so a webhook outage degrades delivery instead of failing the whole check.
+ */
 async function deliverDiscordAlert(
   webhookUrl: string,
   alert: HealthAlert,
@@ -102,6 +112,7 @@ async function deliverDiscordAlert(
   return false;
 }
 
+/** Drop local PAGE cooldowns that have expired as of `nowMs`. */
 function pruneExpiredPageFallbacks(nowMs: number): void {
   for (const [key, expiresAt] of pageFallbackExpiries) {
     if (expiresAt <= nowMs) pageFallbackExpiries.delete(key);
@@ -116,10 +127,12 @@ function claimLocalPage(alertKey: string, token: string, nowMs: number): boolean
   return true;
 }
 
+/** Give up local PAGE ownership after a failed delivery, if we still hold it. */
 function releaseLocalPage(alertKey: string, token: string): void {
   if (pageFallbackOwners.get(alertKey) === token) pageFallbackOwners.delete(alertKey);
 }
 
+/** Convert our local PAGE ownership into a local cooldown after a delivery. */
 function completeLocalPage(
   alertKey: string,
   token: string,
@@ -132,6 +145,11 @@ function completeLocalPage(
   pageFallbackExpiries.set(alertKey, nowMs + cooldownMs);
 }
 
+/**
+ * Deliver a PAGE while Redis is unavailable, deduplicated within this process.
+ * A PAGE is never dropped for want of Redis, so cross-process duplicates are the
+ * accepted trade-off during an outage.
+ */
 async function deliverPageWithoutRedis(
   alertKey: string,
   token: string,
@@ -151,6 +169,15 @@ async function deliverPageWithoutRedis(
   return "sent-degraded";
 }
 
+/**
+ * Deliver one health alert at most once per cooldown across all processes.
+ *
+ * A Redis `SET NX PX` lease elects the single sender; on success the lease is
+ * promoted to the full cooldown, and on failure it is compare-deleted so a retry
+ * is not locked out. WARN alerts fail closed when Redis is unreachable; PAGE
+ * alerts fall back to process-local deduplication and report a `-degraded`
+ * outcome. Never throws — the returned outcome is the whole result.
+ */
 export async function sendDedupedDiscordAlert(
   alert: HealthAlert,
   {
