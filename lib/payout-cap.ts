@@ -1,6 +1,7 @@
 import prisma from "./prisma";
 import {
   sendDedupedDiscordAlert,
+  type HealthAlert,
   type HealthAlertDelivery,
 } from "./health-alert";
 
@@ -19,6 +20,7 @@ export class PayoutCapError extends Error {
   }
 }
 
+/** Configured daily payout cap in units; a negative setting uses the default. */
 export function getDailyPayoutCapUnits(): bigint {
   const raw = process.env.DAILY_PAYOUT_CAP_UNITS;
   if (!raw) return DEFAULT_DAILY_CAP_UNITS;
@@ -35,6 +37,13 @@ export interface PayoutActivity {
   volumeUnits: bigint;
 }
 
+/**
+ * Payout count and volume broadcast since `since`.
+ *
+ * Counts only `processing`/`done` jobs carrying a hash, an amount, and a
+ * broadcast time — the exact set of payouts that actually reached the network.
+ * Withdrawals have no Submission row, so this is the only complete source.
+ */
 export async function getPayoutActivitySince(since: Date): Promise<PayoutActivity> {
   const result = await prisma.payoutJob.aggregate({
     _count: { _all: true },
@@ -52,11 +61,20 @@ export async function getPayoutActivitySince(since: Date): Promise<PayoutActivit
   };
 }
 
+/** Units broadcast in the trailing 24 hours — the daily cap's spend side. */
 export async function getRolling24hPayoutSum(): Promise<bigint> {
   const activity = await getPayoutActivitySince(new Date(Date.now() - 86_400_000));
   return activity.volumeUnits;
 }
 
+/**
+ * Authorize one payout against the rolling daily cap, throwing `PayoutCapError`
+ * when it would exceed it. A cap of zero disables the limit entirely.
+ *
+ * This is a check, not a reservation: concurrent payouts can each pass and
+ * together exceed the cap. That is a deliberate trade-off against distributed
+ * reservation, bounded by the cap alert.
+ */
 export async function checkPayoutCap(amount: bigint): Promise<{
   allowed: boolean;
   current: bigint;
@@ -83,27 +101,65 @@ export async function checkPayoutCap(amount: bigint): Promise<{
   return { allowed: true, current, cap, remaining };
 }
 
+export const DEFAULT_CAP_PERCENT_THRESHOLD = 80;
+
+/**
+ * Percentage of the daily cap at which the `payout-cap` alert fires. Accepts any
+ * finite percentage in (0, 100]; anything else falls back to the documented
+ * default. Shared so the payout path and the health monitor cannot disagree on
+ * when the same alert identity is due.
+ */
+export function parseCapPercentThreshold(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): number {
+  const value = Number(env.HEALTH_CAP_PERCENT_THRESHOLD ?? DEFAULT_CAP_PERCENT_THRESHOLD);
+  return Number.isFinite(value) && value > 0 && value <= 100
+    ? value
+    : DEFAULT_CAP_PERCENT_THRESHOLD;
+}
+
+/** Consumed percentage of the cap, to two decimals, using exact bigint math. */
+export function capPercentConsumed(spentUnits: bigint, capUnits: bigint): number {
+  return Number((spentUnits * 10_000n) / capUnits) / 100;
+}
+
+/**
+ * Build the `payout-cap` alert, or null when the cap is unset or still below the
+ * threshold. Both the payout path (`maybeSendCapAlert`) and the health monitor
+ * raise this identity, and they share one Redis deduplication lease — whichever
+ * fires first is the message the operator sees, so both must build it here.
+ */
+export function buildPayoutCapAlert(
+  spentUnits: bigint,
+  capUnits: bigint,
+  thresholdPercent: number = parseCapPercentThreshold(),
+): HealthAlert | null {
+  if (capUnits <= 0n) return null;
+  const pct = capPercentConsumed(spentUnits, capUnits);
+  if (pct < thresholdPercent) return null;
+
+  const exhausted = pct >= 100;
+  return {
+    key: "payout-cap",
+    severity: exhausted ? "PAGE" : "WARN",
+    // Severity and title are derived from the same number: a paging alert that
+    // says "approaching" understates an exhausted cap to whoever is on call.
+    title: exhausted ? "Daily payout cap is exhausted" : "Daily payout cap is approaching",
+    lines: [
+      `${pct}% consumed`,
+      `${spentUnits} of ${capUnits} units spent`,
+      `${capUnits > spentUnits ? capUnits - spentUnits : 0n} units remain`,
+    ],
+  };
+}
+
+/** Deliver the cap alert if spend has reached the threshold. */
 export async function maybeSendCapAlert(): Promise<HealthAlertDelivery | "not-triggered"> {
   const cap = getDailyPayoutCapUnits();
   if (cap === 0n) return "not-triggered";
 
-  const current = await getRolling24hPayoutSum();
-  const pct = Number((current * 10000n) / cap) / 100; // two-decimal precision
-  const configuredThreshold = Number(process.env.HEALTH_CAP_PERCENT_THRESHOLD ?? "80");
-  const threshold =
-    Number.isFinite(configuredThreshold) && configuredThreshold > 0 && configuredThreshold <= 100
-      ? configuredThreshold
-      : 80;
-  if (pct < threshold) return "not-triggered";
+  const alert = buildPayoutCapAlert(await getRolling24hPayoutSum(), cap);
+  if (!alert) return "not-triggered";
 
-  return sendDedupedDiscordAlert({
-    key: "payout-cap",
-    severity: pct >= 100 ? "PAGE" : "WARN",
-    title: "Daily payout cap is approaching",
-    lines: [
-      `${pct}% consumed`,
-      `${current} of ${cap} units spent`,
-      `${cap > current ? cap - current : 0n} units remain`,
-    ],
-  });
+  return sendDedupedDiscordAlert(alert);
 }

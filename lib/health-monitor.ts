@@ -1,11 +1,14 @@
 import prisma from "./prisma";
 import {
+  buildPayoutCapAlert,
+  capPercentConsumed,
   getDailyPayoutCapUnits,
   getPayoutActivitySince,
   getRolling24hPayoutSum,
+  parseCapPercentThreshold,
 } from "./payout-cap";
 import { redis } from "./redis";
-import { withRedisTimeout } from "./redis-bounded";
+import { withRedisTimeout } from "./deadline";
 import { getWalletHealth, type BalanceStatus, type WalletHealth } from "./stellar/balance";
 import {
   sendDedupedDiscordAlert,
@@ -27,6 +30,12 @@ const REFILL_DUE_REDIS_KEY = "t2p:reserve-refill:due-since";
 // abandoned command lands.
 let outstandingRefillCommand: Promise<unknown> | null = null;
 
+/**
+ * Issue one bounded refill-timer command, refusing to start a new one while an
+ * earlier command has not settled. A command abandoned at its deadline may still
+ * apply on the server, so letting a newer one overtake it could reorder the
+ * due-since value and silently restart the overdue clock.
+ */
 function refillCommand<T>(operation: string, issue: () => Promise<T>): Promise<T> {
   if (outstandingRefillCommand) {
     return Promise.reject(
@@ -129,24 +138,27 @@ export interface HealthMonitorSnapshot {
 
 type MonitorEnvironment = Readonly<Record<string, string | undefined>>;
 
+/** Parse a positive whole-number setting, falling back on anything else. */
 function positiveInteger(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+/** Parse a positive seven-decimal unit amount, falling back on anything else. */
 function positiveUnits(value: string | undefined, fallback: bigint): bigint {
   if (!value || !/^\d+$/.test(value)) return fallback;
   const parsed = BigInt(value);
   return parsed > 0n ? parsed : fallback;
 }
 
+/**
+ * Read every monitor threshold from the environment, substituting the documented
+ * default for any value that is missing or malformed. A bad setting is an
+ * operator mistake and must never read as a breach or as an outage.
+ */
 export function parseHealthMonitorThresholds(
   env: MonitorEnvironment = process.env,
 ): HealthMonitorThresholds {
-  const capPercent = positiveInteger(
-    env.HEALTH_CAP_PERCENT_THRESHOLD,
-    DEFAULT_THRESHOLDS.capPercentThreshold,
-  );
   return {
     payoutWindowMinutes: positiveInteger(
       env.HEALTH_PAYOUT_WINDOW_MINUTES,
@@ -168,7 +180,9 @@ export function parseHealthMonitorThresholds(
       env.HEALTH_FAILURE_COUNT_THRESHOLD,
       DEFAULT_THRESHOLDS.failureCountThreshold,
     ),
-    capPercentThreshold: capPercent <= 100 ? capPercent : DEFAULT_THRESHOLDS.capPercentThreshold,
+    // Shared with lib/payout-cap.ts so both owners of the `payout-cap` alert
+    // identity agree on when it is due.
+    capPercentThreshold: parseCapPercentThreshold(env),
     refillOverdueMinutes: positiveInteger(
       env.HEALTH_REFILL_OVERDUE_MINUTES,
       DEFAULT_THRESHOLDS.refillOverdueMinutes,
@@ -176,6 +190,13 @@ export function parseHealthMonitorThresholds(
   };
 }
 
+/**
+ * Derive the alerts a snapshot warrants. Pure: no I/O and no delivery.
+ *
+ * Null metrics mean "unknown", never "healthy" — an unknown value raises the
+ * matching monitoring-source alert instead of being compared against a
+ * threshold, so a broken source pages rather than reporting a false zero.
+ */
 export function evaluateHealthAlerts(
   input: HealthMonitorInput,
   thresholds: HealthMonitorThresholds = parseHealthMonitorThresholds(),
@@ -212,23 +233,13 @@ export function evaluateHealthAlerts(
     });
   }
 
-  if (
-    input.dailyCapUnits !== null &&
-    input.dailySpentUnits !== null &&
-    input.dailyCapUnits > 0n
-  ) {
-    const capPercent = Number((input.dailySpentUnits * 10_000n) / input.dailyCapUnits) / 100;
-    if (capPercent >= thresholds.capPercentThreshold) {
-      alerts.push({
-        key: "payout-cap",
-        severity: capPercent >= 100 ? "PAGE" : "WARN",
-        title: "Daily payout cap is approaching",
-        lines: [
-          `${capPercent}% consumed`,
-          `${input.dailySpentUnits} of ${input.dailyCapUnits} units spent`,
-        ],
-      });
-    }
+  if (input.dailyCapUnits !== null && input.dailySpentUnits !== null) {
+    const capAlert = buildPayoutCapAlert(
+      input.dailySpentUnits,
+      input.dailyCapUnits,
+      thresholds.capPercentThreshold,
+    );
+    if (capAlert) alerts.push(capAlert);
   }
 
   if (
@@ -301,6 +312,7 @@ export function evaluateHealthAlerts(
   return alerts;
 }
 
+/** Hot and cold balances from a refill plan, kept in exact units. */
 function reserveBalanceUnits(plan: ReserveRefillPlan): {
   hotBalanceUnits: bigint;
   coldBalanceUnits: bigint;
@@ -311,6 +323,10 @@ function reserveBalanceUnits(plan: ReserveRefillPlan): {
   };
 }
 
+/**
+ * Load cold-reserve state, distinguishing "not configured" (a WARN) from
+ * "could not be loaded" (a PAGE). Never throws.
+ */
 async function loadReserveStatus(): Promise<{
   plan: ReserveRefillPlan | null;
   reserveStatus: ReserveStatus;
@@ -338,6 +354,11 @@ async function loadReserveStatus(): Promise<{
   }
 }
 
+/**
+ * Load rolling payout activity, daily spend, and permanent failures. On any
+ * query failure every metric becomes null with an `error` status, so the caller
+ * reports the source as unavailable rather than as zero activity.
+ */
 async function loadPayoutMetrics(
   payoutSince: Date,
   failureSince: Date,
@@ -372,6 +393,12 @@ async function loadPayoutMetrics(
   }
 }
 
+
+/**
+ * Track when a refill first became due, so the overdue window measures the age
+ * of the condition rather than the age of this check. Clears the marker once the
+ * reserve is healthy again. Never throws; a Redis failure reports `error`.
+ */
 async function updateRefillDueSince(
   status: HealthMonitorInput["reserveStatus"],
   nowMs: number,
@@ -406,6 +433,11 @@ async function updateRefillDueSince(
   }
 }
 
+/**
+ * Assemble one complete rail-health snapshot: wallet, payout, reserve, and
+ * refill-timer state, with the alerts they warrant. Each source is loaded
+ * independently so one failure degrades only its own metrics.
+ */
 export async function getHealthMonitorSnapshot({
   nowMs = Date.now(),
   thresholds = parseHealthMonitorThresholds(),
@@ -442,7 +474,7 @@ export async function getHealthMonitorSnapshot({
   const dailyCapPercent =
     dailyCapUnits !== null && payouts.dailySpentUnits !== null
       ? dailyCapUnits > 0n
-        ? Number((payouts.dailySpentUnits * 10_000n) / dailyCapUnits) / 100
+        ? capPercentConsumed(payouts.dailySpentUnits, dailyCapUnits)
         : 0
       : null;
 
@@ -478,6 +510,11 @@ export async function getHealthMonitorSnapshot({
   };
 }
 
+/**
+ * Take a snapshot and deliver its alerts, returning both plus each alert's
+ * delivery outcome. If the snapshot itself cannot be assembled a dedicated PAGE
+ * is raised and the error rethrown, so a silent monitor failure is impossible.
+ */
 export async function runHealthMonitor(
   options: Parameters<typeof getHealthMonitorSnapshot>[0] = {},
 ): Promise<HealthMonitorSnapshot & {

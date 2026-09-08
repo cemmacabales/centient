@@ -31,6 +31,7 @@ import {
   getRolling24hPayoutSum,
   checkPayoutCap,
   maybeSendCapAlert,
+  buildPayoutCapAlert,
 } from "../payout-cap";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -176,6 +177,31 @@ describe("checkPayoutCap", () => {
     expect(result.current).toBe(0n);
     expect(result.cap).toBe(0n);
     expect(result.remaining).toBe(0n);
+  });
+});
+
+describe("buildPayoutCapAlert", () => {
+  it("pages with an exhausted title once the cap is fully consumed", () => {
+    const alert = buildPayoutCapAlert(1000n, 1000n, 80);
+
+    expect(alert).toMatchObject({
+      key: "payout-cap",
+      severity: "PAGE",
+      title: "Daily payout cap is exhausted",
+    });
+    expect(alert!.lines).toEqual(["100% consumed", "1000 of 1000 units spent", "0 units remain"]);
+  });
+
+  it("warns that the cap is approaching below 100 percent", () => {
+    expect(buildPayoutCapAlert(800n, 1000n, 80)).toMatchObject({
+      severity: "WARN",
+      title: "Daily payout cap is approaching",
+    });
+  });
+
+  it("returns nothing below the threshold or without a cap", () => {
+    expect(buildPayoutCapAlert(799n, 1000n, 80)).toBeNull();
+    expect(buildPayoutCapAlert(800n, 0n, 80)).toBeNull();
   });
 });
 
