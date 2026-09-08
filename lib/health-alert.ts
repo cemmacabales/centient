@@ -19,6 +19,7 @@ end
 return 0`;
 
 const pageFallbackExpiries = new Map<string, number>();
+const pageFallbackOwners = new Map<string, string>();
 
 export type HealthAlertSeverity = "WARN" | "PAGE";
 
@@ -83,20 +84,40 @@ async function deliverDiscordAlert(
 
 async function deliverPageWithoutRedis(
   alertKey: string,
+  token: string,
   webhookUrl: string,
   alert: HealthAlert,
   cooldownMs: number,
   nowMs: number,
 ): Promise<HealthAlertDelivery> {
+  pruneExpiredPageFallbacks(nowMs);
+
+  if (pageFallbackExpiries.has(alertKey) || pageFallbackOwners.has(alertKey)) {
+    return "suppressed-degraded";
+  }
+  pageFallbackOwners.set(alertKey, token);
+
+  if (!(await deliverDiscordAlert(webhookUrl, alert, nowMs))) {
+    if (pageFallbackOwners.get(alertKey) === token) pageFallbackOwners.delete(alertKey);
+    return "failed";
+  }
+
+  if (pageFallbackOwners.get(alertKey) === token) {
+    pageFallbackOwners.delete(alertKey);
+    recordPageFallbackCooldown(alertKey, cooldownMs, nowMs);
+  }
+  return "sent-degraded";
+}
+
+function pruneExpiredPageFallbacks(nowMs: number): void {
   for (const [key, expiresAt] of pageFallbackExpiries) {
     if (expiresAt <= nowMs) pageFallbackExpiries.delete(key);
   }
+}
 
-  if (pageFallbackExpiries.has(alertKey)) return "suppressed-degraded";
-  if (!(await deliverDiscordAlert(webhookUrl, alert, nowMs))) return "failed";
-
+function recordPageFallbackCooldown(alertKey: string, cooldownMs: number, nowMs: number): void {
+  pruneExpiredPageFallbacks(nowMs);
   pageFallbackExpiries.set(alertKey, nowMs + cooldownMs);
-  return "sent-degraded";
 }
 
 export async function sendDedupedDiscordAlert(
@@ -117,7 +138,7 @@ export async function sendDedupedDiscordAlert(
   } catch (error) {
     console.error("[health-alert] Redis delivery lease unavailable", error);
     if (alert.severity === "WARN") return "failed";
-    return deliverPageWithoutRedis(alert.key, webhookUrl, alert, cooldownMs, nowMs);
+    return deliverPageWithoutRedis(alert.key, token, webhookUrl, alert, cooldownMs, nowMs);
   }
 
   if (await deliverDiscordAlert(webhookUrl, alert, nowMs)) {
@@ -129,9 +150,16 @@ export async function sendDedupedDiscordAlert(
         token,
         String(cooldownMs),
       );
-      return promoted === 1 ? "sent" : "sent-degraded";
+      if (promoted === 1) return "sent";
+      if (alert.severity === "PAGE") {
+        recordPageFallbackCooldown(alert.key, cooldownMs, nowMs);
+      }
+      return "sent-degraded";
     } catch (error) {
       console.error("[health-alert] Failed to promote delivery lease", error);
+      if (alert.severity === "PAGE") {
+        recordPageFallbackCooldown(alert.key, cooldownMs, nowMs);
+      }
       return "sent-degraded";
     }
   }

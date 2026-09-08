@@ -197,6 +197,64 @@ describe("sendDedupedDiscordAlert", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("suppresses an overlapping PAGE fallback while its webhook is in flight", async () => {
+    const key = `overlapping-page-redis-fallback-${randomUUID()}`;
+    mockSet.mockRejectedValue(new Error("Redis unavailable"));
+    let markFetchStarted!: () => void;
+    let resolveFetch!: (response: { ok: boolean; status: number }) => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    const fetchResponse = new Promise<{ ok: boolean; status: number }>((resolve) => {
+      resolveFetch = resolve;
+    });
+    const fetchMock = vi.fn(() => {
+      markFetchStarted();
+      return fetchResponse;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const alert = {
+      key,
+      severity: "PAGE" as const,
+      title: "Overlapping page",
+      lines: [],
+    };
+
+    const firstDelivery = sendDedupedDiscordAlert(alert, { cooldownMs: 900_000, nowMs: 100 });
+    await fetchStarted;
+    const secondDelivery = sendDedupedDiscordAlert(alert, { cooldownMs: 900_000, nowMs: 101 });
+    resolveFetch({ ok: true, status: 204 });
+
+    await expect(Promise.all([firstDelivery, secondDelivery])).resolves.toEqual([
+      "sent-degraded",
+      "suppressed-degraded",
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("seeds the PAGE fallback cooldown when Redis lease promotion fails", async () => {
+    const key = `promotion-failed-page-fallback-${randomUUID()}`;
+    mockSet.mockResolvedValueOnce("OK").mockRejectedValueOnce(new Error("Redis unavailable"));
+    mockEval.mockRejectedValueOnce(new Error("Redis unavailable"));
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const alert = {
+      key,
+      severity: "PAGE" as const,
+      title: "Promotion failure",
+      lines: [],
+    };
+
+    const first = await sendDedupedDiscordAlert(alert, { cooldownMs: 900_000, nowMs: 100 });
+    const second = await sendDedupedDiscordAlert(alert, { cooldownMs: 900_000, nowMs: 101 });
+
+    expect(first).toBe("sent-degraded");
+    expect(second).toBe("suppressed-degraded");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("does not suppress a PAGE retry after degraded webhook delivery fails", async () => {
     const key = `failed-page-redis-fallback-${randomUUID()}`;
     mockSet.mockRejectedValue(new Error("Redis unavailable"));
