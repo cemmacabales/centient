@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { readLedgerPayout } from "@/lib/stellar/cosigner-ledger";
+import { readBroadcastVolumeSince, readLedgerPayout } from "@/lib/stellar/cosigner-ledger";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 import { createTask, createUser } from "@/tests/helpers/factories";
 
@@ -84,5 +84,52 @@ describe("readLedgerPayout", () => {
     });
 
     expect(row).toBeNull();
+  });
+});
+
+describe("readBroadcastVolumeSince", () => {
+  it("sums every job that reached the network, whatever became of it afterwards", async () => {
+    // A hash is written only once Horizon accepted the payment, so the funds are
+    // gone even for a job later quarantined as failed. The co-signer's cap has to
+    // count that spend or it authorises more than the wallet actually has left.
+    const since = new Date("2026-09-08T00:00:00.000Z");
+    await prisma.payoutJob.createMany({
+      data: [
+        {
+          type: "WITHDRAWAL",
+          status: "done",
+          amountUnits: 100_000_000n,
+          txHash: "settled",
+          broadcastAt: new Date("2026-09-08T01:00:00.000Z"),
+        },
+        {
+          type: "WITHDRAWAL",
+          status: "failed",
+          amountUnits: 50_000_000n,
+          txHash: "quarantined",
+          broadcastAt: new Date("2026-09-08T02:00:00.000Z"),
+        },
+      ],
+    });
+
+    expect(await readBroadcastVolumeSince(prisma, since)).toBe(150_000_000n);
+  });
+
+  it("ignores jobs that never broadcast and jobs from before the window", async () => {
+    const since = new Date("2026-09-08T00:00:00.000Z");
+    await prisma.payoutJob.createMany({
+      data: [
+        { type: "WITHDRAWAL", status: "queued", amountUnits: 700_000_000n },
+        {
+          type: "WITHDRAWAL",
+          status: "done",
+          amountUnits: 900_000_000n,
+          txHash: "yesterday",
+          broadcastAt: new Date("2026-09-07T23:00:00.000Z"),
+        },
+      ],
+    });
+
+    expect(await readBroadcastVolumeSince(prisma, since)).toBe(0n);
   });
 });
