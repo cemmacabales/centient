@@ -407,6 +407,26 @@ async function processSubmissionPayout(
     // re-broadcasts any `pending` submission without a hash, so writing the hash
     // in the bookkeeping transaction below would let a bookkeeping failure roll
     // it back and re-pay a settled payment (#73).
+    //
+    // If that write itself never lands, the quarantine has to cover both rows
+    // for the same reason: failing only the job would still leave the
+    // submission `pending` with no hash for the retry cron to find.
+    const quarantine = () =>
+      prisma.$transaction([
+        prisma.submission.update({
+          where: { id: submissionId },
+          data: { payoutStatus: "needs_reconciliation", payoutTxHash: txHash },
+        }),
+        prisma.payoutJob.update({
+          where: { id: jobId },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            lastError: RECONCILIATION_ERROR,
+            retryCount: MAX_RETRIES,
+          },
+        }),
+      ]);
     const persisted = await persistAcceptedPayment(
       accepted,
       () =>
@@ -420,7 +440,7 @@ async function processSubmissionPayout(
             data: { payoutStatus: "sent", payoutTxHash: txHash },
           }),
         ]),
-      quarantinePayoutJob(jobId),
+      quarantine,
     );
     if (!persisted) return;
 

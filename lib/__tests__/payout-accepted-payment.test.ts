@@ -146,6 +146,24 @@ describe("accepted payment persistence boundary", () => {
     txn.begin = txn.rollback = undefined;
   });
 
+  it("submission: persistence failure quarantines the submission, not just the job", async () => {
+    // If the tuple write itself fails, quarantining only the PayoutJob leaves
+    // the submission `pending` with no hash — the row the retry cron re-sends.
+    db.payoutJob.update.mockImplementation(async ({ data }: any) => {
+      if (data.txHash) throw new Error(secret);
+      return {};
+    });
+
+    await processJob("job", "sub", "user", 123n, "SUBMISSION_PAYOUT");
+
+    expect(effects.pay).toHaveBeenCalledTimes(1);
+    const submissionWrites = db.submission.update.mock.calls.map(([args]) => args.data);
+    expect(submissionWrites).toContainEqual(
+      expect.objectContaining({ payoutStatus: "needs_reconciliation", payoutTxHash: hash }),
+    );
+    expect(effects.page).toHaveBeenCalledWith(expect.objectContaining({ severity: "PAGE" }));
+  });
+
   it("legacy: totals failure stays inside the accepted-payment boundary", async () => {
     db.user.findUnique.mockRejectedValue(new Error(secret));
     await expect(reprocessPayoutWithNonceSafety("sub")).resolves.toBeUndefined();
