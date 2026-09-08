@@ -2,6 +2,7 @@ import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "./prisma";
 import { payReward, PayoutCapError } from "./payout";
+import { maybeSendCapAlert } from "./payout-cap";
 import { StellarPaymentError } from "./stellar/client";
 import { creditBalance, totalDebitUnits } from "./campaign-balance";
 import { checkAndAlert } from "./stellar/balance";
@@ -226,6 +227,12 @@ async function processWithdrawalJob(
     );
     if (!persisted) return;
 
+    // Only now can the alert read a rolling total that includes this payout: the
+    // tuple it sums is the write that just landed. Fire-and-forget so a slow
+    // Discord or Redis never delays a settled payout, and unawaited failures are
+    // swallowed for the same reason — the payment already stands.
+    maybeSendCapAlert().catch(() => {});
+
     console.log(`[payout-worker] withdrawal job ${jobId} broadcast: paid ${amountUnits} to ${destination} (${txHash})`);
   } catch (err) {
     if (accepted) {
@@ -438,6 +445,10 @@ async function processSubmissionPayout(
       quarantine,
     );
     if (!persisted) return;
+
+    // See the note in `processWithdrawalJob`: raised here rather than inside
+    // `payReward` so the ledger the alert sums already carries this payout.
+    maybeSendCapAlert().catch(() => {});
 
     await prisma.$transaction(async (tx) => {
       // Identity is the FK `userId` (ST-5d), not the wallet — the wallet is just the
