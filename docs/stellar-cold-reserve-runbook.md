@@ -453,9 +453,22 @@ stellar.expert account and transaction links:
 ```
 
 The three cold seeds for this testnet proof were generated on the provisioning
-machine and live only in a mode-600 file outside the repository; each `sign`
-step received exactly one of them through `node --env-file`, and the `submit`
-step received none. That is the same custody gap the payout account has (see
+machine and live only in a mode-600 file outside the repository. They were
+never placed in `.env.local` or exported into the shell. Each `sign` step was
+run with a one-line env file holding exactly one `STELLAR_COLD_SIGNER_SECRET`,
+and `submit` was run without any such file, so no seed variable existed in its
+process.
+
+Note what that does and does not guarantee. `node --env-file` *adds* variables;
+it does not remove ones already in the ambient environment, and every command
+here also loads `.env.local` through `dotenv/config`. Seed isolation therefore
+comes from the operator's environment, not from the flag: run `submit` from a
+shell where no `STELLAR_COLD_*_SECRET` variable is set (for example
+`env -u STELLAR_COLD_SIGNER_SECRET npm run stellar:reserve:refill -- submit`),
+and never put a cold seed in `.env.local`. The exact `sign` and `submit`
+commands are in "Collect two independent signatures" and "Submit once" above.
+
+That is the same custody gap the payout account has (see
 `docs/stellar-multisig-runbook.md`, "Key custody — current state"), and it is
 acceptable for a disposable testnet proof only.
 
