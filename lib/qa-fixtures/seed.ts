@@ -136,242 +136,267 @@ export async function seedQaFixtures(options: SeedOptions): Promise<SeedResult> 
     );
   }
 
-  const fixtures: Record<string, string> = {};
-  let seededCount = 0;
+  // One transaction for the whole fixture set, including the run record.
+  //
+  // The run row used to be written last, which meant a failure partway through
+  // left committed campaign, task and submission rows with no run record — and
+  // `resetQaFixtures` resolves a run's campaign through `run.fixtures["campaign"]`,
+  // so those rows were undiscoverable by the one command whose job is to clean
+  // them up. All-or-nothing removes the orphan case entirely rather than making
+  // it merely recoverable.
+  //
+  // The default 5s interactive-transaction budget is not enough for ~40 sequential
+  // writes on a loaded machine, so both bounds are raised deliberately.
+  const result = await prisma.$transaction(
+    async (tx) => {
+      const fixtures: Record<string, string> = {};
+      let seededCount = 0;
 
-  // Recipients are upserted on their pinned address rather than created: the
-  // manifest addresses are stable across runs, and `User.walletAddress` is
-  // unique, so a second run would collide. Stats are rewritten each run so a
-  // previous run's spending cannot change what this one starts from.
-  const recipientIdByShape = {} as Record<RecipientShape, string>;
-  for (const shape of RECIPIENT_SHAPES) {
-    const address = manifest.recipients[shape].address;
-    const user = await prisma.user.upsert({
-      where: { walletAddress: address },
-      update: {
-        email: recipientEmail(shape, address),
-        isVerified: true,
-        onboardingCompleted: true,
-        pendingBalanceUnits: 0n,
-        totalEarnedUnits: 0n,
-      },
-      create: {
-        walletAddress: address,
-        email: recipientEmail(shape, address),
-        isVerified: true,
-        onboardingCompleted: true,
-        submissionCount: 100,
-        goldCorrect: 40,
-        goldAttempted: 45,
-      },
-    });
-    recipientIdByShape[shape] = user.id;
-    fixtures[`recipient:${shape}`] = address;
-  }
+      // Recipients are upserted on their pinned address rather than created: the
+      // manifest addresses are stable across runs, and `User.walletAddress` is
+      // unique, so a second run would collide. Stats are rewritten each run so a
+      // previous run's spending cannot change what this one starts from.
+      const recipientIdByShape = {} as Record<RecipientShape, string>;
+      for (const shape of RECIPIENT_SHAPES) {
+        const address = manifest.recipients[shape].address;
+        const user = await tx.user.upsert({
+          where: { walletAddress: address },
+          update: {
+            email: recipientEmail(shape, address),
+            isVerified: true,
+            onboardingCompleted: true,
+            pendingBalanceUnits: 0n,
+            totalEarnedUnits: 0n,
+          },
+          create: {
+            walletAddress: address,
+            email: recipientEmail(shape, address),
+            isVerified: true,
+            onboardingCompleted: true,
+            submissionCount: 100,
+            goldCorrect: 40,
+            goldAttempted: 45,
+          },
+        });
+        recipientIdByShape[shape] = user.id;
+        fixtures[`recipient:${shape}`] = address;
+      }
 
-  const campaign = await prisma.campaign.create({
-    data: {
-      adminUserId: admin.id,
-      name: `QA D1 fixtures ${runId}`,
-      defaultResponseTarget: 1,
-      rewardUnits: FIXTURE_REWARD_UNITS,
-    },
-  });
-  fixtures["campaign"] = campaign.id;
-
-  await prisma.campaignBalance.create({
-    data: {
-      campaignId: campaign.id,
-      balanceUnits: requiredCampaignBalanceUnits() * 4n,
-    },
-  });
-
-  /** One task + one submission, wired to the accounting the state implies. */
-  async function createFixtureSubmission(args: {
-    slug: string;
-    shape: RecipientShape;
-    payoutStatus: string;
-    txHash: string | null;
-    retryCount: number;
-    payoutError: string | null;
-    amountUnits: bigint;
-    ledger: "reserved" | "refunded" | "none";
-    prompt: string;
-  }): Promise<string> {
-    const task = await prisma.task.create({
-      data: {
-        campaignId: campaign.id,
-        prompt: args.prompt,
-        responseA: "Fixture response A.",
-        responseB: "Fixture response B.",
-        category: "qa-fixture",
-        rewardUnits: args.amountUnits,
-        responseTarget: 1,
-      },
-    });
-
-    const submission = await prisma.submission.create({
-      data: {
-        userId: recipientIdByShape[args.shape],
-        taskId: task.id,
-        walletAddress: manifest.recipients[args.shape].address,
-        choice: "A",
-        reason: `QA D1 fixture ${args.slug} — see docs/qa-fixtures-runbook.md`,
-        payoutAmountUnits: args.amountUnits,
-        payoutStatus: args.payoutStatus,
-        payoutTxHash: args.txHash,
-        retryCount: args.retryCount,
-        payoutError: args.payoutError,
-        lastRetriedAt: args.retryCount > 0 || args.txHash ? new Date(now) : null,
-      },
-    });
-
-    if (args.ledger !== "none") {
-      await prisma.balanceLedger.create({
+      const campaign = await tx.campaign.create({
         data: {
-          campaignId: campaign.id,
-          type: "DEBIT_REWARD",
-          amountUnits: args.amountUnits,
-          submissionId: submission.id,
-          note: `QA fixture ${args.slug}`,
+          adminUserId: admin.id,
+          name: `QA D1 fixtures ${runId}`,
+          defaultResponseTarget: 1,
+          rewardUnits: FIXTURE_REWARD_UNITS,
         },
       });
-    }
-    if (args.ledger === "refunded") {
-      // A permanent failure gives the reward back, because no funds moved. The
-      // reconciliation fixture pointedly does NOT get this row: there, the funds
-      // did move and refunding would double-spend the campaign.
-      await prisma.balanceLedger.create({
+      fixtures["campaign"] = campaign.id;
+
+      await tx.campaignBalance.create({
         data: {
           campaignId: campaign.id,
-          type: "REFUND",
-          amountUnits: args.amountUnits,
-          submissionId: submission.id,
-          note: `QA fixture ${args.slug} — permanent rail error`,
+          balanceUnits: requiredCampaignBalanceUnits() * 4n,
         },
       });
-    }
 
-    seededCount += 1;
-    return submission.id;
-  }
+      /** One task + one submission, wired to the accounting the state implies. */
+      async function createFixtureSubmission(args: {
+        slug: string;
+        shape: RecipientShape;
+        payoutStatus: string;
+        txHash: string | null;
+        retryCount: number;
+        payoutError: string | null;
+        amountUnits: bigint;
+        ledger: "reserved" | "refunded" | "none";
+        prompt: string;
+      }): Promise<string> {
+        const task = await tx.task.create({
+          data: {
+            campaignId: campaign.id,
+            prompt: args.prompt,
+            responseA: "Fixture response A.",
+            responseB: "Fixture response B.",
+            category: "qa-fixture",
+            rewardUnits: args.amountUnits,
+            responseTarget: 1,
+          },
+        });
 
-  // ── The six payout states ────────────────────────────────────────────────
-  let hashIndex = 0;
-  for (const fixture of PAYOUT_STATE_FIXTURES) {
-    const txHash = fixture.broadcast ? fixtureTxHash(runId, hashIndex++) : null;
+        const submission = await tx.submission.create({
+          data: {
+            userId: recipientIdByShape[args.shape],
+            taskId: task.id,
+            walletAddress: manifest.recipients[args.shape].address,
+            choice: "A",
+            reason: `QA D1 fixture ${args.slug} — see docs/qa-fixtures-runbook.md`,
+            payoutAmountUnits: args.amountUnits,
+            payoutStatus: args.payoutStatus,
+            payoutTxHash: args.txHash,
+            retryCount: args.retryCount,
+            payoutError: args.payoutError,
+            lastRetriedAt: args.retryCount > 0 || args.txHash ? new Date(now) : null,
+          },
+        });
 
-    const submissionId = await createFixtureSubmission({
-      slug: fixture.slug,
-      shape: fixture.shape,
-      payoutStatus: fixture.payoutStatus,
-      txHash,
-      retryCount: fixture.retryCount,
-      payoutError: fixture.payoutError,
-      amountUnits: FIXTURE_REWARD_UNITS,
-      ledger: fixture.ledger,
-      prompt: `[${fixture.slug}] ${fixture.why}`,
-    });
-    fixtures[fixture.slug] = submissionId;
+        if (args.ledger !== "none") {
+          await tx.balanceLedger.create({
+            data: {
+              campaignId: campaign.id,
+              type: "DEBIT_REWARD",
+              amountUnits: args.amountUnits,
+              submissionId: submission.id,
+              note: `QA fixture ${args.slug}`,
+            },
+          });
+        }
+        if (args.ledger === "refunded") {
+          // A permanent failure gives the reward back, because no funds moved. The
+          // reconciliation fixture pointedly does NOT get this row: there, the funds
+          // did move and refunding would double-spend the campaign.
+          await tx.balanceLedger.create({
+            data: {
+              campaignId: campaign.id,
+              type: "REFUND",
+              amountUnits: args.amountUnits,
+              submissionId: submission.id,
+              note: `QA fixture ${args.slug} — permanent rail error`,
+            },
+          });
+        }
 
-    if (txHash) {
-      await prisma.payoutJob.create({
-        data: {
-          type: "SUBMISSION_PAYOUT",
-          submissionId,
-          amountUnits: FIXTURE_REWARD_UNITS,
-          destinationAddress: manifest.recipients[fixture.shape].address,
+        seededCount += 1;
+        return submission.id;
+      }
+
+      // ── The six payout states ────────────────────────────────────────────────
+      let hashIndex = 0;
+      for (const fixture of PAYOUT_STATE_FIXTURES) {
+        const txHash = fixture.broadcast ? fixtureTxHash(runId, hashIndex++) : null;
+
+        const submissionId = await createFixtureSubmission({
+          slug: fixture.slug,
+          shape: fixture.shape,
+          payoutStatus: fixture.payoutStatus,
           txHash,
-          // Backdated out of the cap window on purpose — see BROADCAST_BACKDATE_MS.
-          broadcastAt: new Date(now - BROADCAST_BACKDATE_MS),
-          status: fixture.payoutStatus === "needs_reconciliation" ? "failed" : "done",
-          completedAt: new Date(now - BROADCAST_BACKDATE_MS),
-          lastError: fixture.payoutError,
-        },
-      });
-    }
-  }
+          retryCount: fixture.retryCount,
+          payoutError: fixture.payoutError,
+          amountUnits: FIXTURE_REWARD_UNITS,
+          ledger: fixture.ledger,
+          prompt: `[${fixture.slug}] ${fixture.why}`,
+        });
+        fixtures[fixture.slug] = submissionId;
 
-  // ── Twelve payable references for the concurrency cases ──────────────────
-  for (let i = 1; i <= PAYABLE_REFERENCE_COUNT; i++) {
-    const slug = `qa-payable-${String(i).padStart(2, "0")}`;
-    fixtures[slug] = await createFixtureSubmission({
-      slug,
-      shape: "withTrustline",
-      payoutStatus: "pending",
-      txHash: null,
-      retryCount: 0,
-      payoutError: null,
-      amountUnits: PAYABLE_REWARD_UNITS,
-      ledger: "reserved",
-      prompt: `[${slug}] Payable reference ${i} of ${PAYABLE_REFERENCE_COUNT} for D1-TC-009 and D1-TC-019.`,
-    });
-  }
+        if (txHash) {
+          await tx.payoutJob.create({
+            data: {
+              type: "SUBMISSION_PAYOUT",
+              submissionId,
+              amountUnits: FIXTURE_REWARD_UNITS,
+              destinationAddress: manifest.recipients[fixture.shape].address,
+              txHash,
+              // Backdated out of the cap window on purpose — see BROADCAST_BACKDATE_MS.
+              broadcastAt: new Date(now - BROADCAST_BACKDATE_MS),
+              status: fixture.payoutStatus === "needs_reconciliation" ? "failed" : "done",
+              completedAt: new Date(now - BROADCAST_BACKDATE_MS),
+              lastError: fixture.payoutError,
+            },
+          });
+        }
+      }
 
-  // ── Cap boundary ─────────────────────────────────────────────────────────
-  const capPlan = planCapFixtures(capUnits, headroomUnits);
-  let capSkippedReason: string | null = null;
+      // ── Twelve payable references for the concurrency cases ──────────────────
+      for (let i = 1; i <= PAYABLE_REFERENCE_COUNT; i++) {
+        const slug = `qa-payable-${String(i).padStart(2, "0")}`;
+        fixtures[slug] = await createFixtureSubmission({
+          slug,
+          shape: "withTrustline",
+          payoutStatus: "pending",
+          txHash: null,
+          retryCount: 0,
+          payoutError: null,
+          amountUnits: PAYABLE_REWARD_UNITS,
+          ledger: "reserved",
+          prompt: `[${slug}] Payable reference ${i} of ${PAYABLE_REFERENCE_COUNT} for D1-TC-009 and D1-TC-019.`,
+        });
+      }
 
-  if (!capPlan) {
-    capSkippedReason =
-      capUnits <= 0n
-        ? "DAILY_PAYOUT_CAP_UNITS is 0, which disables the cap entirely — there is no boundary to position against."
-        : `the configured cap (${capUnits} units) is smaller than the fixture headroom (${headroomUnits} units).`;
-  } else {
-    // Consume the cap down to the headroom with one settled withdrawal. The
-    // status is `done` so it cannot collide with the partial unique index that
-    // permits a single in-flight WITHDRAWAL per user.
-    if (capPlan.seededUsageUnits > 0n) {
-      const usageJob = await prisma.payoutJob.create({
+      // ── Cap boundary ─────────────────────────────────────────────────────────
+      const capPlan = planCapFixtures(capUnits, headroomUnits);
+      let capSkippedReason: string | null = null;
+
+      if (!capPlan) {
+        capSkippedReason =
+          capUnits <= 0n
+            ? "DAILY_PAYOUT_CAP_UNITS is 0, which disables the cap entirely — there is no boundary to position against."
+            : `the configured cap (${capUnits} units) is smaller than the fixture headroom (${headroomUnits} units).`;
+      } else {
+        // Consume the cap down to the headroom with one settled withdrawal. The
+        // status is `done` so it cannot collide with the partial unique index that
+        // permits a single in-flight WITHDRAWAL per user.
+        if (capPlan.seededUsageUnits > 0n) {
+          const usageJob = await tx.payoutJob.create({
+            data: {
+              type: "WITHDRAWAL",
+              userId: recipientIdByShape.withTrustline,
+              amountUnits: capPlan.seededUsageUnits,
+              destinationAddress: manifest.recipients.withTrustline.address,
+              txHash: fixtureTxHash(runId, hashIndex++),
+              broadcastAt: new Date(now - CAP_USAGE_BACKDATE_MS),
+              status: "done",
+              completedAt: new Date(now - CAP_USAGE_BACKDATE_MS),
+            },
+          });
+          fixtures["qa-cap-usage"] = usageJob.id;
+          seededCount += 1;
+        }
+
+        for (const preset of capPlan.presets) {
+          fixtures[preset.slug] = await createFixtureSubmission({
+            slug: preset.slug,
+            shape: "withTrustline",
+            payoutStatus: "pending",
+            txHash: null,
+            retryCount: 0,
+            payoutError: null,
+            amountUnits: preset.amountUnits,
+            ledger: "reserved",
+            prompt: `[${preset.slug}] ${preset.expectation} (D1-TC-017).`,
+          });
+        }
+      }
+
+      await tx.qaFixtureRun.create({
         data: {
-          type: "WITHDRAWAL",
-          userId: recipientIdByShape.withTrustline,
-          amountUnits: capPlan.seededUsageUnits,
-          destinationAddress: manifest.recipients.withTrustline.address,
-          txHash: fixtureTxHash(runId, hashIndex++),
-          broadcastAt: new Date(now - CAP_USAGE_BACKDATE_MS),
-          status: "done",
-          completedAt: new Date(now - CAP_USAGE_BACKDATE_MS),
+          runId,
+          gitSha,
+          network,
+          fixtures,
+          seededCount,
+          note: capSkippedReason ? `cap fixtures skipped: ${capSkippedReason}` : null,
         },
       });
-      fixtures["qa-cap-usage"] = usageJob.id;
-      seededCount += 1;
-    }
 
-    for (const preset of capPlan.presets) {
-      fixtures[preset.slug] = await createFixtureSubmission({
-        slug: preset.slug,
-        shape: "withTrustline",
-        payoutStatus: "pending",
-        txHash: null,
-        retryCount: 0,
-        payoutError: null,
-        amountUnits: preset.amountUnits,
-        ledger: "reserved",
-        prompt: `[${preset.slug}] ${preset.expectation} (D1-TC-017).`,
-      });
-    }
-  }
-
-  await prisma.qaFixtureRun.create({
-    data: {
-      runId,
-      gitSha,
-      network,
-      fixtures,
-      seededCount,
-      note: capSkippedReason ? `cap fixtures skipped: ${capSkippedReason}` : null,
+      return {
+        campaignId: campaign.id,
+        fixtures,
+        seededCount,
+        capPlan,
+        capSkippedReason,
+      };
     },
-  });
+    { timeout: 120_000, maxWait: 15_000 },
+  );
 
   return {
     runId,
     gitSha,
     network,
-    campaignId: campaign.id,
-    fixtures,
-    seededCount,
-    capPlan,
-    capSkippedReason,
+    campaignId: result.campaignId,
+    fixtures: result.fixtures,
+    seededCount: result.seededCount,
+    capPlan: result.capPlan,
+    capSkippedReason: result.capSkippedReason,
   };
 }
+
