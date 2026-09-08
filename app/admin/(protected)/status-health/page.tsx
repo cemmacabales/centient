@@ -144,7 +144,7 @@ export default async function AdminStatusHealthPage() {
             subline={
               walletHealth.usdcBalance === "—"
                 ? "Horizon lookup failed or wallet not configured"
-                : `Warning: <${walletHealth.thresholds.warnUsdc} | Page: <${walletHealth.thresholds.pageUsdc}`
+                : `Warning: ≤${walletHealth.thresholds.warnUsdc} | Page: ≤${walletHealth.thresholds.pageUsdc}`
             }
           />
           <StatCard
@@ -157,7 +157,7 @@ export default async function AdminStatusHealthPage() {
             subline={
               walletHealth.availableXlmBalance === "—"
                 ? "Horizon lookup failed"
-                : `${walletHealth.xlmBalance} XLM total; ${walletHealth.minimumBalanceXlm} minimum; ${walletHealth.nativeSellingLiabilitiesXlm} liabilities · Warning: <${walletHealth.thresholds.warnXlm} | Page: <${walletHealth.thresholds.pageXlm}`
+                : `${walletHealth.xlmBalance} XLM total; ${walletHealth.minimumBalanceXlm} minimum; ${walletHealth.nativeSellingLiabilitiesXlm} liabilities · Warning: ≤${walletHealth.thresholds.warnXlm} | Page: ≤${walletHealth.thresholds.pageXlm}`
             }
           />
         </div>

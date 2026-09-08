@@ -80,7 +80,6 @@ describe("getPayoutActivitySince", () => {
       _count: { _all: true },
       _sum: { amountUnits: true },
       where: {
-        status: { in: ["processing", "done"] },
         broadcastAt: { gte: since },
         txHash: { not: null },
         amountUnits: { not: null },

@@ -10,15 +10,15 @@ process.env.STELLAR_PLATFORM_SECRET = platformKp.secret();
 process.env.STELLAR_USDC_ISSUER = Keypair.random().publicKey();
 
 // Mock only `server()`; keep the real config helpers (passphrase, asset,
-// conversions) so payUsdc builds a genuine, signed transaction against a fake
-// Horizon.
+// conversions) so the sponsored-trustline path builds a genuine, signed
+// transaction against a fake Horizon.
 vi.mock("../config", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../config")>();
   return { ...actual, server: vi.fn() };
 });
 
 import { server } from "../config";
-import { payUsdc, getTxStatus, StellarPaymentError, buildSponsoredTrustlineTx, submitSponsoredTrustline } from "../client";
+import { getTxStatus, StellarPaymentError, buildSponsoredTrustlineTx, submitSponsoredTrustline } from "../client";
 
 const mockedServer = vi.mocked(server);
 
@@ -58,96 +58,10 @@ beforeEach(() => {
   mockedServer.mockReset();
 });
 
-describe("payUsdc", () => {
-  it("builds, signs, submits and returns the tx hash on success", async () => {
-    const submit = vi.fn(async () => ({ hash: "HASH_OK" }));
-    mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
-
-    const res = await payUsdc(destPub, 15_000_000n);
-
-    expect(res).toEqual({ hash: "HASH_OK" });
-    expect(submit).toHaveBeenCalledTimes(1);
-  });
-
-  it("retries exactly once on tx_bad_seq (reload + resubmit) then succeeds", async () => {
-    const submit = vi
-      .fn()
-      .mockRejectedValueOnce(badSeqError())
-      .mockResolvedValueOnce({ hash: "HASH_RETRY" });
-    const srv = makeServer({ submitTransaction: submit });
-    mockedServer.mockReturnValue(srv as never);
-
-    const res = await payUsdc(destPub, 1n);
-
-    expect(res.hash).toBe("HASH_RETRY");
-    expect(submit).toHaveBeenCalledTimes(2);
-    expect(srv.loadAccount).toHaveBeenCalledTimes(2); // fresh sequence on retry
-  });
-
-  it("surfaces a second consecutive tx_bad_seq as a retryable StellarPaymentError (no infinite retry, requeue-able)", async () => {
-    const submit = vi.fn().mockRejectedValue(badSeqError());
-    mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
-
-    // After the one in-call reload+resubmit still hits tx_bad_seq, payUsdc gives up
-    // but classifies it so the worker requeues (backoff via the job queue) instead of
-    // treating an opaque raw Horizon error as a generic failure.
-    await expect(payUsdc(destPub, 1n)).rejects.toMatchObject({
-      name: "StellarPaymentError",
-      code: "tx_bad_seq",
-      retryable: true,
-    });
-    expect(submit).toHaveBeenCalledTimes(2); // initial + one in-call retry, then give up
-  });
-
-  it("throws a non-retryable StellarPaymentError on op_no_destination and never retries", async () => {
-    const submit = vi.fn().mockRejectedValue(opNoDestError());
-    mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
-
-    await expect(payUsdc(destPub, 1n)).rejects.toMatchObject({
-      name: "StellarPaymentError",
-      code: "op_no_destination",
-      retryable: false,
-    });
-    expect(submit).toHaveBeenCalledTimes(1);
-  });
-
-  it("throws a non-retryable StellarPaymentError on op_no_trust (no USDC trustline) and never retries", async () => {
-    const submit = vi.fn().mockRejectedValue(opNoTrustError());
-    mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
-
-    await expect(payUsdc(destPub, 1n)).rejects.toMatchObject({
-      name: "StellarPaymentError",
-      code: "op_no_trust",
-      retryable: false,
-    });
-    expect(submit).toHaveBeenCalledTimes(1);
-  });
-
-  it("rejects a non-positive amount without touching the network", async () => {
-    const submit = vi.fn();
-    mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
-
-    await expect(payUsdc(destPub, 0n)).rejects.toBeInstanceOf(StellarPaymentError);
-    await expect(payUsdc(destPub, -5n)).rejects.toBeInstanceOf(StellarPaymentError);
-    expect(submit).not.toHaveBeenCalled();
-  });
-
-  it("serializes concurrent payouts under the mutex (max concurrency 1)", async () => {
-    let active = 0;
-    let maxActive = 0;
-    const submit = vi.fn(async () => {
-      active++;
-      maxActive = Math.max(maxActive, active);
-      await delay(5);
-      active--;
-      return { hash: "H" };
-    });
-    mockedServer.mockReturnValue(makeServer({ submitTransaction: submit }) as never);
-
-    await Promise.all(Array.from({ length: 8 }, () => payUsdc(destPub, 1n)));
-
-    expect(maxActive).toBe(1);
-    expect(submit).toHaveBeenCalledTimes(8);
+describe("single-key submit path (retired by #7)", () => {
+  it("no longer exports payUsdc — every payout goes through the multisig submitter", async () => {
+    const client = await import("../client");
+    expect(client).not.toHaveProperty("payUsdc");
   });
 });
 

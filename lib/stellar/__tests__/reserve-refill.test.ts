@@ -7,7 +7,7 @@ import {
   Operation,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   addReserveRefillSignature,
   assertReserveRefillStillPermitted,
@@ -820,6 +820,32 @@ describe("reserve refill submission", () => {
     expect(events[0]).toContain(`hash: ${hash}`);
     expect(events[1]).toContain(`/tx/${hash}`);
     expect(events[2]).toBe(`submit:${hash}`);
+  });
+
+  it("refuses an envelope whose amount differs from the amount the custodians agreed", async () => {
+    // `prepare` prints the exact amount and the custodians sign it. When the
+    // operator hands that amount to `submit`, an envelope carrying any other
+    // amount must be refused before Horizon is contacted, so the check is a
+    // real second reading rather than the envelope validating itself.
+    const fixture = transactionFixture();
+    addReserveRefillSignature(fixture.transaction, fixture.cold, fixture.policy);
+    addReserveRefillSignature(fixture.transaction, fixture.ops, fixture.policy);
+    const submit = vi.fn(async () => ({ hash: "unused" }));
+
+    await expect(
+      submitReserveRefill({
+        signedXdr: fixture.transaction.toXDR(),
+        policy: fixture.policy,
+        asset: fixture.asset,
+        hotBalanceUnits: 250_000_000n,
+        coldBalanceUnits: 2_000_000_000n,
+        nowSeconds: Math.floor(Date.now() / 1000),
+        expectedAmountUnits: fixture.amountUnits + 1n,
+        log: () => {},
+        submit,
+      }),
+    ).rejects.toThrow(/amount/i);
+    expect(submit).not.toHaveBeenCalled();
   });
 
   it("rejects when Horizon echoes a different transaction hash", async () => {

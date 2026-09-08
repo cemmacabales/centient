@@ -143,6 +143,10 @@ async function main() {
     // as it is now, not as it was at prepare time. The signed amount itself is
     // authoritative: payouts during the signing ceremony move the hot balance,
     // and re-deriving the amount here would reject the custodians' signatures.
+    // The operator passes the agreed amount from the `sign` step so the envelope
+    // is checked against an independent reading, not against itself. Required:
+    // a validly signed envelope with the wrong amount must never reach Horizon.
+    const expectedAmountUnits = parseReserveRefillExpectedAmountUnits();
     const plan = await loadReserveRefillStatus({ asset });
     const horizon = server();
     const result = await submitReserveRefill({
@@ -152,6 +156,7 @@ async function main() {
       hotBalanceUnits: plan.hotBalanceUnits,
       coldBalanceUnits: plan.coldBalanceUnits,
       nowSeconds: Math.floor(Date.now() / 1000),
+      expectedAmountUnits,
       log,
       submit: (transaction) => horizon.submitTransaction(transaction),
     });
