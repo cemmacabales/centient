@@ -1,6 +1,6 @@
 # ADR-0001: Simulate the co-signer's isolated infrastructure on one Railway workspace
 
-- **Status:** Accepted — 2026-09-08
+- **Status:** Accepted — 2026-09-08, **amended the same day** (see *Amendment*)
 - **Scope:** MVP / testnet only. Mainnet is explicitly out of scope; see *Exit criteria*.
 - **Relates to:** [#8](https://github.com/webnxt-2030/Centient/issues/8) (independent policy co-signer), [#9](https://github.com/webnxt-2030/Centient/issues/9) (second daily-cap gate), [#12](https://github.com/webnxt-2030/Centient/issues/12) (payments-lane proof), SOW §3.8.
 
@@ -30,6 +30,13 @@ deployment change rather than a rewrite.
 Deploy the policy co-signer as its **own Railway project inside the existing
 workspace**, and simulate the account boundary with every other boundary Railway
 and Postgres can actually enforce.
+
+> **Amended 2026-09-08 — the deployed topology is a separate *service*, not a
+> separate project.** Provisioning found that the maintainer's account cannot
+> create projects in the workspace where Centient runs. See *Amendment: same
+> project* at the end of this record for what changed, what it costs, and what
+> is unchanged. The reasoning below is retained as written because it is what the
+> exit criteria are still aimed at.
 
 Railway's hierarchy is Workspace → Project → Environment → Service. Two of those
 boundaries are real without a second account:
@@ -149,3 +156,46 @@ isolated infrastructure under a runbook. Safe on key separation, but it makes
 payouts asynchronous and operator-gated, and it does not exercise the automated
 service that #8 actually asks for. It remains the documented contingency if the
 co-signer service cannot be stood up.
+
+## Amendment: same project (2026-09-08)
+
+**What forced it.** `centient-work` lives in the Railway workspace "mh's
+Projects". The maintainer's account cannot create projects in that workspace —
+`railway init` there is refused outright. The decision above assumed a second
+project was available; it is not, for this account.
+
+**What was deployed instead.** A `cosigner` service inside the existing
+`centient-work` project — the option this record explicitly considered and
+rejected under *Alternatives considered*.
+
+**What is unchanged.** Its own container, its own service-scoped variables (so
+the policy signing key still exists in exactly one place and the application
+still refuses to start holding both), its own deploy trigger through watch
+paths, and its own read-only database credential. Every application-layer
+refusal — ledger re-derivation, envelope verification, the independent cap, the
+fail-closed boot — is untouched. An attacker holding the application container
+still cannot forge a payout.
+
+**What it costs.** The separate member list, which is the specific reason this
+record chose a project over a service. Anyone with access to `centient-work` can
+now read both services' variables, so the boundary protects against a
+*compromised application*, not against a *compromised Railway account or
+collaborator*. That is a smaller claim than the one made above, and #12's
+evidence package must state it rather than cite the original wording.
+
+**What it buys back.** Private networking, which is scoped to a project. The
+co-signer reaches Postgres over the internal host and the application reaches
+the co-signer over the private domain, so neither the read-only credential nor
+the signing request leaves Railway's network — both of which the separate-project
+topology would have pushed onto the public internet.
+
+**On the isolation level.** `COSIGNER_ISOLATION_LEVEL=same-workspace` remains the
+configured value and still fails closed on the public network, which is the
+property that matters. It now *understates* the coupling rather than describing
+it, and that is the honest reading: the label bounds where this may run, it does
+not certify what was built.
+
+**Exit criteria are unchanged and now have a first step.** Obtaining
+project-creation access in the company workspace restores the topology this
+record describes; the separate account remains the mainnet requirement. Neither
+needs a service-code change.
