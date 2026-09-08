@@ -5,6 +5,8 @@ import StatCard from "@/components/admin/StatCard";
 
 export const dynamic = "force-dynamic";
 
+const DB_UNAVAILABLE = "Queue and task metrics are unavailable";
+
 function unitsToFourDecimalUsdc(units: string | null): string {
   if (units === null) return "—";
   const value = BigInt(units);
@@ -22,16 +24,28 @@ function reserveStatusLabel(status: string | null): string {
 export default async function AdminStatusHealthPage() {
   await requireRoleForPage("SUPER_ADMIN");
 
+  // The legacy database snapshot and the rail monitor are independent sources.
+  // A database outage must not blank the wallet/anomaly/reserve cards or the
+  // rail banner, so its rejection is isolated and its own cards go unavailable.
   const [snap, railHealth] = await Promise.all([
-    getHealthSnapshot(),
+    getHealthSnapshot().catch((error) => {
+      console.error(
+        "[admin/status-health] queue and task metrics unavailable",
+        error instanceof Error ? error.constructor?.name : typeof error,
+      );
+      return null;
+    }),
     getHealthMonitorSnapshot(),
   ]);
   const walletHealth = railHealth.wallet;
-  const stuck = snap.pendingOldestAt ? isStuckPending(snap.pendingOldestAt) : false;
-  const stuckAgeMs = snap.pendingOldestAt
+  const rewardSymbol = snap?.rewardSymbol ?? walletHealth.rewardTokenSymbol;
+  const stuck = snap?.pendingOldestAt ? isStuckPending(snap.pendingOldestAt) : false;
+  const stuckAgeMs = snap?.pendingOldestAt
     ? Date.now() - snap.pendingOldestAt.getTime()
     : 0;
   const stuckAgeMin = Math.floor(stuckAgeMs / 60000);
+  const dbValue = (value: number | undefined): string =>
+    snap === null || value === undefined ? "—" : String(value);
 
   return (
     <div className="space-y-6">
@@ -58,7 +72,7 @@ export default async function AdminStatusHealthPage() {
               <div className="font-headline text-sm font-bold">Stuck payout detected</div>
               <p className="mt-1 font-body text-sm">
                 The oldest pending submission is {stuckAgeMin} minute{stuckAgeMin === 1 ? "" : "s"} old
-                (threshold: {Math.floor(snap.stuckPayoutThresholdMs / 60000)} min). The cron retry job
+                (threshold: {Math.floor((snap?.stuckPayoutThresholdMs ?? 0) / 60000)} min). The cron retry job
                 (app/api/cron/payout-retry) will automatically reprocess stuck submissions; the
                 reconciler confirms on-chain receipts and marks them confirmed/failed. Admins can also
                 manually retry individual submissions from the user profile view.
@@ -115,11 +129,11 @@ export default async function AdminStatusHealthPage() {
             }
           />
           <StatCard
-            label={`${snap.rewardSymbol} balance`}
+            label={`${rewardSymbol} balance`}
             value={
               walletHealth.usdcBalance === "—"
                 ? "—"
-                : `${walletHealth.usdcBalance} ${snap.rewardSymbol}`
+                : `${walletHealth.usdcBalance} ${rewardSymbol}`
             }
             subline={
               walletHealth.usdcBalance === "—"
@@ -186,32 +200,38 @@ export default async function AdminStatusHealthPage() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
           <StatCard
             label="Pending"
-            value={String(snap.pendingSubmissions)}
+            value={dbValue(snap?.pendingSubmissions)}
             subline={
-              snap.pendingOldestAt
-                ? `Oldest: ${Math.floor((Date.now() - snap.pendingOldestAt.getTime()) / 60000)} min ago`
-                : "No pending submissions"
+              snap === null
+                ? DB_UNAVAILABLE
+                : snap.pendingOldestAt
+                  ? `Oldest: ${Math.floor((Date.now() - snap.pendingOldestAt.getTime()) / 60000)} min ago`
+                  : "No pending submissions"
             }
           />
           <StatCard
             label="Failed (total)"
-            value={String(snap.failedSubmissions)}
-            subline={`${snap.failedLast24h} in the last 24h`}
+            value={dbValue(snap?.failedSubmissions)}
+            subline={snap === null ? DB_UNAVAILABLE : `${snap.failedLast24h} in the last 24h`}
           />
           <StatCard
             label="Abandoned"
-            value={String(snap.abandonedSubmissions)}
-            subline="Exhausted all 5 retry attempts"
+            value={dbValue(snap?.abandonedSubmissions)}
+            subline={snap === null ? DB_UNAVAILABLE : "Exhausted all 5 retry attempts"}
           />
           <StatCard
             label="Total users"
-            value={String(snap.totalUsers)}
-            subline={`${snap.bannedUsers} banned`}
+            value={dbValue(snap?.totalUsers)}
+            subline={snap === null ? DB_UNAVAILABLE : `${snap.bannedUsers} banned`}
           />
           <StatCard
             label="Gold pool"
-            value={String(snap.totalPlatformGoldTasks)}
-            subline={`Platform gold tasks available for ${snap.rewardSymbol} on Stellar`}
+            value={dbValue(snap?.totalPlatformGoldTasks)}
+            subline={
+              snap === null
+                ? DB_UNAVAILABLE
+                : `Platform gold tasks available for ${rewardSymbol} on Stellar`
+            }
           />
         </div>
       </section>
@@ -223,18 +243,18 @@ export default async function AdminStatusHealthPage() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <StatCard
             label="Total tasks"
-            value={String(snap.totalTasks)}
-            subline="All Task rows in the database"
+            value={dbValue(snap?.totalTasks)}
+            subline={snap === null ? DB_UNAVAILABLE : "All Task rows in the database"}
           />
           <StatCard
             label="Campaign tasks"
-            value={String(snap.totalCampaignTasks)}
-            subline="Belongs to a customer campaign"
+            value={dbValue(snap?.totalCampaignTasks)}
+            subline={snap === null ? DB_UNAVAILABLE : "Belongs to a customer campaign"}
           />
           <StatCard
             label="Platform gold"
-            value={String(snap.totalPlatformGoldTasks)}
-            subline="`isGold=true AND campaignId IS NULL`"
+            value={dbValue(snap?.totalPlatformGoldTasks)}
+            subline={snap === null ? DB_UNAVAILABLE : "`isGold=true AND campaignId IS NULL`"}
           />
         </div>
       </section>
