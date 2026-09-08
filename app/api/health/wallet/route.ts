@@ -3,6 +3,10 @@ import { getWalletHealth } from "@/lib/stellar/balance";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Public wallet-health contract: balances, live reserve accounting, and per-asset
+ * status. Unavailable reserve counts serialize as null, never as zero.
+ */
 export async function GET() {
   const health = await getWalletHealth();
   // Reports the pooled platform account's USDC float + XLM fee/reserve floor,

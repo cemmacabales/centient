@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 const DB_UNAVAILABLE = "Queue and task metrics are unavailable";
 
+/** Render seven-decimal units as four-decimal USDC, or an em dash when unknown. */
 function unitsToFourDecimalUsdc(units: string | null): string {
   if (units === null) return "—";
   const value = BigInt(units);
@@ -15,12 +16,17 @@ function unitsToFourDecimalUsdc(units: string | null): string {
   return `${whole}.${fraction}`;
 }
 
+/** Humanize a reserve status for display, or an em dash when unknown. */
 function reserveStatusLabel(status: string | null): string {
   if (status === null) return "—";
   const words = status.replaceAll("_", " ");
   return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
 }
 
+/**
+ * Operator status page. The legacy database snapshot and the rail monitor are
+ * independent sources: either can fail without blanking the other's cards.
+ */
 export default async function AdminStatusHealthPage() {
   await requireRoleForPage("SUPER_ADMIN");
 

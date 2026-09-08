@@ -4,6 +4,11 @@ import { runHealthMonitor } from "@/lib/health-monitor";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Authenticated wallet-health check for the scheduler. Returns the full snapshot
+ * plus each alert's delivery outcome, so the scheduler's own logs record whether
+ * the alerts actually reached Discord.
+ */
 export async function POST(request: NextRequest) {
   const authError = authenticateCron(request);
   if (authError) return authError;

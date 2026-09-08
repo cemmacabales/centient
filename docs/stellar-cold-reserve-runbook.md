@@ -163,6 +163,20 @@ than reporting false zeros, but the rollout is still wrong in that order. The
 migration is additive, so an application deployed before it is applied recovers
 as soon as the migration lands — no rollback of the migration is required.
 
+Its two indexes are built with `CREATE INDEX CONCURRENTLY` so the payout worker
+can keep claiming jobs and writing heartbeats to `payout_jobs` while the
+migration runs. A concurrent build that fails leaves an **invalid** index
+behind, and the re-run then fails with "already exists". Check and clean up
+before re-running:
+
+```sql
+SELECT indexrelid::regclass AS index, indisvalid
+FROM pg_index WHERE indrelid = 'payout_jobs'::regclass AND NOT indisvalid;
+
+DROP INDEX CONCURRENTLY "payout_jobs_broadcastAt_idx";
+DROP INDEX CONCURRENTLY "payout_jobs_status_completedAt_idx";
+```
+
 ## Alert delivery results and what they mean
 
 Every alert result in the cron response is one of:
@@ -186,7 +200,9 @@ the source of truth for money.
 
 - Every Redis call the health path makes is bounded by
   `REDIS_OPERATION_TIMEOUT_MS` (2000 ms by default). A command that lands after
-  its deadline is abandoned.
+  its deadline is abandoned. The Horizon reads are bounded the same way by
+  `STELLAR_HORIZON_TIMEOUT_MS` (10000 ms by default) — the Stellar SDK itself
+  waits forever, so a stalled Horizon would otherwise hang the whole check.
 - **PAGE** alerts still deliver when Redis is unavailable, deduplicated within
   the process, and report `sent-degraded` / `suppressed-degraded`. A PAGE is
   never dropped because Redis is down.
