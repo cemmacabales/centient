@@ -265,6 +265,31 @@ describe("resolvePayoutCoSigner", () => {
     ).not.toThrow();
   });
 
+  it("allows plaintext to a Railway private domain, which never leaves the network", () => {
+    // ADR-0001's amendment puts the co-signer in the same Railway project, where
+    // service-to-service traffic goes over the private network rather than the
+    // public internet. Forcing TLS there would push the request out through a
+    // public domain for no confidentiality gain — the opposite of the intent.
+    expect(() =>
+      resolvePayoutCoSigner({
+        COSIGNER_URL: "http://cosigner.railway.internal:8080/cosign",
+        COSIGNER_SHARED_SECRET: "s".repeat(32),
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+      }),
+    ).not.toThrow();
+  });
+
+  it("still refuses plaintext to a host merely pretending to be internal", () => {
+    // The suffix has to be the real one, not something a public host can end with.
+    expect(() =>
+      resolvePayoutCoSigner({
+        COSIGNER_URL: "http://cosigner.railway.internal.evil.example/cosign",
+        COSIGNER_SHARED_SECRET: "s".repeat(32),
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+      }),
+    ).toThrow(/https/i);
+  });
+
   it("refuses a COSIGNER_URL that is not a usable URL at all", () => {
     expect(() =>
       resolvePayoutCoSigner({
