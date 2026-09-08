@@ -69,12 +69,12 @@ export interface WalletHealth {
   minimumBalanceXlm: string;
   /** Native XLM committed to offers, rendered for operators. */
   nativeSellingLiabilitiesXlm: string;
-  /** Account entries that consume reserve units. */
-  numSubentries: number;
-  /** Count of trustlines the platform is sponsoring (Horizon num_sponsoring). */
-  numSponsoring: number;
-  /** Reserve units sponsored by another account (Horizon num_sponsored). */
-  numSponsored: number;
+  /** Account entries that consume reserve units; null when unavailable. */
+  numSubentries: number | null;
+  /** Trustlines the platform sponsors (Horizon num_sponsoring); null when unavailable. */
+  numSponsoring: number | null;
+  /** Reserve units sponsored by another account (Horizon num_sponsored); null when unavailable. */
+  numSponsored: number | null;
   /** Live-reserve cost attributable to outgoing sponsorships, informational. */
   sponsoredReserveXlm: string;
   rewardTokenSymbol: string;
@@ -143,15 +143,62 @@ export function calculateSpendableXlm({
   return { minimumBalanceStroops, spendableStroops: raw > 0n ? raw : 0n };
 }
 
-export function parseBalanceThresholds(): BalanceThresholds {
+/**
+ * Documented defaults for the optional balance thresholds. The XLM floor covers
+ * fees + the account's base reserve + every trustline reserve; sponsored
+ * recipient trustlines are subtracted from the balance in getWalletHealth
+ * (ST-4e #314), so the XLM threshold stays fee-oriented.
+ */
+const DEFAULT_BALANCE_THRESHOLDS = {
+  BALANCE_WARN_USDC: "50",
+  BALANCE_PAGE_USDC: "10",
+  BALANCE_WARN_XLM: "5",
+  BALANCE_PAGE_XLM: "2",
+} as const;
+
+type BalanceThresholdName = keyof typeof DEFAULT_BALANCE_THRESHOLDS;
+
+/**
+ * A malformed optional threshold is an operator configuration mistake, not a
+ * Horizon outage: fall back to the documented default instead of failing the
+ * whole wallet check. Normalization happens once, in stroops, and every exact
+ * comparison and rendered value is derived from the same normalized value.
+ */
+function thresholdStroops(name: BalanceThresholdName, env: BalanceEnvironment): bigint {
+  const fallback = DEFAULT_BALANCE_THRESHOLDS[name];
+  const raw = env[name];
+  if (raw === undefined) return xlmToStroops(fallback);
+  try {
+    return xlmToStroops(raw);
+  } catch {
+    console.warn(
+      `[stellar/balance] ${name} is not a valid non-negative amount — using default ${fallback}`,
+    );
+    return xlmToStroops(fallback);
+  }
+}
+
+type BalanceEnvironment = Readonly<Record<string, string | undefined>>;
+
+export function parseBalanceThresholdStroops(
+  env: BalanceEnvironment = process.env,
+): StroopThresholds {
   return {
-    warnUsdc: Number(process.env.BALANCE_WARN_USDC ?? "50"),
-    pageUsdc: Number(process.env.BALANCE_PAGE_USDC ?? "10"),
-    // XLM floor covers fees + the account's base reserve + every trustline
-    // reserve. Sponsored recipient trustlines are subtracted from the balance in
-    // getWalletHealth (ST-4e #314), so this threshold stays fee-oriented.
-    warnXlm: Number(process.env.BALANCE_WARN_XLM ?? "5"),
-    pageXlm: Number(process.env.BALANCE_PAGE_XLM ?? "2"),
+    warnUsdcStroops: thresholdStroops("BALANCE_WARN_USDC", env),
+    pageUsdcStroops: thresholdStroops("BALANCE_PAGE_USDC", env),
+    warnXlmStroops: thresholdStroops("BALANCE_WARN_XLM", env),
+    pageXlmStroops: thresholdStroops("BALANCE_PAGE_XLM", env),
+  };
+}
+
+/** Display view of the same normalized thresholds used for exact comparisons. */
+export function parseBalanceThresholds(env: BalanceEnvironment = process.env): BalanceThresholds {
+  const stroops = parseBalanceThresholdStroops(env);
+  return {
+    warnUsdc: Number(stroops.warnUsdcStroops) / Number(STROOPS_PER_XLM),
+    pageUsdc: Number(stroops.pageUsdcStroops) / Number(STROOPS_PER_XLM),
+    warnXlm: Number(stroops.warnXlmStroops) / Number(STROOPS_PER_XLM),
+    pageXlm: Number(stroops.pageXlmStroops) / Number(STROOPS_PER_XLM),
   };
 }
 
@@ -185,15 +232,6 @@ export interface StroopThresholds {
   pageUsdcStroops: bigint;
   warnXlmStroops: bigint;
   pageXlmStroops: bigint;
-}
-
-function configuredThresholdStroops(): StroopThresholds {
-  return {
-    warnUsdcStroops: xlmToStroops(process.env.BALANCE_WARN_USDC ?? "50"),
-    pageUsdcStroops: xlmToStroops(process.env.BALANCE_PAGE_USDC ?? "10"),
-    warnXlmStroops: xlmToStroops(process.env.BALANCE_WARN_XLM ?? "5"),
-    pageXlmStroops: xlmToStroops(process.env.BALANCE_PAGE_XLM ?? "2"),
-  };
 }
 
 export function evaluateStroopThresholds({
@@ -250,6 +288,7 @@ export function evaluateStroopThresholds({
 }
 
 export async function getWalletHealth(): Promise<WalletHealth> {
+  const thresholdStroops = parseBalanceThresholdStroops();
   const thresholds = parseBalanceThresholds();
   const address = platformPublicKey();
 
@@ -263,9 +302,9 @@ export async function getWalletHealth(): Promise<WalletHealth> {
       baseReserveXlm: "—",
       minimumBalanceXlm: "—",
       nativeSellingLiabilitiesXlm: "—",
-      numSubentries: 0,
-      numSponsoring: 0,
-      numSponsored: 0,
+      numSubentries: null,
+      numSponsoring: null,
+      numSponsored: null,
       sponsoredReserveXlm: "—",
       rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
       healthy: false,
@@ -294,9 +333,9 @@ export async function getWalletHealth(): Promise<WalletHealth> {
       baseReserveXlm: "—",
       minimumBalanceXlm: "—",
       nativeSellingLiabilitiesXlm: "—",
-      numSubentries: 0,
-      numSponsoring: 0,
-      numSponsored: 0,
+      numSubentries: null,
+      numSponsoring: null,
+      numSponsored: null,
       sponsoredReserveXlm: "—",
       rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
       healthy: false,
@@ -314,7 +353,6 @@ export async function getWalletHealth(): Promise<WalletHealth> {
   let numSubentries: number;
   let numSponsoring: number;
   let numSponsored: number;
-  let thresholdStroops: StroopThresholds;
   try {
     const horizon = server();
     const [account, ledgerPage] = await Promise.all([
@@ -343,7 +381,6 @@ export async function getWalletHealth(): Promise<WalletHealth> {
         balance.asset_issuer === configuredUsdcIssuer,
     );
     usdcStroops = usdcLine ? usdcToUnits(usdcLine.balance) : 0n;
-    thresholdStroops = configuredThresholdStroops();
   } catch {
     return {
       address,
@@ -354,9 +391,9 @@ export async function getWalletHealth(): Promise<WalletHealth> {
       baseReserveXlm: "—",
       minimumBalanceXlm: "—",
       nativeSellingLiabilitiesXlm: "—",
-      numSubentries: 0,
-      numSponsoring: 0,
-      numSponsored: 0,
+      numSubentries: null,
+      numSponsoring: null,
+      numSponsored: null,
       sponsoredReserveXlm: "—",
       rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
       healthy: false,

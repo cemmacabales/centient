@@ -59,4 +59,34 @@ describe("GET /api/health/wallet", () => {
       pages: [],
     });
   });
+
+  it("serializes unavailable reserve counts as null rather than zero", async () => {
+    mockGetWalletHealth.mockResolvedValue({
+      address: "GPLATFORM1234567890",
+      usdcBalance: "—",
+      rewardTokenSymbol: "USDC",
+      xlmBalance: "—",
+      availableXlmBalance: "—",
+      baseReserveXlm: "—",
+      minimumBalanceXlm: "—",
+      nativeSellingLiabilitiesXlm: "—",
+      numSubentries: null,
+      numSponsoring: null,
+      numSponsored: null,
+      sponsoredReserveXlm: "—",
+      monitoringStatus: "error",
+      assetStatus: { usdc: "unknown", xlm: "unknown" },
+      healthy: false,
+      warnings: ["Horizon wallet monitoring unavailable"],
+      pages: [],
+      thresholds: { warnUsdc: 50, pageUsdc: 10, warnXlm: 5, pageXlm: 2 },
+    });
+
+    const body = await (await GET()).json();
+
+    expect(body.numSubentries).toBeNull();
+    expect(body.numSponsoring).toBeNull();
+    expect(body.numSponsored).toBeNull();
+    expect(body.monitoringStatus).toBe("error");
+  });
 });
