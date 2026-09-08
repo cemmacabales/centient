@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   mockGetDailyPayoutCapUnits,
@@ -84,6 +84,7 @@ beforeEach(() => {
   mockRedisDel.mockResolvedValue(1);
   mockSendAlert.mockResolvedValue("sent");
 });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 const THRESHOLDS: HealthMonitorThresholds = {
   payoutWindowMinutes: 60,
@@ -211,6 +212,31 @@ describe("evaluateHealthAlerts", () => {
 });
 
 describe("getHealthMonitorSnapshot", () => {
+  it.each(["set", "get", "delete"])("bounds refill-timer %s and blocks newer mutations until a late command settles", async (operation) => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    if (operation !== "delete") mockLoadReserveRefillStatus.mockResolvedValue({
+      status: "refill_required", hotBalanceUnits: 100n, coldBalanceUnits: 200n,
+    });
+    mockRedisSet.mockResolvedValue("OK");
+    mockRedisGet.mockResolvedValue("1700000000000");
+    const command = operation === "set" ? mockRedisSet : operation === "get" ? mockRedisGet : mockRedisDel;
+    let finish!: (value: any) => void;
+    command.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    let snapshot: Awaited<ReturnType<typeof getHealthMonitorSnapshot>> | undefined;
+    const pending = getHealthMonitorSnapshot().then((result) => { snapshot = result; });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(snapshot?.metrics.sourceStatus.refillTimer).toBe("error");
+    expect(snapshot?.metrics.refillDueSince).toBeNull();
+    await pending;
+    const calls = mockRedisSet.mock.calls.length + mockRedisGet.mock.calls.length + mockRedisDel.mock.calls.length;
+    expect((await getHealthMonitorSnapshot()).metrics.sourceStatus.refillTimer).toBe("error");
+    expect(mockRedisSet.mock.calls.length + mockRedisGet.mock.calls.length + mockRedisDel.mock.calls.length).toBe(calls);
+    finish(operation === "delete" ? 1 : "1700000000000");
+    await Promise.resolve(); await Promise.resolve();
+    expect((await getHealthMonitorSnapshot()).metrics.sourceStatus.refillTimer).toBe("healthy");
+  });
+
   it("combines live rail metrics and preserves the first time a refill became due", async () => {
     const nowMs = Date.parse("2026-09-08T00:00:00.000Z");
     const dueSinceMs = nowMs - 31 * 60 * 1000;

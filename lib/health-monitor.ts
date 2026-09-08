@@ -5,6 +5,7 @@ import {
   getRolling24hPayoutSum,
 } from "./payout-cap";
 import { redis } from "./redis";
+import { withRedisTimeout } from "./redis-bounded";
 import { getWalletHealth, type BalanceStatus, type WalletHealth } from "./stellar/balance";
 import {
   sendDedupedDiscordAlert,
@@ -19,6 +20,27 @@ import {
 import { walletBalanceAlerts } from "./wallet-balance-alerts";
 
 const REFILL_DUE_REDIS_KEY = "t2p:reserve-refill:due-since";
+
+// A refill-timer command that outlives its deadline is abandoned but may still
+// apply on the server. Issuing a newer set/get/delete before it settles could
+// reorder the due-since value, so the timer reports unavailable until the
+// abandoned command lands.
+let outstandingRefillCommand: Promise<unknown> | null = null;
+
+function refillCommand<T>(operation: string, issue: () => Promise<T>): Promise<T> {
+  if (outstandingRefillCommand) {
+    return Promise.reject(
+      new Error(`refill timer ${operation} blocked by an unsettled command`),
+    );
+  }
+  const command = issue();
+  outstandingRefillCommand = command;
+  const clear = () => {
+    if (outstandingRefillCommand === command) outstandingRefillCommand = null;
+  };
+  command.then(clear, clear);
+  return withRedisTimeout(`refill timer ${operation}`, command);
+}
 
 const DEFAULT_THRESHOLDS = {
   payoutWindowMinutes: 60,
@@ -360,12 +382,14 @@ async function updateRefillDueSince(
 
   try {
     if (status === "healthy") {
-      await redis.del(REFILL_DUE_REDIS_KEY);
+      await refillCommand("delete", () => redis.del(REFILL_DUE_REDIS_KEY));
       return { dueSinceMs: null, status: "healthy" };
     }
 
-    const created = await redis.set(REFILL_DUE_REDIS_KEY, String(nowMs), "NX");
-    const stored = await redis.get(REFILL_DUE_REDIS_KEY);
+    const created = await refillCommand("set", () =>
+      redis.set(REFILL_DUE_REDIS_KEY, String(nowMs), "NX"),
+    );
+    const stored = await refillCommand("get", () => redis.get(REFILL_DUE_REDIS_KEY));
     if (stored && /^\d+$/.test(stored)) {
       return { dueSinceMs: Number(stored), status: "healthy" };
     }
