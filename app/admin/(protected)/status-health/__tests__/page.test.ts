@@ -48,11 +48,17 @@ beforeEach(() => {
   const wallet = {
     address: "GPLATFORM1234567890",
     usdcBalance: "5.0000",
-    xlmBalance: "6.0000",
-    availableXlmBalance: "1.0000",
-    numSponsoring: 10,
-    sponsoredReserveXlm: "5.0000",
+    xlmBalance: "10.0000",
+    availableXlmBalance: "6.0000",
+    baseReserveXlm: "0.5000",
+    minimumBalanceXlm: "3.0000",
+    nativeSellingLiabilitiesXlm: "1.0000",
+    numSubentries: 2,
+    numSponsoring: 3,
+    numSponsored: 1,
+    sponsoredReserveXlm: "1.5000",
     rewardTokenSymbol: "USDC",
+    monitoringStatus: "healthy" as const,
     healthy: false,
     warnings: [],
     pages: ["USDC low", "XLM low"],
@@ -100,10 +106,61 @@ describe("admin status health page", () => {
     const html = renderToStaticMarkup(await AdminStatusHealthPage());
 
     expect(html).toContain("5.0000 USDC");
-    expect(html).toContain("1.0000 XLM spendable");
+    expect(html).toContain("6.0000 XLM spendable");
+    expect(html).toContain("10.0000 XLM total; 3.0000 minimum; 1.0000 liabilities");
     expect(html).toContain("Daily payout cap is approaching");
     expect(html).toContain("80% used");
     expect(html).toContain("Refill required");
     expect(html).toContain("200.0000 USDC reserve");
+  });
+
+  it("shows unavailable payout metrics as em dashes and keeps their source alert visible", async () => {
+    mockGetHealthMonitorSnapshot.mockResolvedValueOnce({
+      checkedAt: "2026-09-08T00:00:00.000Z",
+      wallet: await mockGetWalletHealth(),
+      metrics: {
+        payoutCount: null,
+        payoutVolumeUnits: null,
+        failedPayoutCount: null,
+        dailyCapUnits: null,
+        dailySpentUnits: null,
+        dailyCapPercent: null,
+        reserveStatus: null,
+        hotBalanceUnits: null,
+        coldBalanceUnits: null,
+        refillDueSince: null,
+        sourceStatus: {
+          wallet: "healthy",
+          payouts: "error",
+          reserve: "error",
+          refillTimer: "healthy",
+        },
+      },
+      thresholds: {
+        payoutWindowMinutes: 60,
+        payoutCountThreshold: 100,
+        payoutVolumeUnitsThreshold: "1000000000",
+        failureWindowMinutes: 15,
+        failureCountThreshold: 3,
+        capPercentThreshold: 80,
+        refillOverdueMinutes: 30,
+      },
+      alerts: [
+        {
+          key: "payout-monitoring-unavailable",
+          severity: "PAGE",
+          title: "Payout monitoring is unavailable",
+          lines: ["Payout source could not be queried"],
+        },
+      ],
+    });
+
+    const html = renderToStaticMarkup(await AdminStatusHealthPage());
+
+    expect(html).toContain("Payout monitoring is unavailable");
+    expect(html).toContain("Payout activity</div><div class=\"mt-3 font-headline text-3xl font-extrabold tracking-tight text-on-surface\">—</div>");
+    expect(html).toContain("Daily payout cap</div><div class=\"mt-3 font-headline text-3xl font-extrabold tracking-tight text-on-surface\">—</div>");
+    expect(html).toContain("Permanent failures</div><div class=\"mt-3 font-headline text-3xl font-extrabold tracking-tight text-on-surface\">—</div>");
+    expect(html).not.toContain("0 payouts");
   });
 });

@@ -137,7 +137,7 @@ export default async function AdminStatusHealthPage() {
             subline={
               walletHealth.availableXlmBalance === "—"
                 ? "Horizon lookup failed"
-                : `${walletHealth.xlmBalance} XLM total; ${walletHealth.sponsoredReserveXlm} reserved · Warning: <${walletHealth.thresholds.warnXlm} | Page: <${walletHealth.thresholds.pageXlm}`
+                : `${walletHealth.xlmBalance} XLM total; ${walletHealth.minimumBalanceXlm} minimum; ${walletHealth.nativeSellingLiabilitiesXlm} liabilities · Warning: <${walletHealth.thresholds.warnXlm} | Page: <${walletHealth.thresholds.pageXlm}`
             }
           />
         </div>
@@ -150,17 +150,17 @@ export default async function AdminStatusHealthPage() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           <StatCard
             label="Payout activity"
-            value={`${railHealth.metrics.payoutCount} payouts`}
+            value={railHealth.metrics.payoutCount === null ? "—" : `${railHealth.metrics.payoutCount} payouts`}
             subline={`${unitsToFourDecimalUsdc(railHealth.metrics.payoutVolumeUnits)} USDC in ${railHealth.thresholds.payoutWindowMinutes} min`}
           />
           <StatCard
             label="Daily payout cap"
-            value={`${railHealth.metrics.dailyCapPercent}% used`}
+            value={railHealth.metrics.dailyCapPercent === null ? "—" : `${railHealth.metrics.dailyCapPercent}% used`}
             subline={`${unitsToFourDecimalUsdc(railHealth.metrics.dailySpentUnits)} of ${unitsToFourDecimalUsdc(railHealth.metrics.dailyCapUnits)} USDC`}
           />
           <StatCard
             label="Permanent failures"
-            value={`${railHealth.metrics.failedPayoutCount} failures`}
+            value={railHealth.metrics.failedPayoutCount === null ? "—" : `${railHealth.metrics.failedPayoutCount} failures`}
             subline={`Last ${railHealth.thresholds.failureWindowMinutes} min · Alert at ${railHealth.thresholds.failureCountThreshold}`}
           />
           <StatCard
