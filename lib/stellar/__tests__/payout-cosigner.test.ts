@@ -238,6 +238,39 @@ describe("resolvePayoutCoSigner", () => {
     ).toThrow(/same-workspace/i);
   });
 
+  it("refuses to send payout details to the co-signer over plaintext HTTP", () => {
+    // The HMAC authenticates the request; it does not conceal it. Over plain HTTP
+    // the destination, the amount, the envelope XDR, and the returned policy
+    // signature are all readable in transit.
+    expect(() =>
+      resolvePayoutCoSigner({
+        COSIGNER_URL: "http://cosigner.example/cosign",
+        COSIGNER_SHARED_SECRET: "s".repeat(32),
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+      }),
+    ).toThrow(/https/i);
+  });
+
+  it("still allows a loopback co-signer over HTTP for local development", () => {
+    expect(() =>
+      resolvePayoutCoSigner({
+        COSIGNER_URL: "http://127.0.0.1:8080/cosign",
+        COSIGNER_SHARED_SECRET: "s".repeat(32),
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+      }),
+    ).not.toThrow();
+  });
+
+  it("refuses a COSIGNER_URL that is not a usable URL at all", () => {
+    expect(() =>
+      resolvePayoutCoSigner({
+        COSIGNER_URL: "cosigner.example/cosign",
+        COSIGNER_SHARED_SECRET: "s".repeat(32),
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+      }),
+    ).toThrow(/COSIGNER_URL/);
+  });
+
   it("fails closed when no co-signer is configured at all", () => {
     expect(() =>
       resolvePayoutCoSigner({ ...baseEnv, STELLAR_POLICY_SIGNER_SECRET: undefined }),
