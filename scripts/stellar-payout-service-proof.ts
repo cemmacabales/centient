@@ -12,8 +12,14 @@
 //   npx tsx scripts/stellar-payout-service-proof.ts <G destination> <amount units> <reference id>
 import "dotenv/config";
 import { payReward } from "../lib/payout";
-import { explorerUrl, stellarNetwork } from "../lib/stellar/config";
+import { stellarNetwork } from "../lib/stellar/config";
 import { assertPayoutAmountUnits, assertPayoutDestination } from "../lib/stellar/payout-amount";
+
+// Printed as evidence, so it must name the network the transaction actually
+// settled on. `explorerUrl()` honours NEXT_PUBLIC_EXPLORER_URL, which an
+// operator's environment may point at another network; this runner is testnet
+// only, so the link is pinned to the testnet explorer.
+const TESTNET_EXPLORER = "https://stellar.expert/explorer/testnet";
 
 /** Operator-visible evidence only; never a seed. */
 const log = (message: string) => console.log(message);
@@ -40,7 +46,7 @@ async function main() {
   const hash = await payReward(destination, amountUnits, { kind: "payout_job", id: reference });
 
   log(`hash: ${hash}`);
-  log(`explorer: ${explorerUrl()}/tx/${hash}`);
+  log(`explorer: ${TESTNET_EXPLORER}/tx/${hash}`);
 }
 
 main().catch((error) => {
