@@ -69,9 +69,17 @@ never-created address for the no-destination classification.
 The zero-XLM sponsored shape cannot be pinned. TC-006's precondition is a
 recipient that begins with effectively no spendable XLM, and its second step is to
 complete the sponsorship and trustline preparation. That is a one-time event per
-address — against an already-sponsored account the case is unexecutable. So the
-sponsored recipient is minted fresh on each fixture run, gated behind the same
-testnet check, and recorded in the run row.
+address — against an already-sponsored account the case is unexecutable.
+
+It therefore gets its own command, `qa:recipients:sponsor`, rather than living in
+the seed. Two reasons beyond freshness: it is the only fixture that must touch the
+network, and keeping it out of `seed` leaves that command offline, deterministic
+and secret-free; and attaching it separately means a run that never executes
+TC-006 never mints an account it will not use. It sponsors from
+`STELLAR_PLATFORM_SECRET` when one is configured, and otherwise mints an ephemeral
+friendbot-funded sponsor, so the shape can be produced on a machine holding no
+platform secret. The resulting address, submission id and sponsorship hash are
+written back onto the run row.
 
 TC-004 asks for a "fresh valid recipient" but its evidence requirement is
 before/after balances, which a pinned address satisfies by delta. It stays pinned.
@@ -154,10 +162,15 @@ a reset — each gate refusal, and the cap preset arithmetic against a configure
 cap.
 
 One database round-trip test through the existing `tests/helpers/db.ts` harness
-asserts that a single rehearsal produces all six states and all four shapes, and
-that a reset afterwards leaves the hashed rows standing while clearing the rest.
-That test is B9's stated exit condition expressed as an assertion, so the exit
-condition cannot silently stop being true.
+asserts that a single rehearsal produces all six states and the three pinned
+shapes, and that a reset afterwards leaves a real-hash row standing while clearing
+the rest. That test is B9's stated exit condition expressed as an assertion, so the
+exit condition cannot silently stop being true.
+
+The sponsored shape is verified on testnet rather than in that test: it submits a
+real CAP-33 transaction, and a suite that reached Horizon would be neither
+deterministic nor runnable in CI. Its rehearsal evidence is the account itself —
+zero XLM, trustline present — recorded on the run row with its sponsorship hash.
 
 ## Out of scope
 

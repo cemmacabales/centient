@@ -83,6 +83,10 @@ export const HORIZON_SUBMIT_ALLOWLIST: Readonly<Record<string, string>> = {
     "submits the cold-to-hot refill built by reserve-refill.ts, which requires all three approved signers and is signed offline",
   "scripts/stellar-multisig-payout-spike.ts":
     "issue #6's testnet spike; buildMultisigFeeBump asserts both required signers before it submits",
+  "scripts/qa-provision-recipients.ts":
+    "one-off QA fixture provisioning; submits a changeTrust signed by the recipient's own freshly generated keypair, builds no payment operation, and never reads a platform or payout signer secret",
+  "scripts/qa-sponsor-recipient.ts":
+    "mints the zero-XLM sponsored QA recipient for D1-TC-006; a CAP-33 sponsorship sandwich asserted by buildSponsoredRecipientTx to carry no payment operation, so it moves XLM reserves and never contributor USDC",
 };
 
 /**

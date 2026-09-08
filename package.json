@@ -32,7 +32,10 @@
     "db:test:up": "docker compose up -d test-db && DATABASE_URL=postgresql://postgres:postgres@localhost:5433/centient_test prisma db push --accept-data-loss",
     "db:test:down": "docker compose down test-db",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "qa:fixtures": "tsx scripts/qa-fixtures.ts",
+    "qa:recipients:provision": "tsx scripts/qa-provision-recipients.ts",
+    "qa:recipients:sponsor": "tsx scripts/qa-sponsor-recipient.ts"
   },
   "dependencies": {
     "@albedo-link/intent": "^0.13.0",
