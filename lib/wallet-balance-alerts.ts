@@ -13,6 +13,13 @@ type WalletBalanceAlertInput = Pick<
   monitoringStatus?: WalletMonitoringStatus;
 };
 
+/**
+ * Alerts a wallet snapshot warrants, as a pure function of that snapshot.
+ *
+ * A monitoring-source failure short-circuits: when the wallet cannot be read at
+ * all, the single source alert is the whole answer, because an unknown balance
+ * must never be reported as a healthy one.
+ */
 export function walletBalanceAlerts(health: WalletBalanceAlertInput): HealthAlert[] {
   if (health.monitoringStatus === "unconfigured") {
     return [{

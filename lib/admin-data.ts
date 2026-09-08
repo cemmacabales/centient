@@ -464,6 +464,11 @@ export interface PoolHealth {
 
 const STUCK_PAYOUT_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
+/**
+ * Queue, task, and wallet counters for the admin health surfaces. Daily cap
+ * figures come from the shared PayoutJob accounting so this page and the payout
+ * path agree on what has been spent.
+ */
 export async function getHealthSnapshot(): Promise<PoolHealth> {
   const now = new Date();
   const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -533,6 +538,7 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
   };
 }
 
+/** Whether a pending submission has aged past the stuck-payout threshold. */
 export function isStuckPending(createdAt: Date, now: Date = new Date()): boolean {
   return now.getTime() - createdAt.getTime() > STUCK_PAYOUT_THRESHOLD_MS;
 }
