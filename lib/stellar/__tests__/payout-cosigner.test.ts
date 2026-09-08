@@ -202,6 +202,42 @@ describe("resolvePayoutCoSigner", () => {
     ).toThrow(/both/i);
   });
 
+  it("resolves the deployed co-signer when a URL is configured without the key", () => {
+    expect(() =>
+      resolvePayoutCoSigner({
+        COSIGNER_URL: "https://cosigner.example/cosign",
+        COSIGNER_SHARED_SECRET: "s".repeat(32),
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+        STELLAR_POLICY_SIGNER_PUBLIC: policy.publicKey(),
+      }),
+    ).not.toThrow();
+  });
+
+  it("refuses the deployed co-signer without a shared secret to authenticate with", () => {
+    expect(() =>
+      resolvePayoutCoSigner({
+        COSIGNER_URL: "https://cosigner.example/cosign",
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+        STELLAR_POLICY_SIGNER_PUBLIC: policy.publicKey(),
+      }),
+    ).toThrow(/COSIGNER_SHARED_SECRET/);
+  });
+
+  it("refuses the deployed co-signer when the topology is not permitted on this network", () => {
+    // The isolation gate is enforced on the calling side too, so a simulated
+    // boundary cannot be used for a public-network payout even if the service
+    // itself were misconfigured to allow it.
+    process.env.STELLAR_NETWORK = "public";
+    expect(() =>
+      resolvePayoutCoSigner({
+        COSIGNER_URL: "https://cosigner.example/cosign",
+        COSIGNER_SHARED_SECRET: "s".repeat(32),
+        COSIGNER_ISOLATION_LEVEL: "same-workspace",
+        STELLAR_POLICY_SIGNER_PUBLIC: policy.publicKey(),
+      }),
+    ).toThrow(/same-workspace/i);
+  });
+
   it("fails closed when no co-signer is configured at all", () => {
     expect(() =>
       resolvePayoutCoSigner({ ...baseEnv, STELLAR_POLICY_SIGNER_SECRET: undefined }),

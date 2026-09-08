@@ -14,6 +14,8 @@
 // co-signer fails closed rather than degrading to a single signature.
 import { Keypair, type Asset } from "@stellar/stellar-sdk";
 import { stellarNetwork, usdcAsset } from "./config";
+import { assertIsolationPermitted } from "./cosigner-isolation";
+import { remotePolicyCoSigner } from "./cosigner-remote";
 import { assertEnvelopeMatchesRequest } from "./cosigner-verify";
 import type { PayoutCoSignRequest, PayoutCoSignature, PayoutCoSigner } from "./payout-envelope";
 
@@ -57,6 +59,19 @@ export function resolvePayoutCoSigner(
     throw new Error(
       "this process is configured with both COSIGNER_URL and STELLAR_POLICY_SIGNER_SECRET — the app deployment must never hold the policy signing key (ADR-0001)",
     );
+  }
+
+  // The deployed service is the real co-signer and takes precedence: the local
+  // signer below exists only so the refusal paths stay exercised in development.
+  if (remoteUrl) {
+    assertIsolationPermitted(env);
+    const sharedSecret = env.COSIGNER_SHARED_SECRET?.trim();
+    if (!sharedSecret) {
+      throw new Error(
+        "COSIGNER_SHARED_SECRET must be set to authenticate requests to the co-signer at COSIGNER_URL",
+      );
+    }
+    return remotePolicyCoSigner({ url: remoteUrl, secret: sharedSecret });
   }
 
   if (!secret) {
