@@ -3,6 +3,17 @@ name: CI
 on:
   pull_request:
     branches: [develop, staging, main]
+  # B10 (#86). A `pull_request` run happens at the PR head, never at the merge
+  # commit that is actually deployed — so for any deployed build, no CI run
+  # exists at its SHA, and D1-TC-025/TC-026 can only be evidenced by asserting a
+  # chain from the head run through the merge. That chain broke once already
+  # when the deployed build moved.
+  #
+  # Running on push to develop closes the gap from here on: every merge commit
+  # gets its own run, at the exact SHA the environment serves, for both `build`
+  # and the `payments-lane` evidence job.
+  push:
+    branches: [develop]
 
 jobs:
   build:

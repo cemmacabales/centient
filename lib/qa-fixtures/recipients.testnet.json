@@ -1,0 +1,19 @@
+{
+  "network": "testnet",
+  "usdcIssuer": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  "generatedAt": "2026-09-08T17:26:13.331Z",
+  "recipients": {
+    "withTrustline": {
+      "address": "GBWWDO5YDAY77SHHYV3FU3T3A7VCKJLXFP4WHXN5RCKPQDUQ5MMONMWR",
+      "note": "Funded via friendbot; USDC trustline established in 62f5e67eb0f3a57279a49faf840351fc67ec8b648ecab6553d5f23026946779a."
+    },
+    "withoutTrustline": {
+      "address": "GA62NMI23KRGZPUJX3QTUJA6B42GV24URZYHC2JHGVV7WKBA7LBSNW5U",
+      "note": "Funded via friendbot; no USDC trustline. Expect op_no_trust."
+    },
+    "neverCreated": {
+      "address": "GBRYNUZANVO3E27VU2ANOSVXLBEZ6XN4NL5QH6EVGFV2GGICTOTMVFH2",
+      "note": "Never created on-chain. Expect a no-destination classification."
+    }
+  }
+}
