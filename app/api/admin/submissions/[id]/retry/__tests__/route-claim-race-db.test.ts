@@ -152,6 +152,45 @@ describe("an admin retry racing a retry already in flight", () => {
     expect(settled?.payoutTxHash).toBe("hash-1");
   });
 
+  it("refuses within the lease window even when the last retry already finished", async () => {
+    // The cost of the refusal, asserted so it stays a decision rather than a
+    // surprise. `lastRetriedAt` is written both when a retry is claimed and when
+    // one ends, and a single row cannot tell those apart — so a retry that
+    // failed seconds ago reads as possibly-live and is refused too.
+    //
+    // That is the safe direction (a wait, versus a second payment), and the
+    // response says "may still be in flight" rather than asserting one is. If
+    // this case ever needs to pass, the fix is a column that means only
+    // "started", not a shorter window.
+    const submission = await createRetryableSubmission();
+    await prisma.submission.update({
+      where: { id: submission.id },
+      data: { lastRetriedAt: new Date(Date.now() - 5_000) },
+    });
+
+    const res = await POST(makeReq(submission.id), {
+      params: Promise.resolve({ id: submission.id }),
+    } as any);
+
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toBe("retry_claim_held");
+    expect(body.detail).toMatch(/may still be in flight/);
+    // Tells the operator when to come back rather than making them guess.
+    expect(body.retryAfterSeconds).toBeGreaterThan(0);
+    expect(body.retryAfterSeconds).toBeLessThanOrEqual(60);
+    expect(res.headers.get("Retry-After")).toBe(String(body.retryAfterSeconds));
+    expect(broadcasts).toEqual([]);
+
+    // And the refusal changed nothing: no reset rode along with it.
+    const untouched = await prisma.submission.findUnique({
+      where: { id: submission.id },
+      select: { payoutStatus: true, retryCount: true },
+    });
+    expect(untouched?.payoutStatus).toBe("failed");
+    expect(untouched?.retryCount).toBe(1);
+  });
+
   it("still retries a submission whose lease has expired", async () => {
     // The refusal must not become a way to strand a payout: once no retry is in
     // flight, the operator's override works exactly as it did before.
