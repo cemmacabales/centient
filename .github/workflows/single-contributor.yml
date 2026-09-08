@@ -60,7 +60,20 @@ jobs:
               },
             );
 
-            const invalidCommits = commits.filter(({ commit }) =>
+            // Merge commits are exempt from the identity rule, and only from
+            // that rule. GitHub's merge button writes them as
+            // `GitHub <noreply@github.com>`, which no maintainer can make match
+            // the required identity — so a promotion PR (develop -> staging,
+            // develop -> main) carrying earlier merges could never pass, however
+            // clean its authored history. Nothing is given up: a merge commit
+            // contributes no authored content, and every commit that does is
+            // still checked. The attribution rules below deliberately stay on
+            // *all* commits, merges included, because a merge message is written
+            // by a human and can carry attribution.
+            const authoredCommits = commits.filter(
+              ({ parents }) => (parents?.length ?? 1) < 2,
+            );
+            const invalidCommits = authoredCommits.filter(({ commit }) =>
               commit.author?.name !== requiredIdentity.name ||
               commit.author?.email !== requiredIdentity.email ||
               commit.committer?.name !== requiredIdentity.name ||
