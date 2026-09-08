@@ -63,9 +63,15 @@ details (`DATABASE_PUBLIC_URL`, or the host and port on its Connect tab), with
 your new user and password substituted in.
 
 **It must be the public host, not `postgres.railway.internal`.** Railway's
-private networking is scoped to a single project, and the co-signer lives in a
-different project by design. The internal hostname does not resolve from there,
-and the failure presents as a hung connection rather than a clear error.
+private networking carries service-to-service traffic *within a project*, and the
+co-signer lives in a different project by design. The internal hostname does not
+resolve from there, and the failure presents as a hung connection rather than a
+clear error.
+
+Because that connection therefore leaves Railway's network, append
+`?sslmode=require` so the read-only credential is never sent in the clear. This
+is a direct cost of the separate-project choice, recorded in ADR-0001 alongside
+the access-control benefit that bought it.
 
 ## 2. Generate the keys and secrets
 
@@ -87,38 +93,53 @@ openssl rand -hex 32
 
 1. In the Railway dashboard, **New Project** → **Deploy from GitHub repo** →
    pick `webnxt-2030/Centient`. Name the project `centient-cosigner`.
-2. Open the created service → **Settings** → **Config as Code**, and set the
-   config path to `services/cosigner/railway.json`.
+2. Configure the service. Every setting below can be set from the dashboard
+   (**Settings** → Deploy / Build), but the CLI form is reproducible and is what
+   this runbook uses. Link the CLI to the new project first
+   (`railway link --project centient-cosigner`), then:
 
-   This is not cosmetic. The repo-root `railway.json` runs
-   `npx prisma migrate deploy` before every deploy, which the co-signer must
-   never do: it holds a read-only credential and has no `DATABASE_URL` at all,
-   so the deploy would fail — and "fixing" that by adding `DATABASE_URL` would
-   hand this service the application's read-write connection and dissolve the
-   separation it exists to provide. Its own config carries no migration step.
+   ```bash
+   railway environment edit --service-config cosigner deploy.startCommand "npm run cosign"
+   railway environment edit --service-config cosigner deploy.healthcheckPath "/health"
+   railway environment edit --service-config cosigner deploy.restartPolicyType "ON_FAILURE"
+   # Explicitly empty. The repo-root railway.json runs `prisma migrate deploy`
+   # before every deploy, which the co-signer must never do: it holds a read-only
+   # credential and no DATABASE_URL, so the deploy fails — and "fixing" that by
+   # adding DATABASE_URL would hand this service the application's read-write
+   # connection and dissolve the separation it exists to provide.
+   railway environment edit --service-config cosigner deploy.preDeployCommand ""
+   # The co-signer shares lib/ with the application, so watching only its own
+   # directory would leave it running stale decision logic.
+   railway environment edit --service-config cosigner build.watchPatterns \
+     '["services/cosigner/**","lib/stellar/**","prisma/**","package.json"]'
+   ```
 
-   The co-signer's config already sets the start command (`npm run cosign`) and
-   the health check path (`/health`).
+   **Do not add a `railway.json` for this service.** Railway deprecated Config as
+   Code on 2026-09-08: existing files are read until 2026-12-01, but **new
+   services cannot opt into it**, so a config file committed here would simply
+   never be read. Its successor is Infrastructure as Code
+   (`.railway/railway.ts`, applied with `railway config plan` /
+   `railway config apply`), which suits this project well later precisely
+   because it contains exactly one service. Before reaching for it, note that
+   apply is **omit-means-delete** and the authoring file must describe the whole
+   environment — pointing a partial file at the main `centient` project would
+   propose deleting everything it does not mention.
 
-3. Still in **Settings**, set **Watch Paths**: `services/cosigner/**`,
-   `lib/stellar/**`, `prisma/**`, `package.json`. The co-signer shares `lib/`
-   with the application, so scoping it to its own directory alone would leave it
-   running stale decision logic after a change to the checks it depends on.
-4. **Variables** — these belong here and in no other project:
+3. **Variables** — these belong here and in no other project:
 
    | Variable | Value |
    | --- | --- |
    | `STELLAR_POLICY_SIGNER_SECRET` | the policy seed (`S…`) |
    | `COSIGNER_SHARED_SECRET` | the `openssl rand -hex 32` output |
-   | `COSIGNER_DATABASE_URL` | `postgresql://centient_cosigner:…@…` (the read-only role) |
+   | `COSIGNER_DATABASE_URL` | `postgresql://centient_cosigner:…@PUBLIC_HOST:PORT/railway?sslmode=require` |
    | `COSIGNER_DAILY_CAP_UNITS` | e.g. `200000000000` (200 USDC) — set it independently of the app's cap |
    | `COSIGNER_ISOLATION_LEVEL` | `same-workspace` |
    | `STELLAR_NETWORK` | `testnet` |
    | `STELLAR_USDC_ISSUER` | the same issuer the app pays in |
    | `PORT` | Railway sets this; the service reads it |
 
-5. **Settings → Networking → Generate Domain.** Note the URL.
-6. Deploy, then confirm: `curl https://<domain>/health` returns
+4. **Settings → Networking → Generate Domain.** Note the URL.
+5. Deploy, then confirm: `curl https://<domain>/health` returns
    `{"status":"ok","isolation":"same-workspace"}`.
 
 ## 4. Point the application at it, and take the key away
@@ -165,7 +186,7 @@ submission, and the #12 suite regression-guards it).
 | Refused 409 "already carries broadcast hash" | Working as intended — that payout settled already. Do not retry it; reconcile. |
 | Refused 503 "same-workspace is never permitted on the public network" | `STELLAR_NETWORK=public` under the MVP topology. This is the mainnet gate; see the ADR's exit criteria. |
 | Co-signer exits at boot | A required variable is missing. There are no fallbacks by design; the log names the one. |
-| Deploy fails in a pre-deploy step running `prisma migrate deploy` | The service is using the repo-root `railway.json`. Point Config as Code at `services/cosigner/railway.json`. Do not add `DATABASE_URL` to make it pass. |
+| Deploy fails in a pre-deploy step running `prisma migrate deploy` | The service picked up the repo-root `railway.json`. Clear the Pre-Deploy Command in the service's Settings. Do not add `DATABASE_URL` to make it pass. |
 | Payout fails "co-signature is not the configured co-signer" | `STELLAR_POLICY_SIGNER_PUBLIC` in the app does not match the seed the co-signer holds. |
 
 ## Operating notes

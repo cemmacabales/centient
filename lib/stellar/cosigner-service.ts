@@ -169,17 +169,20 @@ export async function handleCoSignRequest(
   }
 
   try {
-    // Two independent questions, both of which must hold. The envelope check
-    // establishes that the XDR pays what the request says; the ledger check
-    // establishes that Centient owes it at all. Neither implies the other.
+    // The envelope check needs no ledger and no lock: it establishes only that
+    // the XDR pays what the request says, which is true or false on its own.
     const transaction = assertEnvelopeMatchesRequest(request, deps.asset);
-    assertLedgerAgrees(await deps.ledger.readPayout(request.reference), request);
 
-    // Read the spend, decide, and sign as one critical section: a signature this
-    // service has already issued is a commitment against the cap even though no
-    // ledger anywhere reflects it yet.
+    // Everything that depends on ledger state happens as one critical section —
+    // read, decide, sign. A request can wait here while the row it would have
+    // validated acquires a broadcast hash, so validating before queuing would
+    // sign against a snapshot that is already stale by the time the signature
+    // exists. The cap has the same shape: a signature this service has already
+    // issued is a commitment even though no ledger anywhere reflects it yet.
     const { lock, committed } = serialiserFor(deps);
     return await lock.runExclusive(async () => {
+      assertLedgerAgrees(await deps.ledger.readPayout(request.reference), request);
+
       const now = (deps.now ?? (() => new Date()))();
       const broadcast = await deps.ledger.broadcastVolumeSince(startOfDay(now));
       const outstanding = committed.outstanding(now.getTime());

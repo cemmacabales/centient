@@ -213,6 +213,38 @@ describe("handleCoSignRequest", () => {
     expect([a, b].find((r) => r.status !== 200)?.status).toBe(409);
   });
 
+  it("re-reads the ledger inside the critical section, not before queuing for it", async () => {
+    // A request can sit waiting for the lock while the row it validated acquires
+    // a broadcast hash. Validating before queuing would sign against a ledger
+    // state that is already stale by the time the signature is produced, so the
+    // read and the signing must be the same critical section.
+    const events: string[] = [];
+    const shared = deps({
+      ledger: {
+        readPayout: async () => {
+          events.push("read");
+          return ledgerRow();
+        },
+        broadcastVolumeSince: async () => {
+          events.push("cap");
+          return 0n;
+        },
+      },
+    });
+    const first = signedRequest();
+    const second = signedRequest();
+
+    await Promise.all([
+      handleCoSignRequest(shared, first.body, first.headers),
+      handleCoSignRequest(shared, second.body, second.headers),
+    ]);
+
+    // Strictly alternating: each request reads and decides alone. Interleaved
+    // reads ("read", "read", "cap", "cap") mean both validated against the same
+    // pre-signature snapshot.
+    expect(events).toEqual(["read", "cap", "read", "cap"]);
+  });
+
   it("never returns a transaction, only a detached signature", async () => {
     const { body, headers } = signedRequest();
 
