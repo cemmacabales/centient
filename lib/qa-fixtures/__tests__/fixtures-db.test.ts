@@ -154,6 +154,48 @@ describe("seeding one rehearsal", () => {
     }
   });
 
+  it("leaves nothing behind when a write fails partway through", async () => {
+    // The run record is written inside the same transaction as the fixtures. If
+    // it were written last and a fixture write failed, the committed campaign and
+    // submissions would survive with no run row — and `resetQaFixtures` resolves a
+    // run's campaign through `run.fixtures["campaign"]`, so the one command whose
+    // job is to clean those rows up could not find them.
+    let submissionsCreated = 0;
+    const failing = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop !== "$transaction") return Reflect.get(target, prop, receiver);
+        return (callback: (tx: unknown) => unknown, options: unknown) =>
+          (target as PrismaClient).$transaction(async (tx) => {
+            const guarded = new Proxy(tx as object, {
+              get(txTarget, txProp) {
+                if (txProp !== "submission") return Reflect.get(txTarget, txProp);
+                const model = Reflect.get(txTarget, txProp) as Record<string, unknown>;
+                return new Proxy(model, {
+                  get(modelTarget, modelProp) {
+                    if (modelProp !== "create") return Reflect.get(modelTarget, modelProp);
+                    return async (args: unknown) => {
+                      if (++submissionsCreated > 3) throw new Error("induced mid-seed failure");
+                      return (modelTarget.create as (a: unknown) => unknown)(args);
+                    };
+                  },
+                });
+              },
+            });
+            return callback(guarded);
+          }, options as Parameters<PrismaClient["$transaction"]>[1]);
+      },
+    }) as PrismaClient;
+
+    await expect(seed({ prisma: failing })).rejects.toThrow(/induced mid-seed failure/);
+
+    // Three submissions were created before the failure and none survive.
+    expect(submissionsCreated).toBeGreaterThan(3);
+    expect(await db.submission.count()).toBe(0);
+    expect(await db.task.count()).toBe(0);
+    expect(await db.campaign.count()).toBe(0);
+    expect(await db.qaFixtureRun.count()).toBe(0);
+  });
+
   it("skips the cap fixtures when the cap is disabled, and says why", async () => {
     const result = await seed({ capUnits: 0n });
     expect(result.capPlan).toBeNull();

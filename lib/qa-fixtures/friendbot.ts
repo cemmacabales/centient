@@ -15,6 +15,9 @@ export interface FriendbotOptions {
   attempts?: number;
   /** Base backoff; attempt N waits `backoffMs * N`. */
   backoffMs?: number;
+  /** Per-attempt ceiling. Node's fetch has no default, so without this a stalled
+   *  request hangs forever and the retry below never gets to run. */
+  timeoutMs?: number;
   onRetry?: (message: string) => void;
 }
 
@@ -24,14 +27,18 @@ export interface FriendbotOptions {
  */
 export async function friendbotFund(
   publicKey: string,
-  { attempts = 4, backoffMs = 2000, onRetry }: FriendbotOptions = {},
+  { attempts = 4, backoffMs = 2000, timeoutMs = 30_000, onRetry }: FriendbotOptions = {},
 ): Promise<void> {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     let status: number;
     let body: string;
 
     try {
-      const response = await fetch(`${FRIENDBOT_URL}?addr=${encodeURIComponent(publicKey)}`);
+      const response = await fetch(`${FRIENDBOT_URL}?addr=${encodeURIComponent(publicKey)}`, {
+        // A stalled attempt aborts into the catch below and stays retryable,
+        // rather than holding the whole run open indefinitely.
+        signal: AbortSignal.timeout(timeoutMs),
+      });
       if (response.ok) return;
       status = response.status;
       body = await response.text();
