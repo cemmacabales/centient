@@ -8,6 +8,7 @@ import { checkAndAlert } from "./stellar/balance";
 import { computeIAA } from "./quality";
 import { REWARDED_STATUSES } from "./constants";
 import { refundReversal } from "./user-balance";
+import { pageAcceptedPayment, persistAcceptedPayment, type AcceptedPayment } from "./payout-broadcast";
 
 const STALE_PROCESSING_MS = 60_000;
 // Refresh the in-flight job's heartbeat well within STALE_PROCESSING_MS so a slow
@@ -171,14 +172,16 @@ async function processWithdrawalJob(
       .catch(() => {});
   }, HEARTBEAT_REFRESH_MS);
 
+  let accepted: AcceptedPayment | undefined;
   try {
     const txHash = await payReward(destination, amountUnits, {
       kind: "payout_job",
       id: jobId,
     });
     const broadcastAt = new Date();
+    accepted = { reference: `payout_job:${jobId}`, txHash, amountUnits, broadcastAt };
 
-    await prisma.payoutJob.update({
+    if (!(await persistAcceptedPayment(accepted, () => prisma.payoutJob.update({
       where: { id: jobId },
       data: {
         txHash,
@@ -186,10 +189,14 @@ async function processWithdrawalJob(
         broadcastAt,
         workerHeartbeatAt: broadcastAt,
       },
-    });
+    })))) return;
 
     console.log(`[payout-worker] withdrawal job ${jobId} broadcast: paid ${amountUnits} to ${destination} (${txHash})`);
   } catch (err) {
+    if (accepted) {
+      await pageAcceptedPayment(accepted);
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
 
     if (err instanceof PayoutCapError) {
@@ -344,19 +351,21 @@ async function processSubmissionPayout(
       .catch(() => {});
   }, HEARTBEAT_REFRESH_MS);
 
+  let accepted: AcceptedPayment | undefined;
   try {
     const txHash = await payReward(walletAddress, amount, {
       kind: "submission",
       id: submissionId,
     });
     const broadcastAt = new Date();
+    accepted = { reference: `payout_job:${jobId}`, txHash, amountUnits: amount, broadcastAt };
 
-    await prisma.$transaction(async (tx) => {
-      await tx.payoutJob.update({
+    if (!(await persistAcceptedPayment(accepted, () => prisma.payoutJob.update({
         where: { id: jobId },
         data: { txHash, amountUnits: amount, broadcastAt },
-      });
+    })))) return;
 
+    await prisma.$transaction(async (tx) => {
       await tx.submission.update({
         where: { id: submissionId },
         data: { payoutStatus: "sent", payoutTxHash: txHash },
@@ -416,6 +425,10 @@ async function processSubmissionPayout(
 
     console.log(`[payout-worker] submission job ${jobId} completed: submission ${submissionId} paid ${txHash}`);
   } catch (err) {
+    if (accepted) {
+      await pageAcceptedPayment(accepted);
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
 
     if (err instanceof PayoutCapError) {

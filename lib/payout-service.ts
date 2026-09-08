@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { payReward, PayoutCapError } from "./payout";
 import { StellarPaymentError } from "./stellar/client";
 import { isValidStellarAddress } from "./stellar/signature";
+import { pageAcceptedPayment, persistAcceptedPayment } from "./payout-broadcast";
 
 const TERMINAL_STATUSES = ["confirmed", "sent", "skipped"];
 
@@ -145,8 +146,8 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
 
   // Step 3: persist the on-chain result and its accounting record atomically.
   const broadcastAt = new Date();
-  try {
-    await prisma.$transaction(async (tx) => {
+  const accepted = { reference: `submission:${submissionId}`, txHash, amountUnits: amount, broadcastAt };
+  if (!(await persistAcceptedPayment(accepted, () => prisma.$transaction(async (tx) => {
       await tx.submission.update({
         where: { id: submissionId },
         data: { payoutStatus: "sent", payoutTxHash: txHash, lastRetriedAt: broadcastAt },
@@ -171,14 +172,11 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
           lastError: null,
         },
       });
-    });
-  } catch (err) {
-    console.error(
-      "[payout-service] accepted payment persistence failed:",
-      err instanceof Error ? err.constructor.name : typeof err,
-    );
-    return;
-  }
+  })))) return;
 
-  await creditUserTotals(walletAddress, amount);
+  try {
+    await creditUserTotals(walletAddress, amount);
+  } catch {
+    await pageAcceptedPayment(accepted);
+  }
 }
