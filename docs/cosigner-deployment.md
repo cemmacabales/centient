@@ -34,10 +34,13 @@ getting exactly right.
 ```sql
 CREATE ROLE centient_cosigner LOGIN PASSWORD 'replace-with-a-generated-password';
 
--- Read, and only read, the three tables the policy decision consults.
+-- Read, and only read, the two tables the policy decision consults. `users` is
+-- deliberately not granted: the co-signer reads the destination from the
+-- submission and the payout job, never from the user record, so the grant would
+-- widen what a leaked co-signer credential discloses for nothing in return.
 GRANT CONNECT ON DATABASE railway TO centient_cosigner;
 GRANT USAGE ON SCHEMA public TO centient_cosigner;
-GRANT SELECT ON public.submissions, public.payout_jobs, public.users TO centient_cosigner;
+GRANT SELECT ON public.submissions, public.payout_jobs TO centient_cosigner;
 
 -- Future tables must not be readable by default; grant them deliberately.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM centient_cosigner;
@@ -157,10 +160,18 @@ submission, and the #12 suite regression-guards it).
 
 ## Operating notes
 
-- **One replica.** The replay-nonce store is in-process, so a second instance
-  would silently stop guarding against replays. Scaling past one needs shared
-  storage for nonces first — the same single-writer constraint the payout
-  submitter already carries.
+- **One replica.** Two pieces of state are in-process: the replay-nonce store,
+  and the record of what this service has signed but not yet seen broadcast
+  (which is what stops two simultaneous requests both spending the last of the
+  daily cap). A second instance would silently stop guarding both.
+
+  The general fix — durable reservations in the database — is deliberately not
+  taken: writing them would mean granting the co-signer write access, and the
+  read-only credential is the one boundary this topology actually enforces.
+  Scaling past one replica means shared storage that is not this database, or
+  the separate-account topology in the ADR's exit criteria. Until then this is
+  the same single-writer constraint the payout submitter already carries, and
+  the payout service holds the primary cap regardless.
 - **Rotating the shared secret** is a two-project change with a window where they
   disagree; payouts fail closed (401) during it rather than proceeding unsigned.
 - **Rotating the policy key** means re-running the #5 multisig setup to update
