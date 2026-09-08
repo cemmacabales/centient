@@ -32,7 +32,10 @@ vi.mock("../prisma", () => ({
   },
 }));
 
-vi.mock("../payout-cap", () => ({
+// Only the data sources are mocked. The shared cap threshold parser and alert
+// builder stay real so this suite exercises the same copy the payout path emits.
+vi.mock("../payout-cap", async (importActual) => ({
+  ...(await importActual<typeof import("../payout-cap")>()),
   getDailyPayoutCapUnits: mockGetDailyPayoutCapUnits,
   getPayoutActivitySince: mockGetPayoutActivitySince,
   getRolling24hPayoutSum: mockGetRolling24hPayoutSum,
@@ -181,6 +184,32 @@ describe("evaluateHealthAlerts", () => {
     );
 
     expect(alerts.map((alert) => alert.key)).toContain("payout-cap");
+  });
+
+  it("emits the same payout-cap copy the payout path emits", () => {
+    const [alert] = evaluateHealthAlerts(
+      healthyInput({ dailySpentUnits: 1_600_000_000n }),
+      THRESHOLDS,
+    ).filter((candidate) => candidate.key === "payout-cap");
+
+    expect(alert).toEqual({
+      key: "payout-cap",
+      severity: "WARN",
+      title: "Daily payout cap is approaching",
+      lines: ["80% consumed", "1600000000 of 2000000000 units spent", "400000000 units remain"],
+    });
+  });
+
+  it("honours a fractional cap threshold the payout path would accept", () => {
+    expect(
+      parseHealthMonitorThresholds({ HEALTH_CAP_PERCENT_THRESHOLD: "80.5" }).capPercentThreshold,
+    ).toBe(80.5);
+    expect(
+      evaluateHealthAlerts(healthyInput({ dailySpentUnits: 1_600_000_000n }), {
+        ...THRESHOLDS,
+        capPercentThreshold: 80.5,
+      }).map((candidate) => candidate.key),
+    ).not.toContain("payout-cap");
   });
 
   it("reports repeated permanent payout failures", () => {
