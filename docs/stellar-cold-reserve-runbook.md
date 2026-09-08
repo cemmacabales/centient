@@ -353,10 +353,11 @@ STELLAR_RESERVE_REFILL_XDR='<twice-signed XDR>' \
 npm run stellar:reserve:refill -- submit
 ```
 
-Pass the same `STELLAR_RESERVE_REFILL_AMOUNT_UNITS` the custodians signed
-against. It is optional, but without it the amount check at submit reads the
-amount from the envelope and compares it with itself; with it, an envelope
-carrying any other amount is refused before Horizon is contacted.
+`STELLAR_RESERVE_REFILL_AMOUNT_UNITS` is required and must be the same value
+the custodians signed against in the `sign` step. The command refuses to run
+without it: an envelope carrying any other amount is refused before Horizon is
+contacted, which is the only amount check at submit that does not read its
+expectation from the envelope itself.
 
 Immediately before submission, the command reloads hot and cold balances and
 re-checks both policy invariants against the exact amount the custodians

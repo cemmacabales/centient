@@ -161,9 +161,15 @@ beyond local work depends on this account:
 
 1. Copy all three secrets into the shared secrets store (owner: whoever holds
    the provisioning machine; tracked in #73).
-2. Wire the deployment to inject them as environment variables from that
-   store. The policy signer's seed leaves the application environment entirely
-   once the independent co-signer service (#8) exists.
+2. Wire the deployment to inject **only** `STELLAR_PLATFORM_SECRET` and
+   `STELLAR_OPS_SIGNER_SECRET` from that store. The policy signer's seed is
+   never placed in the application deployment: its only consumer is the
+   independent co-signer service (#8), which runs on separate infrastructure
+   with its own key store. `STELLAR_POLICY_SIGNER_SECRET` in an application
+   environment is a testnet-only affordance for local proofs and is refused
+   on the public network, so until #8 exists production payouts fail closed —
+   the payout service throws before building anything rather than degrading
+   to a single signature.
 
 If the secrets are lost first, re-run `pnpm stellar:multisig:setup`, take a new
 proof, and update this section again.
