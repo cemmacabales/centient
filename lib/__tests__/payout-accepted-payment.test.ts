@@ -56,8 +56,25 @@ describe("accepted payment persistence boundary", () => {
       expect(write.mock.calls.filter(([args]) => (args.data ?? args.create).txHash)).toHaveLength(3);
       expect(effects.refund).not.toHaveBeenCalled();
       expect(effects.credit).not.toHaveBeenCalled();
-      expect(db.payoutJob.update.mock.calls.some(([args]) => ["queued", "failed"].includes(args.data.status))).toBe(false);
-      expect(db.submission.update.mock.calls.some(([args]) => args.data.payoutStatus === "failed")).toBe(false);
+      // Never requeued: a requeue re-broadcasts a payment that already settled.
+      expect(db.payoutJob.update.mock.calls.some(([args]) => args.data.status === "queued")).toBe(false);
+      // But it MUST leave every automatic retry path. A job left `processing`
+      // with a dead heartbeat is reclaimed by claimNextJob within a minute, and
+      // a submission left `pending` with no hash is re-sent by the retry cron —
+      // either one double-pays long before a human reads the PAGE.
+      if (path === "legacy") {
+        const quarantine = db.submission.update.mock.calls
+          .map(([args]) => args.data)
+          .filter((data) => data.payoutTxHash === hash);
+        expect(quarantine).not.toHaveLength(0);
+        expect(quarantine.at(-1)).toMatchObject({ payoutStatus: "needs_reconciliation" });
+      } else {
+        const quarantine = db.payoutJob.update.mock.calls
+          .map(([args]) => args.data)
+          .filter((data) => data.status === "failed");
+        expect(quarantine).not.toHaveLength(0);
+        expect(String(quarantine.at(-1)!.lastError)).toMatch(/reconcil/i);
+      }
       expect(effects.pay).toHaveBeenCalledTimes(1);
       expect(effects.page).toHaveBeenCalledWith(expect.objectContaining({
         key: "payout-persistence-unavailable", severity: "PAGE",
@@ -85,14 +102,36 @@ describe("accepted payment persistence boundary", () => {
     db.user.update.mockRejectedValue(new Error(secret));
     await processJob("job", "sub", "user", 123n, "SUBMISSION_PAYOUT");
     expect(effects.credit).not.toHaveBeenCalled();
-    expect(db.payoutJob.update.mock.calls.some(([args]) => ["queued", "failed"].includes(args.data.status))).toBe(false);
+    expect(effects.refund).not.toHaveBeenCalled();
+    expect(db.payoutJob.update.mock.calls.some(([args]) => args.data.status === "queued")).toBe(false);
+    // The tuple persisted but the bookkeeping did not, so the job is still
+    // `processing` with a dying heartbeat — it must be quarantined too.
+    expect(
+      db.payoutJob.update.mock.calls.some(
+        ([args]) => args.data.status === "failed" && /reconcil/i.test(String(args.data.lastError)),
+      ),
+    ).toBe(true);
     expect(effects.page).toHaveBeenCalledWith(expect.objectContaining({ severity: "PAGE" }));
   });
 
   it("legacy: totals failure stays inside the accepted-payment boundary", async () => {
     db.user.findUnique.mockRejectedValue(new Error(secret));
     await expect(reprocessPayoutWithNonceSafety("sub")).resolves.toBeUndefined();
+    expect(effects.refund).not.toHaveBeenCalled();
     expect(effects.page).toHaveBeenCalledWith(expect.objectContaining({ severity: "PAGE" }));
     expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain(secret);
+  });
+});
+
+describe("quarantine warns when it cannot block automatic retries", () => {
+  it("says so in the PAGE when the quarantine write also fails", async () => {
+    db.payoutJob.update.mockRejectedValue(new Error(secret));
+
+    await processJob("job", null, "user", 123n, "WITHDRAWAL");
+
+    const [alert] = effects.page.mock.calls.at(-1)!;
+    expect(alert.lines.join(" ")).toMatch(/not blocked/i);
+    expect(effects.refund).not.toHaveBeenCalled();
+    expect(JSON.stringify(effects.page.mock.calls)).not.toContain(secret);
   });
 });

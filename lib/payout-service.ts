@@ -2,9 +2,12 @@ import prisma from "@/lib/prisma";
 import { payReward, PayoutCapError } from "./payout";
 import { StellarPaymentError } from "./stellar/client";
 import { isValidStellarAddress } from "./stellar/signature";
-import { pageAcceptedPayment, persistAcceptedPayment } from "./payout-broadcast";
+import { abandonAcceptedPayment, persistAcceptedPayment } from "./payout-broadcast";
 
-const TERMINAL_STATUSES = ["confirmed", "sent", "skipped"];
+// `needs_reconciliation` marks a payment that settled on-chain but could not be
+// recorded. It is terminal for retry purposes: a human must reconcile it against
+// the payout account, and no automatic path may broadcast it again.
+const TERMINAL_STATUSES = ["confirmed", "sent", "skipped", "needs_reconciliation"];
 
 /** Is this payout status final — already paid, skipped, or confirmed — and so never re-sent? */
 function isTerminalStatus(status: string): boolean {
@@ -39,6 +42,7 @@ async function claimForRetry(
  * Runs as a best-effort follow-up: a failure here can leave totals uncredited
  * but can never trigger a re-send (the submission is already "sent").
  */
+/** Credit a paid reward to the user's running totals. */
 async function creditUserTotals(walletAddress: string, amount: bigint): Promise<void> {
   // claimForRetry already ensures payoutTxHash is null and status is pending/failed,
   // so no first-send guard is needed here.
@@ -70,6 +74,11 @@ async function creditUserTotals(walletAddress: string, amount: bigint): Promise<
  *   2. broadcast the transfer,
  *   3. persist payoutTxHash, "sent", and the PayoutJob accounting tuple in one
  *      transaction after the transfer has been accepted.
+ */
+/**
+ * Legacy retry path for a stuck submission payout, guarded so a retry can never
+ * double-pay: terminal states are skipped, and once a hash exists a persistence
+ * failure pages for reconciliation rather than unwinding the payment.
  */
 export async function reprocessPayoutWithNonceSafety(submissionId: string): Promise<void> {
   const submission = await prisma.submission.findUnique({ where: { id: submissionId } });
@@ -147,7 +156,20 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
   // Step 3: persist the on-chain result and its accounting record atomically.
   const broadcastAt = new Date();
   const accepted = { reference: `submission:${submissionId}`, txHash, amountUnits: amount, broadcastAt };
-  if (!(await persistAcceptedPayment(accepted, () => prisma.$transaction(async (tx) => {
+  // Storing the hash is what makes this irreversible for the retry paths:
+  // `claimForRetry` refuses any submission that already carries one, and the
+  // status is terminal, so neither the cron nor an admin retry can re-broadcast.
+  const quarantine = () =>
+    prisma.submission.update({
+      where: { id: submissionId },
+      data: {
+        payoutStatus: "needs_reconciliation",
+        payoutTxHash: txHash,
+        lastRetriedAt: new Date(),
+      },
+    });
+
+  const persisted = await persistAcceptedPayment(accepted, () => prisma.$transaction(async (tx) => {
       await tx.submission.update({
         where: { id: submissionId },
         data: { payoutStatus: "sent", payoutTxHash: txHash, lastRetriedAt: broadcastAt },
@@ -172,11 +194,14 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
           lastError: null,
         },
       });
-  })))) return;
+  }), quarantine);
+  if (!persisted) return;
 
   try {
     await creditUserTotals(walletAddress, amount);
   } catch {
-    await pageAcceptedPayment(accepted);
+    // The payment and its hash are recorded; only the totals failed. The stored
+    // hash already blocks re-broadcast, so this just needs a human.
+    await abandonAcceptedPayment(accepted, quarantine);
   }
 }
