@@ -4,6 +4,7 @@ import { maybeSendCapAlert } from "./payout-cap";
 import { StellarPaymentError } from "./stellar/client";
 import { isValidStellarAddress } from "./stellar/signature";
 import { abandonAcceptedPayment, persistAcceptedPayment } from "./payout-broadcast";
+import { retryClaimIsLive } from "./payout-retry-claim";
 
 // `needs_reconciliation` marks a payment that settled on-chain but could not be
 // recorded. It is terminal for retry purposes: a human must reconcile it against
@@ -14,15 +15,6 @@ const TERMINAL_STATUSES = ["confirmed", "sent", "skipped", "needs_reconciliation
 function isTerminalStatus(status: string): boolean {
   return TERMINAL_STATUSES.includes(status);
 }
-
-/**
- * How long a claimed retry is considered in flight. Sized to the retry cron's
- * shortest backoff (`BASE_BACKOFF_MS`, 60s at retryCount 0) so the lease and the
- * backoff are exactly complementary: the cron will not offer a `failed`
- * submission again until 60s have passed, and this refuses it for the same 60s.
- * A lease can therefore never delay a retry the cron considers due.
- */
-const RETRY_CLAIM_LEASE_MS = 60_000;
 
 /**
  * How often an in-flight retry refreshes its claim. Well inside
@@ -79,17 +71,17 @@ async function claimForRetry(
   // A saved txHash means the on-chain transfer was already broadcast. Returning null
   // here prevents re-broadcast even if a prior error left the status as "failed".
   if (fresh.payoutTxHash) return null;
-  if (
-    fresh.lastRetriedAt &&
-    Date.now() - fresh.lastRetriedAt.getTime() < RETRY_CLAIM_LEASE_MS
-  ) {
-    return null;
-  }
+  if (retryClaimIsLive(fresh.lastRetriedAt)) return null;
 
   // Taken before the lock is released, so the next claimant reads it and stands
-  // down. Every later write of this column — success, failure, or the admin
-  // route's reset — overwrites the lease, which is correct: each one is a newer
-  // statement about the same retry.
+  // down. The success and failure paths overwrite it, which is correct: each is
+  // a newer statement about the same retry, made by the caller holding it.
+  //
+  // The admin retry route is why the rule lives in its own module rather than
+  // inline here. It resets this column to null before claiming, so it would
+  // otherwise clear a lease held by a broadcast still in flight and leave the
+  // second claim nothing to stand down on — a double payment. It reads the same
+  // `retryClaimIsLive` and refuses rather than resetting a lease it does not own.
   await tx.submission.update({
     where: { id: submissionId },
     data: { lastRetriedAt: new Date() },
