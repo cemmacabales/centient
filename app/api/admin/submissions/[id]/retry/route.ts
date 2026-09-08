@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 import { reprocessPayoutWithNonceSafety } from "@/lib/payout-service";
+import { retryClaimIsLive } from "@/lib/payout-retry-claim";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,15 @@ export async function POST(
       return { kind: "bad_status" as const, status: row.payoutStatus };
     }
 
+    // A retry already in flight holds a lease on `lastRetriedAt`, and the reset
+    // below would clear it — leaving nothing for the claim in phase 2 to stand
+    // down on, so both attempts broadcast. A row mid-broadcast still reads
+    // `failed` with no hash, so the status check above cannot see it; this is
+    // the only thing that can. Refuse rather than reset a lease we do not own.
+    if (retryClaimIsLive(row.lastRetriedAt)) {
+      return { kind: "claim_held" as const };
+    }
+
     const originals = {
       retryCount: row.retryCount,
       status: row.payoutStatus,
@@ -63,6 +73,15 @@ export async function POST(
     return NextResponse.json(
       { error: `cannot retry submission with status "${claim.status}"` },
       { status: 400 },
+    );
+  }
+  if (claim.kind === "claim_held") {
+    return NextResponse.json(
+      {
+        error:
+          "a retry for this submission is already in flight; try again in a minute",
+      },
+      { status: 409 },
     );
   }
 
