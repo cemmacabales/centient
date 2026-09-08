@@ -191,6 +191,75 @@ describe("submitMultisigPayout", () => {
     expect(inner.signatures.some((s) => coSignerKp.verify(hash, s.signature()))).toBe(true);
   });
 
+  it("submits a fee bump carrying the same two distinct valid signatures", async () => {
+    // The fee bump is the envelope Horizon actually receives, and it is sourced
+    // by the same multisig account as the payment it wraps. Proving the inner
+    // payment is dual-signed says nothing about the wrapper: a fee bump signed
+    // by one key would move the payout account's XLM on a single signature.
+    const horizon = makeHorizon();
+    mockedServer.mockReturnValue(horizon.server as never);
+
+    await submitMultisigPayout(request("s1"), { coSigner: honestCoSigner(), config });
+
+    const feeBump = horizon.submitted[0];
+    const hash = feeBump.hash();
+    expect(feeBump.signatures).toHaveLength(2);
+    expect(feeBump.signatures.some((s) => platformSigner.verify(hash, s.signature()))).toBe(true);
+    expect(feeBump.signatures.some((s) => coSignerKp.verify(hash, s.signature()))).toBe(true);
+    // Two signatures from two parties, never one key counted twice.
+    expect(
+      feeBump.signatures.filter((s) => platformSigner.verify(hash, s.signature())),
+    ).toHaveLength(1);
+  });
+
+  it("submits nothing when the co-signature is valid but belongs to another envelope", async () => {
+    // The boundary half of #12's no-single-key guard. This is the substitution a
+    // signature *count* would wave through: the co-signer answers with its own
+    // configured key and a real Ed25519 signature, so the envelope reaches two
+    // decorated signatures — but over a different payout. Identity is
+    // established by verification against this envelope's hash, so the count
+    // never becomes the test, and nothing is broadcast.
+    const horizon = makeHorizon();
+    mockedServer.mockReturnValue(horizon.server as never);
+    const foreignEnvelopeHash = Buffer.alloc(32, 7);
+    const wrongEnvelope: PayoutCoSigner = {
+      signPayout: vi.fn(async () => ({
+        publicKey: coSignerKp.publicKey(),
+        signature: coSignerKp.sign(foreignEnvelopeHash).toString("base64"),
+      })),
+    };
+
+    await expect(
+      submitMultisigPayout(request("s1"), { coSigner: wrongEnvelope, config }),
+    ).rejects.toThrow(/does not verify against this payout envelope/i);
+    expect(horizon.server.submitTransaction).not.toHaveBeenCalled();
+  });
+
+  it("submits nothing when the co-signer signs the payment but not the fee bump", async () => {
+    // Both stages are guarded, not just the first. A co-signer that agreed to
+    // the payment and then failed the fee bump would otherwise leave a
+    // singly-signed wrapper as the thing Horizon receives.
+    const horizon = makeHorizon();
+    mockedServer.mockReturnValue(horizon.server as never);
+    const honest = honestCoSigner();
+    const halfSigner: PayoutCoSigner = {
+      signPayout: vi.fn(async (r: PayoutCoSignRequest) =>
+        r.stage === "payment"
+          ? honest.signPayout(r)
+          : {
+              publicKey: coSignerKp.publicKey(),
+              signature: coSignerKp.sign(Buffer.alloc(32, 9)).toString("base64"),
+            },
+      ),
+    };
+
+    await expect(
+      submitMultisigPayout(request("s1"), { coSigner: halfSigner, config }),
+    ).rejects.toThrow(/does not verify against this payout envelope/i);
+    expect(vi.mocked(halfSigner.signPayout)).toHaveBeenCalledTimes(2);
+    expect(horizon.server.submitTransaction).not.toHaveBeenCalled();
+  });
+
   it("carries the exact stroop amount into the submitted payment", async () => {
     const horizon = makeHorizon();
     mockedServer.mockReturnValue(horizon.server as never);
