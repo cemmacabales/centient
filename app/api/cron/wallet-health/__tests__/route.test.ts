@@ -13,10 +13,10 @@ import { POST } from "../route";
 
 const ORIGINAL_ENV = { ...process.env };
 
-function cronRequest(token = "test-secret") {
+function cronRequest(token: string | null = "test-secret") {
   return new NextRequest("http://localhost/api/cron/wallet-health", {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
+    headers: token === null ? {} : { Authorization: `Bearer ${token}` },
   });
 }
 
@@ -34,6 +34,28 @@ describe("/api/cron/wallet-health", () => {
     const response = await POST(cronRequest("wrong-secret"));
 
     expect(response.status).toBe(401);
+    expect(mockRunHealthMonitor).not.toHaveBeenCalled();
+  });
+
+  it("rejects a request that carries no Authorization header", async () => {
+    const response = await POST(cronRequest(null));
+
+    expect(response.status).toBe(401);
+    expect(mockRunHealthMonitor).not.toHaveBeenCalled();
+  });
+
+  it("rejects every request while CRON_SECRET is unset or empty", async () => {
+    for (const secret of [undefined, ""]) {
+      if (secret === undefined) delete process.env.CRON_SECRET;
+      else process.env.CRON_SECRET = secret;
+
+      // "undefined" and "" are the tokens a misconfigured scheduler interpolates
+      // from an unset variable; neither may satisfy an unset server secret.
+      for (const token of [null, "", "undefined"]) {
+        expect((await POST(cronRequest(token))).status).toBe(401);
+      }
+    }
+
     expect(mockRunHealthMonitor).not.toHaveBeenCalled();
   });
 
