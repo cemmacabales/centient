@@ -236,31 +236,6 @@ export function parseBalanceThresholds(env: BalanceEnvironment = process.env): B
   };
 }
 
-/**
- * Pull the two balances that matter out of a Horizon `balances[]` array: the
- * native XLM line and the configured payout-asset line (matched by the exact
- * code and issuer validated by `usdcAsset()`). A missing configured asset line
- * means no trustline / no float — reported as 0 and treated as low downstream.
- */
-export function extractBalances(balances: HorizonBalanceLine[]): { xlm: number; usdc: number } {
-  const asset = usdcAsset();
-  const issuer = asset.getIssuer();
-  if (!issuer) throw new Error("Configured USDC asset has no issuer");
-
-  const native = balances.find((b) => b.asset_type === "native");
-  const usdcLine = balances.find(
-    (b) =>
-      b.asset_type !== "native" &&
-      b.asset_code === asset.getCode() &&
-      b.asset_issuer === issuer,
-  );
-
-  return {
-    xlm: native ? Number(native.balance) : 0,
-    usdc: usdcLine ? Number(usdcToUnits(usdcLine.balance)) / Number(STROOPS_PER_XLM) : 0,
-  };
-}
-
 export interface StroopThresholds {
   warnUsdcStroops: bigint;
   pageUsdcStroops: bigint;
