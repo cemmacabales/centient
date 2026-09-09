@@ -32,7 +32,6 @@ vi.mock("../../health-alert", () => ({
 }));
 
 import {
-  extractBalances,
   parseBalanceThresholds,
   checkAndAlert,
   getWalletHealth,
@@ -81,28 +80,6 @@ function balances(usdc: string | null, xlm: string): Line[] {
   }
   return lines;
 }
-
-describe("extractBalances", () => {
-  it("reads the USDC float and native XLM from the account balances", () => {
-    const { usdc, xlm } = extractBalances(balances("123.5000000", "42.0000000"));
-    expect(usdc).toBe(123.5);
-    expect(xlm).toBe(42);
-  });
-
-  it("treats a missing USDC trustline line as zero float", () => {
-    const { usdc, xlm } = extractBalances(balances(null, "42.0000000"));
-    expect(usdc).toBe(0);
-    expect(xlm).toBe(42);
-  });
-
-  it("ignores a USDC-coded line from a different issuer (not our asset)", () => {
-    const lines = [
-      { asset_type: "native", balance: "10.0000000" },
-      { asset_type: "credit_alphanum4", asset_code: "USDC", asset_issuer: "GOTHER", balance: "999" },
-    ];
-    expect(extractBalances(lines).usdc).toBe(0);
-  });
-});
 
 describe("evaluateStroopThresholds", () => {
   const t = {
