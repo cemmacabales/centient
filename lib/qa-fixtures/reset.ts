@@ -15,7 +15,7 @@
 // is reported, counted, and left exactly where it is — because the situation it
 // describes (a fixture reference that settled on-chain) is one QA needs to see
 // rather than one the tool should resolve on its own.
-import type { PrismaClient } from "../../app/generated/prisma/client";
+import type { PrismaClient } from "@/app/generated/prisma/client";
 import { isRealBroadcastHash, isResettableHash } from "./hash";
 
 export interface PreservedRow {

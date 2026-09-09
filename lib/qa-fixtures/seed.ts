@@ -8,7 +8,7 @@
 // something records the mapping. `QaFixtureRun.fixtures` is that record.
 import { randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import type { PrismaClient } from "../../app/generated/prisma/client";
+import type { PrismaClient } from "@/app/generated/prisma/client";
 import {
   CAP_HEADROOM_UNITS,
   FIXTURE_REWARD_UNITS,
