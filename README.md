@@ -164,6 +164,11 @@ floating point.
 
 ## Sequence Diagrams
 
+The three diagrams below cover the **labeler** side. The operator side — admin auth
+and RBAC, campaign funding and CSV ingestion, trust & safety, payout operations, and
+the scheduled jobs — is diagrammed in
+[`docs/admin-sequence-diagrams.md`](docs/admin-sequence-diagrams.md).
+
 ### 1. Labeler auth (email + password)
 
 ```mermaid
