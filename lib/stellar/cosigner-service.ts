@@ -41,6 +41,11 @@ export interface CoSignerResponse {
   body: unknown;
 }
 
+/** The payout a commitment belongs to — the unit the cap is spent in, not the request. */
+function commitmentKey(reference: PayoutReference): string {
+  return `${reference.kind}:${reference.id}`;
+}
+
 /**
  * Units this process has signed but not yet seen broadcast.
  *
@@ -48,6 +53,14 @@ export interface CoSignerResponse {
  * decision being made: two requests arriving together both read the same
  * broadcast volume, both find room, and both are signed — together exceeding the
  * limit this service exists to enforce.
+ *
+ * Commitments are held per payout rather than per request, because one payout
+ * asks for two signatures: `buildCoSignSubmit` presents the same amount once as
+ * `payment` and again as `fee_bump`. Counting each would spend the payout's
+ * amount twice, so the configured cap would hold to about half its value and a
+ * payout that fits under the cap could have its second stage refused. A payout
+ * is committed once, and its second stage neither adds a commitment nor is
+ * charged for the one it already has.
  *
  * A durable, shared reservation would be the general answer, and it is
  * deliberately not what happens here: writing reservations would require giving
@@ -58,18 +71,33 @@ export interface CoSignerResponse {
  * documented to run as, and the payout service holds the primary cap regardless.
  */
 class SignedCommitments {
-  private readonly entries: { at: number; units: bigint }[] = [];
+  private readonly entries: { at: number; key: string; units: bigint }[] = [];
 
-  /** Total still in flight, dropping anything whose envelope can no longer settle. */
-  outstanding(now: number): bigint {
+  /** Drop anything whose envelope can no longer settle. Entries are pushed in time order. */
+  private expire(now: number): void {
     while (this.entries.length > 0 && now - this.entries[0].at > SIGNED_COMMITMENT_TTL_MS) {
       this.entries.shift();
     }
-    return this.entries.reduce((sum, entry) => sum + entry.units, 0n);
   }
 
-  record(now: number, units: bigint): void {
-    this.entries.push({ at: now, units });
+  /**
+   * Total still in flight. `excluding` is the payout currently being decided: its
+   * own earlier commitment is not counted against it, so the second stage of a
+   * payout is measured against the same headroom the first stage was.
+   */
+  outstanding(now: number, excluding?: string): bigint {
+    this.expire(now);
+    return this.entries.reduce(
+      (sum, entry) => (entry.key === excluding ? sum : sum + entry.units),
+      0n,
+    );
+  }
+
+  /** Commit a payout's amount once. A payout already committed in the window is left alone. */
+  record(now: number, key: string, units: bigint): void {
+    this.expire(now);
+    if (this.entries.some((entry) => entry.key === key)) return;
+    this.entries.push({ at: now, key, units });
   }
 }
 
@@ -184,8 +212,9 @@ export async function handleCoSignRequest(
       assertLedgerAgrees(await deps.ledger.readPayout(request.reference), request);
 
       const now = (deps.now ?? (() => new Date()))();
+      const key = commitmentKey(request.reference);
       const broadcast = await deps.ledger.broadcastVolumeSince(startOfDay(now));
-      const outstanding = committed.outstanding(now.getTime());
+      const outstanding = committed.outstanding(now.getTime(), key);
       const spent = broadcast + outstanding;
       if (spent + request.amountUnits > deps.capUnits) {
         return fail(
@@ -195,7 +224,7 @@ export async function handleCoSignRequest(
       }
 
       const signature = deps.policy.sign(transaction.hash()).toString("base64");
-      committed.record(now.getTime(), request.amountUnits);
+      committed.record(now.getTime(), key, request.amountUnits);
       return {
         status: 200,
         body: { publicKey: deps.policy.publicKey(), signature },

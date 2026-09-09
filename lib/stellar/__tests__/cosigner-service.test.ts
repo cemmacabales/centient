@@ -61,7 +61,12 @@ function deps(overrides: Partial<CoSignerDeps> = {}): CoSignerDeps {
 
 /** A platform-signed envelope plus the signed HTTP request that presents it. */
 function signedRequest(
-  overrides: { destination?: string; amountUnits?: bigint; referenceId?: string } = {},
+  overrides: {
+    destination?: string;
+    amountUnits?: bigint;
+    referenceId?: string;
+    stage?: "payment" | "fee_bump";
+  } = {},
 ) {
   const amount = overrides.amountUnits ?? amountUnits;
   const to = overrides.destination ?? destination;
@@ -73,7 +78,7 @@ function signedRequest(
   });
   signAsPlatform(tx, platform);
   const body = JSON.stringify({
-    stage: "payment",
+    stage: overrides.stage ?? "payment",
     xdr: tx.toXDR(),
     destination: to,
     amountUnits: amount.toString(),
@@ -222,14 +227,16 @@ describe("handleCoSignRequest", () => {
     const shared = deps({
       capUnits: 30_000_000n,
       ledger: {
-        readPayout: async () => ledgerRow(),
+        // Answers for whichever payout it is asked about: these are two distinct
+        // payouts, and the cap must be spent once by each.
+        readPayout: async (reference) => ledgerRow({ id: reference.id }),
         // Nothing has broadcast yet: the race is between two in-flight requests,
         // not between a request and a settled payment.
         broadcastVolumeSince: async () => 0n,
       },
     });
-    const first = signedRequest();
-    const second = signedRequest();
+    const first = signedRequest({ referenceId: "sub-1" });
+    const second = signedRequest({ referenceId: "sub-2" });
 
     const [a, b] = await Promise.all([
       handleCoSignRequest(shared, first.body, first.headers),
@@ -271,6 +278,45 @@ describe("handleCoSignRequest", () => {
     // reads ("read", "read", "cap", "cap") mean both validated against the same
     // pre-signature snapshot.
     expect(events).toEqual(["read", "cap", "read", "cap"]);
+  });
+
+  it("signs both stages of one payout when the payout itself fits under the cap", async () => {
+    // A payout is co-signed twice — the payment envelope, then the fee bump —
+    // both carrying the same amount. Charging the cap for each would make the
+    // configured ceiling hold to about half its value, and would refuse the
+    // second stage of a payout whose own amount fits. The cap is set here to
+    // exactly the payout's amount, so there is no headroom to hide the bug in.
+    const shared = deps({
+      capUnits: amountUnits,
+      ledger: {
+        readPayout: async () => ledgerRow(),
+        broadcastVolumeSince: async () => 0n,
+      },
+    });
+    const payment = signedRequest({ stage: "payment" });
+    const feeBump = signedRequest({ stage: "fee_bump" });
+
+    expect((await handleCoSignRequest(shared, payment.body, payment.headers)).status).toBe(200);
+    expect((await handleCoSignRequest(shared, feeBump.body, feeBump.headers)).status).toBe(200);
+  });
+
+  it("still charges the cap once per payout, not once per process", async () => {
+    // The counterpart to the case above: making a payout's second stage free
+    // must not make a *second payout* free. Two references, cap sized for one.
+    const shared = deps({
+      capUnits: amountUnits,
+      ledger: {
+        readPayout: async (reference) => ledgerRow({ id: reference.id }),
+        broadcastVolumeSince: async () => 0n,
+      },
+    });
+    const first = signedRequest({ referenceId: "sub-1" });
+    const second = signedRequest({ referenceId: "sub-2" });
+
+    expect((await handleCoSignRequest(shared, first.body, first.headers)).status).toBe(200);
+    const refused = await handleCoSignRequest(shared, second.body, second.headers);
+    expect(refused.status).toBe(409);
+    expect((refused.body as { error: string }).error).toContain("daily cap reached");
   });
 
   it("never returns a transaction, only a detached signature", async () => {
