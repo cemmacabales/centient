@@ -6,6 +6,18 @@ The payout (hot) account is a **native Stellar multisig**: no single key can mov
 contributor funds. Payments require **2 of 3** signatures. This runbook is the
 source of truth for the signer set, thresholds, and the `set-options` procedure.
 
+> **Deployed account, as of 2026-09-09.** The payout rail on the deployed build
+> (`bbaf4266684e799e84212e6059751b1d1099f3c8`) uses
+> [`GCP34RITQIVSLHS5T4XZRENIBUS3T7FHL3VSR24GK7HPMHGAAKWK4BUO`](https://stellar.expert/explorer/testnet/account/GCP34RITQIVSLHS5T4XZRENIBUS3T7FHL3VSR24GK7HPMHGAAKWK4BUO) —
+> thresholds 2/2/2, three weight-1 signers, `set-options`
+> [`e966c0a5…30fd`](https://stellar.expert/explorer/testnet/tx/e966c0a5c27cbe0253f2812d158b38f8e91513de48254923f9ecb6f4c19630fd),
+> and a two-signature 1 USDC payout
+> [`5083dd72…8206`](https://stellar.expert/explorer/testnet/tx/5083dd72a16bfa749c6b302c293e931939acd70cc52f63586443921d60698206).
+> **Every account, signer and transaction recorded further down this document
+> belongs to an earlier account and is historical.** It is correct, still
+> verifies on-chain, and is retained as evidence of the work — but it is not the
+> account under test. Verify the deployed account above.
+
 ## Signer set & thresholds
 
 | Key                       | Role                          | Weight |
@@ -99,7 +111,14 @@ To rotate a lost/compromised key:
    one co-signer), collecting signatures the same way as a payout (issue #3).
 3. Submit, then run `pnpm stellar:multisig:verify` to assert the new signer set.
 
-## Testnet proof (Definition of Done)
+## Testnet proof — historical (Definition of Done, 2026-09-07)
+
+> **Historical.** This proof records the account the rail used on
+> 2026-09-07. The deployed build uses the account named in the notice at
+> the top of this document. Both are correctly configured 2-of-3
+> accounts on testnet, which is exactly why the distinction matters: a
+> threshold check against this account would pass while saying nothing
+> about the build under test.
 
 Configured on **testnet** on 2026-09-07:
 
@@ -131,7 +150,7 @@ as valid JSON, with the signer roles listed beneath rather than as comments:
 > These are **throwaway testnet keys**. Provision fresh keys held in the secrets
 > store for any account that will hold real value.
 
-### Superseded proof
+### Earlier superseded proof
 
 The first proof, configured 2026-08-19 on account
 [`GAFGVTR2TMPQZWWYUNIAOTFTIFPRUODUD4LB5M2IRA6ORLE4CCPXS7OK`](https://stellar.expert/explorer/testnet/account/GAFGVTR2TMPQZWWYUNIAOTFTIFPRUODUD4LB5M2IRA6ORLE4CCPXS7OK)
@@ -146,7 +165,7 @@ one the payout rail uses.
 survives with it. Whoever provisions the mainnet account records all three keys
 in the shared secrets store *before* the `set-options` transaction is submitted.
 
-## Key custody — current state
+## Key custody — state of the historical account
 
 There is **no secrets-store integration today.** Every script and the payout
 service read plain environment variables (`STELLAR_PLATFORM_SECRET`,

@@ -161,7 +161,19 @@ values.
 Zero-value payouts are rejected before an envelope is built: they are no-ops that
 still burn a sequence number and a fee.
 
-## Live testnet evidence (2026-09-08, #73)
+## Testnet evidence — historical (2026-09-08, #73)
+
+> **Historical.** These two payouts ran against payout account
+> [`GC5UOKLU6J2EROZYYP2I23ZEF4YF42TGGRNQMMTGOJGJ7NOCH3TTR4A6`](https://stellar.expert/explorer/testnet/account/GC5UOKLU6J2EROZYYP2I23ZEF4YF42TGGRNQMMTGOJGJ7NOCH3TTR4A6)
+> through the **gated local co-signer**, so they demonstrate
+> two-signature settlement but *not* the deployed remote co-signer path.
+> The deployed build pays from
+> [`GCP34RITQIVSLHS5T4XZRENIBUS3T7FHL3VSR24GK7HPMHGAAKWK4BUO`](https://stellar.expert/explorer/testnet/account/GCP34RITQIVSLHS5T4XZRENIBUS3T7FHL3VSR24GK7HPMHGAAKWK4BUO).
+> The deployed remote co-signer path is proven separately, on 2026-09-08:
+> transaction
+> [`1791ca62…cad4`](https://stellar.expert/explorer/testnet/tx/1791ca62a1af09567de779be7db4ffdbbf2ffc7bbe411fe719fac791e7a6cad4)
+> settled 5 USDC in ledger 4577653, signed by the ops key and by the policy key
+> that only the `cosigner` service holds. See the QA readiness guide.
 
 `pnpm stellar:payout:proof <G destination> <amount units> <reference id>` drives
 the real `payReward` path end to end — cap check, platform signature, gated
