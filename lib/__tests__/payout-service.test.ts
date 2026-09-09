@@ -23,6 +23,7 @@ const {
   mockUserUpdate,
   mockTxExecuteRaw,
   mockTxFindUnique,
+  mockPayoutJobUpsert,
 } = vi.hoisted(() => ({
   mockPayReward: vi.fn(),
   mockFindUnique: vi.fn(),
@@ -31,13 +32,18 @@ const {
   mockUserUpdate: vi.fn(),
   mockTxExecuteRaw: vi.fn(),
   mockTxFindUnique: vi.fn(),
+  mockPayoutJobUpsert: vi.fn(),
 }));
 
-// Transaction context — only used for the per-wallet advisory-lock re-check.
-// The on-chain send and all post-send writes happen on the top-level client.
+// Transaction context — used for the advisory-lock re-check and accepted-payment
+// persistence. The on-chain send itself remains outside a transaction.
 const mockTx = {
   submission: {
     findUnique: mockTxFindUnique,
+    update: mockSubmissionUpdate,
+  },
+  payoutJob: {
+    upsert: mockPayoutJobUpsert,
   },
   $executeRaw: mockTxExecuteRaw,
 };
@@ -65,6 +71,7 @@ beforeEach(() => {
   mockUserFindUnique.mockResolvedValue(null);
   mockUserUpdate.mockResolvedValue({});
   mockTxExecuteRaw.mockResolvedValue(undefined);
+  mockPayoutJobUpsert.mockResolvedValue({});
   mockPayReward.mockReset();
 });
 
@@ -199,7 +206,12 @@ describe("reprocessPayoutWithNonceSafety", () => {
     await reprocessPayoutWithNonceSafety("sub-4");
 
     expect(mockTxExecuteRaw).toHaveBeenCalled();
-    expect(mockPayReward).toHaveBeenCalledWith(G_B, 500n);
+    // The reference must name the submission being settled — it is what the
+    // independent co-signer (#8) re-derives the amount from.
+    expect(mockPayReward).toHaveBeenCalledWith(G_B, 500n, {
+      kind: "submission",
+      id: "sub-4",
+    });
     expect(mockSubmissionUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "sub-4" },
@@ -209,6 +221,23 @@ describe("reprocessPayoutWithNonceSafety", () => {
         }),
       }),
     );
+    expect(mockPayoutJobUpsert).toHaveBeenCalledWith({
+      where: { submissionId: "sub-4" },
+      create: expect.objectContaining({
+        type: "SUBMISSION_PAYOUT",
+        submissionId: "sub-4",
+        amountUnits: 500n,
+        txHash: TX_1,
+        broadcastAt: expect.any(Date),
+        status: "done",
+      }),
+      update: expect.objectContaining({
+        amountUnits: 500n,
+        txHash: TX_1,
+        broadcastAt: expect.any(Date),
+        status: "done",
+      }),
+    });
     expect(mockUserUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { walletAddress: G_B },
