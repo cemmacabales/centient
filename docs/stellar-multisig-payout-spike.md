@@ -6,6 +6,15 @@ Network: Stellar Testnet
 
 Executed: 2026-09-07
 
+> **Historical evidence.** This spike ran against payout account
+> [`GC5UOKLU6J2EROZYYP2I23ZEF4YF42TGGRNQMMTGOJGJ7NOCH3TTR4A6`](https://stellar.expert/explorer/testnet/account/GC5UOKLU6J2EROZYYP2I23ZEF4YF42TGGRNQMMTGOJGJ7NOCH3TTR4A6), which the deployed build no longer uses; it now
+> pays from
+> [`GCP34RITQIVSLHS5T4XZRENIBUS3T7FHL3VSR24GK7HPMHGAAKWK4BUO`](https://stellar.expert/explorer/testnet/account/GCP34RITQIVSLHS5T4XZRENIBUS3T7FHL3VSR24GK7HPMHGAAKWK4BUO).
+> The spike's *mechanics* — sponsored account and trustline creation, a recipient
+> that holds and spends no XLM, Centient as fee source — are unchanged and remain
+> valid evidence. The account and hashes below are not the ones under test.
+> See the payout account multisig runbook for the deployed account.
+
 ## Result
 
 The spike completed a real 1 USDC payout from the Centient 2-of-3 multisig
