@@ -48,7 +48,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env = { ...ORIGINAL_ENV };
   process.env.STELLAR_USDC_ISSUER = ISSUER;
-  process.env.STELLAR_PLATFORM_SECRET = PLATFORM.secret();
+  process.env.STELLAR_PLATFORM_ACCOUNT = PLATFORM.publicKey();
+  delete process.env.STELLAR_PLATFORM_SECRET;
   mockLedgerCall.mockResolvedValue({ records: [{ base_reserve_in_stroops: "5000000" }] });
 });
 
@@ -309,8 +310,18 @@ describe("Horizon request deadline", () => {
 });
 
 describe("wallet reserve count availability", () => {
+  it("does not derive the monitored account from STELLAR_PLATFORM_SECRET", async () => {
+    delete process.env.STELLAR_PLATFORM_ACCOUNT;
+    process.env.STELLAR_PLATFORM_SECRET = PLATFORM.secret();
+
+    const health = await getWalletHealth();
+
+    expect(health.monitoringStatus).toBe("unconfigured");
+    expect(mockLoadAccount).not.toHaveBeenCalled();
+  });
+
   it("reports reserve counts as null when the platform wallet is unconfigured", async () => {
-    delete process.env.STELLAR_PLATFORM_SECRET;
+    delete process.env.STELLAR_PLATFORM_ACCOUNT;
 
     const health = await getWalletHealth();
 
@@ -501,10 +512,10 @@ describe("getWalletHealth protocol reserve data", () => {
   });
 
   it("marks absent or invalid wallet configuration as unconfigured without inventing balances", async () => {
-    delete process.env.STELLAR_PLATFORM_SECRET;
+    delete process.env.STELLAR_PLATFORM_ACCOUNT;
     const missing = await getWalletHealth();
 
-    process.env.STELLAR_PLATFORM_SECRET = "not-a-stellar-secret";
+    process.env.STELLAR_PLATFORM_ACCOUNT = "not-a-stellar-account";
     const invalid = await getWalletHealth();
 
     for (const health of [missing, invalid]) {

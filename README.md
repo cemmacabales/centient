@@ -298,7 +298,7 @@ container, applies migrations, and seeds test data.
 | Key | Meaning |
 |---|---|
 | `STELLAR_NETWORK` | `testnet` (default) or `public` (mainnet) |
-| `STELLAR_PLATFORM_ACCOUNT` | `G…` public key of the payout account. Preferred over deriving it from a secret — reading balances and planning refills needs no signing key |
+| `STELLAR_PLATFORM_ACCOUNT` | `G…` public key of the payout account. Required for wallet health and payout configuration — reading balances and planning refills needs no signing key |
 | `STELLAR_SPONSOR_SECRET` | `S…` seed that sponsors recipients' USDC trustlines. **Must not be a signer on the payout account** (F-01); it needs XLM for reserves and no payout authority |
 | `STELLAR_OPS_SIGNER_SECRET` | `S…` seed of the ops signer — signature #1 of the 2-of-3 payout. This is the *only* payout-account seed a deployment may hold |
 | `STELLAR_PLATFORM_SECRET` | `S…` seed of the payout account master. **Do not set this alongside `STELLAR_OPS_SIGNER_SECRET`** — one deployment holding two of the three seeds meets the threshold on its own and the payout path refuses to start (F-01) |

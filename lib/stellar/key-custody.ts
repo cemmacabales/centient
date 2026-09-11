@@ -1,10 +1,9 @@
 // Single-deployment key custody for the payout account (F-01).
 //
 // The payout account is 2-of-3: master, ops signer, policy co-signer, each of
-// weight 1, with all three thresholds at 2. The deliverable's security claim
-// (CONTEXT.md, *Policy Co-signer*) is that "forging a payment requires
-// compromising two isolated systems". That claim is about *custody*, and no
-// existing guard tests custody:
+// weight 1, with all three thresholds at 2. The deliverable's security claim is
+// that forging a payment requires compromising two isolated systems. That claim
+// is about *custody*, and no existing guard tests custody:
 //
 //   - TC-002 asserts one **signer** cannot pay. True — each key is weight 1.
 //   - `no-single-key-payout.test.ts` asserts no **code path** broadcasts an
@@ -88,6 +87,7 @@ export function heldPayoutSignerSecrets(
 export function assertCustodyBelowThreshold(
   env: CustodyEnvironment = process.env,
 ): void {
+  assertSponsorNotPayoutSigner(env);
   const held = heldPayoutSignerSecrets(env);
   if (held.length < PAYOUT_THRESHOLD) return;
 
@@ -113,6 +113,13 @@ export function assertSponsorNotPayoutSigner(
   if (payoutAccount && sponsorPublic === payoutAccount) {
     throw new Error(
       "STELLAR_SPONSOR_SECRET must not be the payout account's master key — the sponsorship key exists so that this deployment can fund trustlines without holding a payout signer (F-01).",
+    );
+  }
+
+  const policySignerPublic = env.STELLAR_POLICY_SIGNER_PUBLIC?.trim();
+  if (policySignerPublic && sponsorPublic === policySignerPublic) {
+    throw new Error(
+      "STELLAR_SPONSOR_SECRET must be independent of STELLAR_POLICY_SIGNER_PUBLIC — reusing the policy payout signer as the sponsorship key puts threshold signing authority into this deployment (F-01).",
     );
   }
 

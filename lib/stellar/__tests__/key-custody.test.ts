@@ -60,6 +60,17 @@ describe("assertCustodyBelowThreshold", () => {
     ).toThrow(/meets the 2-of-3 threshold/);
   });
 
+  it("refuses ops plus a sponsor key that is the configured policy signer", () => {
+    expect(() =>
+      assertCustodyBelowThreshold({
+        STELLAR_PLATFORM_ACCOUNT: master.publicKey(),
+        STELLAR_OPS_SIGNER_SECRET: ops.secret(),
+        STELLAR_POLICY_SIGNER_PUBLIC: policy.publicKey(),
+        STELLAR_SPONSOR_SECRET: policy.secret(),
+      }),
+    ).toThrow(/must be independent of STELLAR_POLICY_SIGNER_PUBLIC/);
+  });
+
   it("does not count a platform secret belonging to some other account", () => {
     // The sponsorship key migrates through this shape: a platform-ish secret
     // that is not the payout master must not be mistaken for a payout signer.
@@ -110,6 +121,17 @@ describe("assertSponsorNotPayoutSigner", () => {
         STELLAR_SPONSOR_SECRET: ops.secret(),
       }),
     ).toThrow(/must be independent of STELLAR_OPS_SIGNER_SECRET/);
+  });
+
+  it("refuses the policy signer reused as the sponsorship key when only its public key is configured", () => {
+    expect(() =>
+      assertSponsorNotPayoutSigner({
+        STELLAR_PLATFORM_ACCOUNT: master.publicKey(),
+        STELLAR_OPS_SIGNER_SECRET: ops.secret(),
+        STELLAR_POLICY_SIGNER_PUBLIC: policy.publicKey(),
+        STELLAR_SPONSOR_SECRET: policy.secret(),
+      }),
+    ).toThrow(/must be independent of STELLAR_POLICY_SIGNER_PUBLIC/);
   });
 
   it("accepts an independent sponsorship key", () => {
