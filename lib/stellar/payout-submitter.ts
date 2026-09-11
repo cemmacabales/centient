@@ -25,6 +25,7 @@ import { StellarPaymentError, getTxStatus, resultCodes } from "./client";
 import { server, usdcAsset } from "./config";
 import { buildMultisigFeeBump } from "./multisig-payout";
 import { assertPayoutAmountUnits, assertPayoutDestination } from "./payout-amount";
+import { assertCustodyBelowThreshold } from "./key-custody";
 import type { PayoutReference } from "./payout-envelope";
 import {
   applyCoSignature,
@@ -218,6 +219,11 @@ function requireEnv(env: PayoutEnvironment, name: string): string {
 export function parsePayoutSignerConfig(
   env: PayoutEnvironment = process.env,
 ): PayoutSignerConfig {
+  // Custody first: an environment holding two of the three seeds can assemble a
+  // valid 2-of-2 by itself, so refuse before building anything that could be
+  // signed that way (F-01). The independence check below covers the co-signer
+  // being pointed at our own key; this covers us simply holding its key too.
+  assertCustodyBelowThreshold(env);
   const payoutAccount = requireEnv(env, "STELLAR_PLATFORM_ACCOUNT").trim();
   assertPayoutDestination(payoutAccount, "STELLAR_PLATFORM_ACCOUNT");
   const platformSigner = Keypair.fromSecret(
