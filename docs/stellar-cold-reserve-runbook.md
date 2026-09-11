@@ -44,6 +44,23 @@ The example policy triggers at 25 USDC, restores exactly 100 USDC, and refuses
 any refill that would leave less than 50 USDC cold. Set values from the measured
 daily payout budget.
 
+> **Deployed testnet policy is 30 / 35 / 5 USDC** — `STELLAR_HOT_FLOAT_TRIGGER_UNITS=300000000`,
+> `STELLAR_HOT_FLOAT_TARGET_UNITS=350000000`, `STELLAR_COLD_MIN_RETAIN_UNITS=50000000`.
+> The trigger and target were raised deliberately (`D1-TC018-HANDOFF.md`) so the
+> hot float sits continuously below the trigger and TC-021 has a standing
+> `refill_required` precondition. Earlier readiness notes quoting **10 / 12 / 5**
+> are stale and describe a policy that is no longer deployed; only the 5 USDC
+> floor is unchanged. Read the live values before recording a policy in a test
+> result (F-02):
+>
+> ```bash
+> railway variables --service web --kv | grep -E 'STELLAR_(HOT_FLOAT|COLD_MIN_RETAIN)'
+> ```
+>
+> Do not "correct" the environment down to 10 / 12 to match an older document: a
+> 10 USDC trigger sits below the current hot float, which would flip the refill
+> status to not-required and destroy TC-021's precondition.
+
 ### Worst-case loss
 
 A complete hot-wallet compromise can spend at most what the hot wallet holds,
