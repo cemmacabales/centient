@@ -14,7 +14,15 @@
     "worker": "tsx lib/upload-worker.ts",
     "reconciler": "tsx lib/reconciler.ts",
     "payout": "tsx lib/payout-worker.ts",
+    "cosign": "tsx services/cosigner/server.ts",
+    "stellar:multisig:setup": "tsx scripts/stellar-multisig-setup.ts",
+    "stellar:multisig:verify": "tsx scripts/stellar-multisig-verify.ts",
+    "stellar:multisig:payout-spike": "tsx scripts/stellar-multisig-payout-spike.ts",
+    "stellar:payout:proof": "tsx scripts/stellar-payout-service-proof.ts",
+    "stellar:reserve:setup": "tsx scripts/stellar-cold-reserve-setup.ts",
+    "stellar:reserve:refill": "tsx scripts/stellar-reserve-refill.ts",
     "test": "vitest run",
+    "test:payments": "vitest run --config vitest.payments.config.ts",
     "typecheck": "tsc --noEmit",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
@@ -24,7 +32,10 @@
     "db:test:up": "docker compose up -d test-db && DATABASE_URL=postgresql://postgres:postgres@localhost:5433/centient_test prisma db push --accept-data-loss",
     "db:test:down": "docker compose down test-db",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "qa:fixtures": "tsx scripts/qa-fixtures.ts",
+    "qa:recipients:provision": "tsx scripts/qa-provision-recipients.ts",
+    "qa:recipients:sponsor": "tsx scripts/qa-sponsor-recipient.ts"
   },
   "dependencies": {
     "@albedo-link/intent": "^0.13.0",

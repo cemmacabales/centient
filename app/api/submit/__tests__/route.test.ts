@@ -60,7 +60,7 @@ beforeEach(async () => {
   vi.mocked(checkAndDebit).mockResolvedValue(undefined);
   vi.mocked(creditBalance).mockReset();
   vi.mocked(creditBalance).mockResolvedValue(0n);
-  process.env.PLATFORM_FEE_UNITS = "150000000000000000";
+  process.env.PLATFORM_FEE_UNITS = "1500000"; // 0.15 USDC in seven-decimal units
 });
 
 function makeReq(body: unknown, token?: string): NextRequest {
