@@ -1,12 +1,12 @@
 # Deliverable 1 — QA readiness
 
-**Frozen build:** `bbaf4266684e799e84212e6059751b1d1099f3c8`
+**Frozen build:** `6bc1180e508471bf87da05a960c16c37a53a5450`
 **Environment:** Railway `centient-work` / `production` · https://centient.work
 **Network:** Stellar **Testnet** only · **Refreshed:** 2026-09-09
 
 This is the developer-to-QA handoff for [#13](https://github.com/webnxt-2030/Centient/issues/13).
 It supersedes the PDF guide in [PR #81](https://github.com/webnxt-2030/Centient/pull/81),
-which froze `fa36cf4663fe` — two builds behind — and stated several things that
+which froze `743767823156` — two builds behind — and stated several things that
 later turned out to be wrong. Where the two disagree, this document is right.
 
 QA execution and the `QA:PASSED` label live on
@@ -21,8 +21,8 @@ Both services run the same commit. That is the point of the freeze.
 
 | | |
 | --- | --- |
-| `web` | `bbaf426`, deployed 2026-09-09 09:30 UTC, SUCCESS |
-| `cosigner` | `bbaf426`, deployed 2026-09-09 09:25 UTC, SUCCESS |
+| `web` | `6bc1180`, deployed 2026-09-09 09:30 UTC, SUCCESS |
+| `cosigner` | `6bc1180`, deployed 2026-09-09 09:25 UTC, SUCCESS |
 | CI on that exact SHA | `build`, `payments-lane`, `verify-commit-identities` — all green |
 
 CI runs on push to `develop` as well as on pull requests, so the green run is
@@ -33,17 +33,24 @@ depends on it.
 **If the deployed SHA moves during the run, QA is notified and affected cases
 are reset.** The freeze is a promise about the environment, not about the branch.
 
+**The SHAs above were restamped on 2026-09-11.** Thirteen commits that predated
+the 2026-09-07 sprint start were re-dated to it, which re-hashed the whole
+promotion range. The rewrite changed dates only — the tree at the frozen build is
+byte-identical to what it was — so the code under test has not changed. Railway
+still reports the pre-rewrite SHAs for both services; re-deploy from `staging` to
+make the deployment ledger agree with this document.
+
 ### What changed since the previous freeze
 
-Three commits landed after `596dbc2`, and one of them is behavioural:
+Three commits landed after `0187170`, and one of them is behavioural:
 
 | Commit | Effect on QA |
 | --- | --- |
-| `aa5e91b` | **The co-signer's daily cap is charged once per payout, not once per signature.** Re-run any executed case that touched the co-signer cap. |
-| `f1e94e1` | `extractBalances` deleted. No runtime path changed. |
-| `bbaf426` | Import-style change in the QA fixtures. No behaviour. |
+| `19ce839` | **The co-signer's daily cap is charged once per payout, not once per signature.** Re-run any executed case that touched the co-signer cap. |
+| `48a639c` | `extractBalances` deleted. No runtime path changed. |
+| `6bc1180` | Import-style change in the QA fixtures. No behaviour. |
 
-Before `aa5e91b`, one payout asked for two signatures carrying the same amount
+Before `19ce839`, one payout asked for two signatures carrying the same amount
 and was charged for both, so `COSIGNER_DAILY_CAP_UNITS` held to roughly half its
 configured value. It now means what the runbook says it means. **The configured
 value was deliberately left unchanged** — see the decision register, D-01.
