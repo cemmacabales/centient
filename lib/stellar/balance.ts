@@ -7,7 +7,7 @@
 // A USDC-only check would silently strand payouts on an XLM-starved account, so
 // both assets get their own thresholds. The Discord alert + cooldown mechanism is
 // preserved from celo-balance; alerts say which asset crossed its threshold.
-import { Keypair } from "@stellar/stellar-sdk";
+import { Keypair, StrKey } from "@stellar/stellar-sdk";
 import { REWARD_TOKEN_SYMBOL } from "../constants";
 import { sendDedupedDiscordAlert } from "../health-alert";
 import { walletBalanceAlerts } from "../wallet-balance-alerts";
@@ -31,11 +31,27 @@ interface HorizonBalanceLine {
 }
 
 /**
- * Public key of the pooled platform account, or null when the seed is unset or
- * malformed. Never throws: this module is imported at load time by routes and
- * workers, so a bad seed must degrade to "unconfigured", not crash them.
+ * Public key of the pooled platform account, or null when it is not identifiable.
+ *
+ * Prefers `STELLAR_PLATFORM_ACCOUNT`, because reading balances is a public
+ * operation and deriving the address from a secret was the only reason this
+ * module needed one. Holding the payout master here contributed to the
+ * single-deployment custody defect (F-01); the secret remains a fallback purely
+ * so environments that have not yet set the public key keep reporting.
+ *
+ * Never throws: this module is imported at load time by routes and workers, so a
+ * bad value must degrade to "unconfigured", not crash them.
  */
 function platformPublicKey(): string | null {
+  const account = process.env.STELLAR_PLATFORM_ACCOUNT?.trim();
+  if (account) {
+    if (StrKey.isValidEd25519PublicKey(account)) return account;
+    console.warn(
+      "[stellar/balance] STELLAR_PLATFORM_ACCOUNT is set but not a valid public key — treating wallet as unconfigured",
+    );
+    return null;
+  }
+
   const secret = process.env.STELLAR_PLATFORM_SECRET;
   if (!secret) return null;
   try {
@@ -330,7 +346,7 @@ export async function getWalletHealth(): Promise<WalletHealth> {
       sponsoredReserveXlm: "—",
       rewardTokenSymbol: REWARD_TOKEN_SYMBOL,
       healthy: false,
-      warnings: ["STELLAR_PLATFORM_SECRET not configured"],
+      warnings: ["STELLAR_PLATFORM_ACCOUNT / STELLAR_PLATFORM_SECRET not configured"],
       pages: [],
       assetStatus: { usdc: "unknown", xlm: "unknown" },
       thresholds,

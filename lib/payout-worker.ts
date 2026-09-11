@@ -3,7 +3,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "./prisma";
 import { payReward, PayoutCapError } from "./payout";
 import { maybeSendCapAlert } from "./payout-cap";
-import { StellarPaymentError } from "./stellar/client";
+import { StellarPaymentError, describeStellarError } from "./stellar/client";
 import { creditBalance, totalDebitUnits } from "./campaign-balance";
 import { checkAndAlert } from "./stellar/balance";
 import { computeIAA } from "./quality";
@@ -241,7 +241,10 @@ async function processWithdrawalJob(
       await abandonAcceptedPayment(accepted, quarantinePayoutJob(jobId));
       return;
     }
-    const message = err instanceof Error ? err.message : String(err);
+    // F-04b: describe, don't stringify. A bare `err.message` from Horizon is
+    // "Request failed with status code 400" and loses the result codes that say
+    // *why*, which is the difference between an actionable failure and a mystery.
+    const message = describeStellarError(err);
 
     if (err instanceof PayoutCapError) {
       await prisma.$transaction([
@@ -511,7 +514,8 @@ async function processSubmissionPayout(
       await abandonAcceptedPayment(accepted, quarantinePayoutJob(jobId));
       return;
     }
-    const message = err instanceof Error ? err.message : String(err);
+    // F-04b: same reasoning as the withdrawal path — keep Horizon's result codes.
+    const message = describeStellarError(err);
 
     if (err instanceof PayoutCapError) {
       await prisma.$transaction([
@@ -575,7 +579,10 @@ async function processSubmissionPayout(
       await prisma.$transaction([
         prisma.submission.update({
           where: { id: submissionId },
-          data: { payoutStatus: "failed" },
+          // F-04b: this branch used to set only the status, leaving payoutError
+          // NULL — so the retry-exhausted failures an operator most needs to read
+          // were the ones carrying no explanation at all.
+          data: { payoutStatus: "failed", payoutError: `retries exhausted: ${message}` },
         }),
         prisma.payoutJob.update({
           where: { id: jobId },

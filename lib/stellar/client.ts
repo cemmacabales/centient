@@ -6,8 +6,9 @@
 // payout now goes through `payout-submitter.ts`, which builds the payment from
 // the 2-of-3 payout account, collects two independent signatures, fee-bumps, and
 // submits under its own sequence lock. Nothing in this module can move funds
-// with one signature: `platformKeypair()` signs only the sponsorship sandwich
-// for a recipient's trustline.
+// with one signature: `sponsorKeypair()` signs only the sponsorship sandwich
+// for a recipient's trustline, and is required to be a key that is not a signer
+// on the payout account at all (F-01).
 //
 // USDC is an issued asset, so each recipient must hold a USDC trustline before
 // they can be paid — see `op_no_trust` below and `buildSponsoredTrustlineTx`.
@@ -20,6 +21,7 @@ import {
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
 import { server, networkPassphrase, usdcAsset } from "./config";
+import { assertSponsorNotPayoutSigner } from "./key-custody";
 
 /** How long a built transaction stays valid before Horizon rejects it. */
 const TX_TIMEOUT_SECONDS = 180;
@@ -42,17 +44,44 @@ export class StellarPaymentError extends Error {
   }
 }
 
-let _platformKeypair: Keypair | null = null;
+let _sponsorKeypair: Keypair | null = null;
 
-/** The platform signing key from `STELLAR_PLATFORM_SECRET`, memoized after first use. */
-function platformKeypair(): Keypair {
-  if (_platformKeypair) return _platformKeypair;
-  const secret = process.env.STELLAR_PLATFORM_SECRET;
-  if (!secret) {
-    throw new Error("STELLAR_PLATFORM_SECRET is not configured");
+/**
+ * The sponsorship signing key, memoized after first use.
+ *
+ * Reads `STELLAR_SPONSOR_SECRET` and falls back to `STELLAR_PLATFORM_SECRET`.
+ * The fallback exists so the two halves of the F-01 migration can land in either
+ * order without an onboarding outage: this deployment keeps sponsoring
+ * trustlines while the new key is provisioned, and keeps sponsoring them after
+ * the payout master is removed. It is not a permanent affordance — while
+ * `STELLAR_PLATFORM_SECRET` is what answers here, the deployment still holds a
+ * payout signer and `assertCustodyBelowThreshold` still refuses to pay out.
+ *
+ * This key signs only the sponsorship sandwich — a shape asserted to contain no
+ * payment operation — so it needs XLM for reserves and no payout authority at
+ * all. `assertSponsorNotPayoutSigner` enforces that separation.
+ */
+function sponsorKeypair(): Keypair {
+  if (_sponsorKeypair) return _sponsorKeypair;
+
+  const sponsorSecret = process.env.STELLAR_SPONSOR_SECRET?.trim();
+  if (sponsorSecret) {
+    assertSponsorNotPayoutSigner();
+    _sponsorKeypair = Keypair.fromSecret(sponsorSecret);
+    return _sponsorKeypair;
   }
-  _platformKeypair = Keypair.fromSecret(secret);
-  return _platformKeypair;
+
+  const platformSecret = process.env.STELLAR_PLATFORM_SECRET?.trim();
+  if (!platformSecret) {
+    throw new Error(
+      "STELLAR_SPONSOR_SECRET is not configured (and no STELLAR_PLATFORM_SECRET to fall back to) — new recipients cannot be given a sponsored USDC trustline",
+    );
+  }
+  console.warn(
+    "[stellar/client] sponsoring trustlines with STELLAR_PLATFORM_SECRET; set STELLAR_SPONSOR_SECRET to a non-payout-signer key so the payout master can be removed from this deployment (F-01)",
+  );
+  _sponsorKeypair = Keypair.fromSecret(platformSecret);
+  return _sponsorKeypair;
 }
 
 /** Horizon error → `{ transaction, operations }` result codes (ST-0 #290 shapes). */
@@ -60,6 +89,32 @@ export function resultCodes(err: unknown): { transaction?: string; operations?: 
   const extras = (err as { response?: { data?: { extras?: { result_codes?: unknown } } } })
     ?.response?.data?.extras?.result_codes;
   return (extras as { transaction?: string; operations?: string[] }) ?? {};
+}
+
+/**
+ * A human-readable failure description that preserves Horizon's verdict.
+ *
+ * Horizon rejects with an axios error whose `message` is only
+ * `Request failed with status code 400`; the reason — `tx_insufficient_balance`,
+ * `op_underfunded`, `op_no_trust` — lives in `extras.result_codes`, and
+ * `console.log`ging the error renders that object as `[Object]`. So a payout
+ * that failed for a precise, actionable reason was indistinguishable from one
+ * that failed for an unknown one (F-04b). Anything that records a payout failure
+ * for an operator should describe it through here.
+ */
+export function describeStellarError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const codes = resultCodes(err);
+  const parts: string[] = [];
+  if (codes.transaction) parts.push(codes.transaction);
+  if (codes.operations?.length) {
+    // Horizon pads the array with "op_success" for operations that did apply;
+    // keeping those buries the one code that explains the failure.
+    const failed = codes.operations.filter((code) => code && code !== "op_success");
+    if (failed.length) parts.push(...failed);
+  }
+  if (!parts.length) return message;
+  return `${message} (${parts.join(", ")})`;
 }
 
 /**
@@ -144,7 +199,7 @@ async function accountExists(address: string): Promise<boolean> {
 export async function buildSponsoredTrustlineTx(
   recipientG: string,
 ): Promise<{ xdr: string; kind: "trustline" | "account+trustline" }> {
-  const kp = platformKeypair();
+  const kp = sponsorKeypair();
   const srv = server();
   const account = await srv.loadAccount(kp.publicKey());
   const fee = await srv.fetchBaseFee().catch(() => Number(BASE_FEE));
