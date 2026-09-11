@@ -44,22 +44,23 @@ The example policy triggers at 25 USDC, restores exactly 100 USDC, and refuses
 any refill that would leave less than 50 USDC cold. Set values from the measured
 daily payout budget.
 
-> **Deployed testnet policy is 30 / 35 / 5 USDC** — `STELLAR_HOT_FLOAT_TRIGGER_UNITS=300000000`,
-> `STELLAR_HOT_FLOAT_TARGET_UNITS=350000000`, `STELLAR_COLD_MIN_RETAIN_UNITS=50000000`.
-> The trigger and target were raised deliberately (`D1-TC018-HANDOFF.md`) so the
-> hot float sits continuously below the trigger and TC-021 has a standing
-> `refill_required` precondition. Earlier readiness notes quoting **10 / 12 / 5**
-> are stale and describe a policy that is no longer deployed; only the 5 USDC
-> floor is unchanged. Read the live values before recording a policy in a test
-> result (F-02):
+> **Deployed testnet policy is 20 / 24 / 5 USDC** — `STELLAR_HOT_FLOAT_TRIGGER_UNITS=200000000`,
+> `STELLAR_HOT_FLOAT_TARGET_UNITS=240000000`, `STELLAR_COLD_MIN_RETAIN_UNITS=50000000`.
+> It was 30 / 35 / 5 until TC-021 was executed on 2026-09-11; the cold reserve was
+> re-provisioned to `GC5UOKLU6J2EROZYYP2I23ZEF4YF42TGGRNQMMTGOJGJ7NOCH3TTR4A6` and the
+> policy lowered to what that account's float can fund while preserving the floor.
+> These numbers have now moved twice. Earlier notes quoting **10 / 12 / 5** or
+> **30 / 35 / 5** are both stale; only the 5 USDC floor has never changed. Read the
+> live values before recording a policy in a test result (F-02):
 >
 > ```bash
 > railway variables --service web --kv | grep -E 'STELLAR_(HOT_FLOAT|COLD_MIN_RETAIN)'
 > ```
 >
-> Do not "correct" the environment down to 10 / 12 to match an older document: a
-> 10 USDC trigger sits below the current hot float, which would flip the refill
-> status to not-required and destroy TC-021's precondition.
+> Do not "correct" the environment to match an older document. The trigger must sit
+> **above** the current hot float for a refill to be required at all, and the target
+> must exceed the trigger while the cold float can still cover `target − hot` without
+> breaching the floor. Those three constraints, not any document, decide the values.
 
 ### Worst-case loss
 
