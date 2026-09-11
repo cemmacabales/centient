@@ -111,9 +111,19 @@ export const USDC_PAYMENT_BUILDER_ALLOWLIST: Readonly<Record<string, string>> = 
 export const PAYOUT_SIGNER_SECRET_ALLOWLIST: Readonly<Record<string, string>> = {
   "lib/stellar/payout-submitter.ts":
     "parsePayoutSignerConfig — the one place the platform signing key enters the payout path, and it rejects a co-signer configured to the same key",
+  "lib/stellar/key-custody.ts":
+    "the F-01 custody guard — names the signer variables in order to count how many of them one deployment holds, and derives public keys only to compare identities; it never signs, which `no-single-key-payout.test.ts` asserts separately",
   "scripts/stellar-multisig-payout-spike.ts":
     "issue #6's hand-run testnet ceremony, which necessarily holds both signer secrets locally and asserts the ops key matches STELLAR_OPS_SIGNER_PUBLIC before signing",
 };
+
+/**
+ * Lane files permitted to read a payout signer secret *without* being able to
+ * sign with it. Kept separate from the allowlist above so that the "only the
+ * submitter signs" invariant stays a single, checkable statement even as more
+ * non-signing readers (guards, diagnostics) appear.
+ */
+export const NON_SIGNING_SIGNER_SECRET_READERS = ["lib/stellar/key-custody.ts"] as const;
 
 /** Repo-relative paths of every `.ts` source file in the lane's scan roots. */
 export function paymentsLaneSourceFiles(repoRoot: string): string[] {

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   HORIZON_SUBMIT_ALLOWLIST,
   PAYMENTS_LANE_SOURCE_ROOTS,
+  NON_SIGNING_SIGNER_SECRET_READERS,
   PAYOUT_SIGNER_SECRET_ALLOWLIST,
   USDC_PAYMENT_BUILDER_ALLOWLIST,
   paymentsLaneGlobCounts,
@@ -191,8 +192,26 @@ describe("no single-key payout path exists in the payments lane", () => {
       matchesInCode(read(file), /STELLAR_OPS_SIGNER_SECRET/),
     );
     expect(readers.sort()).toEqual(Object.keys(PAYOUT_SIGNER_SECRET_ALLOWLIST).sort());
-    expect(readers.filter((file) => !file.startsWith("scripts/"))).toEqual([
-      "lib/stellar/payout-submitter.ts",
-    ]);
+    expect(readers.filter((file) => !file.startsWith("scripts/")).sort()).toEqual(
+      ["lib/stellar/payout-submitter.ts", ...NON_SIGNING_SIGNER_SECRET_READERS].sort(),
+    );
+  });
+
+  it("lets only the submitter sign with a payout signer secret", () => {
+    // The assertion above pins *who may read* the signer secret. Reading it is
+    // not the hazard — signing with it is, and the F-01 custody guard has to
+    // name the same variables in order to count them. So the invariant that
+    // actually matters is split out here: a non-signing reader must contain no
+    // signing call at all. If one ever grows a `.sign(`, it has stopped being a
+    // guard and joined the payout path, and this fails rather than the weaker
+    // name-based check silently continuing to pass.
+    for (const file of NON_SIGNING_SIGNER_SECRET_READERS) {
+      const source = read(file);
+      expect(matchesInCode(source, /\.sign\s*\(/), `${file} must not sign`).toBe(false);
+      expect(
+        matchesInCode(source, /signAsPlatform|applyCoSignature/),
+        `${file} must not participate in signing`,
+      ).toBe(false);
+    }
   });
 });
