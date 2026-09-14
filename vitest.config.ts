@@ -23,9 +23,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["**/__tests__/**/*.test.ts"],
-    // `.claude/worktrees/*` holds git worktrees of other (often merged) branches;
+    // `.claude/worktrees/*` and `.worktrees/*` hold other (often merged) branches;
     // without excluding them the glob runs duplicate stale copies of every suite.
-    exclude: ["node_modules", ".next", "dist", ".claude/**"],
+    exclude: ["node_modules", ".next", "dist", ".claude/**", ".worktrees/**"],
     pool: "forks",
     fileParallelism: false,
     testTimeout: 30_000,

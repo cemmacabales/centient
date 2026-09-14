@@ -296,6 +296,7 @@ model PayoutJob {
   amountUnits          BigInt?
   destinationAddress String?
   txHash             String?
+  broadcastAt        DateTime?
   status             PayoutJobStatus @default(queued)
   workerHeartbeatAt  DateTime?
   startedAt          DateTime?
@@ -310,6 +311,8 @@ model PayoutJob {
 
   @@index([status, createdAt])
   @@index([status, workerHeartbeatAt])
+  @@index([broadcastAt])
+  @@index([status, completedAt])
   @@index([userId])
   @@unique([userId], name: "payout_jobs_user_inflight_withdrawal_key", map: "payout_jobs_user_inflight_withdrawal_key", where: raw("\"type\" = 'WITHDRAWAL' AND \"status\" IN ('queued', 'processing')"))
   @@map("payout_jobs")
@@ -441,4 +444,35 @@ model FlaggedWithdrawal {
   @@index([userId])
   @@unique([userId, reason], name: "flagged_withdrawals_userId_reason_pending_uniq", map: "flagged_withdrawals_userId_reason_pending_uniq", where: { status: "PENDING" })
   @@map("flagged_withdrawals")
+}
+
+// QA fixture lifecycle (#86 / B9). One row per `qa:fixtures seed`, closed out by
+// the matching reset.
+//
+// This is the evidence trail D1 QA cites. `fixtures` maps each stable slug to the
+// row id it resolved to on this run, which is what makes a payout reference
+// readable months later: the slug says what the fixture meant, the id says which
+// `submission:<id>` or `payout_job:<id>` carried it. Ids are fresh every run
+// because a payout reference is never reused, so the slug alone cannot identify
+// anything without this map.
+//
+// `preservedCount` is the number of rows a reset refused to remove because they
+// carried a real Horizon hash. It is deliberately recorded rather than inferred:
+// a non-zero value means real funds moved through a fixture reference, which is
+// the one outcome QA must notice rather than discover later.
+model QaFixtureRun {
+  id             String    @id @default(uuid())
+  runId          String    @unique
+  gitSha         String
+  network        String
+  fixtures       Json
+  seededCount    Int       @default(0)
+  deletedCount   Int?
+  preservedCount Int?
+  note           String?
+  seededAt       DateTime  @default(now())
+  resetAt        DateTime?
+
+  @@index([seededAt])
+  @@map("qa_fixture_runs")
 }

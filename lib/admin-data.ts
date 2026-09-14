@@ -3,6 +3,7 @@ import { normalizeReason } from "./quality";
 import { REWARD_TOKEN_SYMBOL } from "./constants";
 import { unitsToUsdcDisplay } from "./stellar/config";
 import { getWalletHealth } from "./stellar/balance";
+import { getDailyPayoutCapUnits, getRolling24hPayoutSum } from "./payout-cap";
 
 export interface DashboardTotals {
   totalSubmissions: number;
@@ -463,6 +464,11 @@ export interface PoolHealth {
 
 const STUCK_PAYOUT_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
+/**
+ * Queue, task, and wallet counters for the admin health surfaces. Daily cap
+ * figures come from the shared PayoutJob accounting so this page and the payout
+ * path agree on what has been spent.
+ */
 export async function getHealthSnapshot(): Promise<PoolHealth> {
   const now = new Date();
   const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -479,7 +485,7 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
     totalUsers,
     bannedUsers,
     wallet,
-    dailyPayoutAgg,
+    dailyPayoutSpent,
   ] = await Promise.all([
     prisma.submission.count({ where: { payoutStatus: "pending" } }),
     prisma.submission.findFirst({
@@ -498,18 +504,14 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
     prisma.user.count(),
     prisma.user.count({ where: { isBanned: true } }),
     hotWallet(),
-    prisma.submission.aggregate({
-      _sum: { payoutAmountUnits: true },
-      where: {
-        payoutStatus: { in: ["sent", "confirmed"] },
-        createdAt: { gte: last24h },
-      },
-    }),
+    // Cap spend is PayoutJob-backed: broadcast withdrawals have no Submission
+    // row, so a Submission aggregate under-counts the same cap the payout path
+    // enforces. Share one accounting helper with lib/payout-cap.
+    getRolling24hPayoutSum(),
   ]);
 
-  const dailyCapRaw = process.env.DAILY_PAYOUT_CAP_UNITS;
-  const dailyCapUnits = dailyCapRaw ? BigInt(dailyCapRaw.trim()) : 2_000_000_000n; // 200 XLM
-  const dailySpentUnits = dailyPayoutAgg._sum.payoutAmountUnits ?? 0n;
+  const dailyCapUnits = getDailyPayoutCapUnits();
+  const dailySpentUnits = dailyPayoutSpent;
   const dailyRemainingUnits = dailyCapUnits > dailySpentUnits ? dailyCapUnits - dailySpentUnits : 0n;
   const dailyPayoutSpentPct =
     dailyCapUnits > 0n ? Math.round(Number((dailySpentUnits * 10000n) / dailyCapUnits)) / 100 : 0;
@@ -536,6 +538,7 @@ export async function getHealthSnapshot(): Promise<PoolHealth> {
   };
 }
 
+/** Whether a pending submission has aged past the stuck-payout threshold. */
 export function isStuckPending(createdAt: Date, now: Date = new Date()): boolean {
   return now.getTime() - createdAt.getTime() > STUCK_PAYOUT_THRESHOLD_MS;
 }

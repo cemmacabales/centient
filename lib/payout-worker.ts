@@ -2,12 +2,18 @@ import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "./prisma";
 import { payReward, PayoutCapError } from "./payout";
-import { StellarPaymentError } from "./stellar/client";
+import { maybeSendCapAlert } from "./payout-cap";
+import { StellarPaymentError, describeStellarError } from "./stellar/client";
 import { creditBalance, totalDebitUnits } from "./campaign-balance";
 import { checkAndAlert } from "./stellar/balance";
 import { computeIAA } from "./quality";
 import { REWARDED_STATUSES } from "./constants";
 import { refundReversal } from "./user-balance";
+import {
+  abandonAcceptedPayment,
+  persistAcceptedPayment,
+  type AcceptedPayment,
+} from "./payout-broadcast";
 
 const STALE_PROCESSING_MS = 60_000;
 // Refresh the in-flight job's heartbeat well within STALE_PROCESSING_MS so a slow
@@ -21,10 +27,54 @@ const BATCH_SIZE = 20;
 let shouldStop = false;
 let currentJobId: string | null = null;
 
-// A refund is the last step that returns the user's locked balance after a payout
-// is abandoned. If it throws (DB constraint, ledger error), the funds are stranded
-// with the job already marked failed/completed — no retry path. Swallowing the error
-// silently loses money without a trace, so surface it loudly to Sentry + logs.
+/**
+ * True when a payout failed without establishing whether it settled on-chain.
+ *
+ * These are the only failures that must not be refunded. Every other
+ * non-retryable code is a verdict that the payment never applied, so returning
+ * the balance is correct; `ambiguous_submit` is the absence of a verdict, and
+ * refunding one that did settle pays the user a second time — off-chain this
+ * time. The job is failed and paged instead, for a human to reconcile against
+ * the payout account before any reissue.
+ */
+function needsManualReconciliation(err: unknown): boolean {
+  return err instanceof StellarPaymentError && err.code === "ambiguous_submit";
+}
+
+/**
+ * Return a user's locked balance after a payout is abandoned, never throwing.
+ *
+ * A refund is the last step in an abandoned payout. If it throws (DB constraint,
+ * ledger error) the funds are stranded with the job already marked failed or
+ * completed, and there is no retry path. Swallowing that silently loses money
+ * without a trace, so the failure is surfaced loudly to Sentry and the logs
+ * instead of propagating and masking the original payout error.
+ */
+
+const RECONCILIATION_ERROR = "accepted payment needs manual reconciliation";
+
+/**
+ * Take a paid-but-unrecorded job out of the claimable set.
+ *
+ * `claimNextJob` reclaims any job still `processing` once its heartbeat goes
+ * stale, so leaving it there would re-run the handler and pay a second time.
+ * Failing it is not a refund: no refund path keys off this status, and the
+ * reconciler only touches jobs that carry a hash.
+ */
+function quarantinePayoutJob(jobId: string): () => Promise<unknown> {
+  return () =>
+    prisma.payoutJob.update({
+      where: { id: jobId },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        lastError: RECONCILIATION_ERROR,
+        retryCount: MAX_RETRIES,
+      },
+    });
+}
+
+/** Refund a failed withdrawal without letting the refund's own failure throw. */
 async function safeRefund(
   userId: string,
   amountUnits: bigint,
@@ -42,6 +92,11 @@ async function safeRefund(
   }
 }
 
+/**
+ * Atomically claim the next queued payout job for this worker, or null when the
+ * queue is empty. Claiming marks the job in-flight so a second worker cannot pick
+ * up the same payout.
+ */
 export async function claimNextJob(): Promise<{
   id: string;
   submissionId: string | null;
@@ -81,6 +136,11 @@ export async function claimNextJob(): Promise<{
   return claimed[0];
 }
 
+/**
+ * Credit an abandoned submission payout back to its campaign balance. Gold tasks
+ * and campaign-less tasks draw from no campaign budget, so they are a no-op.
+ * Best-effort: a failure here must not mask the payout error that triggered it.
+ */
 async function refundCampaignBalance(
   task: { isGold: boolean; campaignId: string | null },
   submissionId: string,
@@ -96,6 +156,16 @@ async function refundCampaignBalance(
   ).catch(() => {});
 }
 
+/**
+ * Settle one user-initiated withdrawal: resolve the destination, pay it, and on
+ * failure classify the error, refund the user's locked balance, and either requeue
+ * or fail the job permanently.
+ */
+/**
+ * Settle one withdrawal: pay the destination, then record the broadcast tuple.
+ * Once a hash exists the funds are gone, so a persistence failure pages for
+ * reconciliation instead of refunding or requeueing.
+ */
 async function processWithdrawalJob(
   jobId: string,
   userId: string,
@@ -137,20 +207,44 @@ async function processWithdrawalJob(
       .catch(() => {});
   }, HEARTBEAT_REFRESH_MS);
 
+  let accepted: AcceptedPayment | undefined;
   try {
-    const txHash = await payReward(destination, amountUnits);
-
-    await prisma.payoutJob.update({
-      where: { id: jobId },
-      data: {
-        txHash,
-        workerHeartbeatAt: new Date(),
-      },
+    const txHash = await payReward(destination, amountUnits, {
+      kind: "payout_job",
+      id: jobId,
     });
+    const broadcastAt = new Date();
+    accepted = { reference: `payout_job:${jobId}`, txHash, amountUnits, broadcastAt };
+
+    const persisted = await persistAcceptedPayment(
+      accepted,
+      () =>
+        prisma.payoutJob.update({
+          where: { id: jobId },
+          data: { txHash, amountUnits, broadcastAt, workerHeartbeatAt: broadcastAt },
+        }),
+      quarantinePayoutJob(jobId),
+    );
+    if (!persisted) return;
+
+    // Only now can the alert read a rolling total that includes this payout: the
+    // tuple it sums is the write that just landed. Fire-and-forget so a slow
+    // Discord or Redis never delays a settled payout, and unawaited failures are
+    // swallowed for the same reason — the payment already stands.
+    maybeSendCapAlert().catch(() => {});
 
     console.log(`[payout-worker] withdrawal job ${jobId} broadcast: paid ${amountUnits} to ${destination} (${txHash})`);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    if (accepted) {
+      // The tuple may have persisted, but the job is still `processing` with a
+      // dying heartbeat — quarantine it or a sweep re-pays it.
+      await abandonAcceptedPayment(accepted, quarantinePayoutJob(jobId));
+      return;
+    }
+    // F-04b: describe, don't stringify. A bare `err.message` from Horizon is
+    // "Request failed with status code 400" and loses the result codes that say
+    // *why*, which is the difference between an actionable failure and a mystery.
+    const message = describeStellarError(err);
 
     if (err instanceof PayoutCapError) {
       await prisma.$transaction([
@@ -174,18 +268,31 @@ async function processWithdrawalJob(
     // trustline; `op_no_destination` — recipient unfunded) can never succeed on a
     // blind retry. Fail the job immediately and refund the user's balance so they
     // can re-withdraw once they establish a trustline (ST-4b/ST-4e). Re-queueing
-    // here would loop until MAX_RETRIES and waste cap/Horizon calls. `tx_bad_seq`
-    // is already retried once inside `payUsdc`, so it never reaches here.
+    // here would loop until MAX_RETRIES and waste cap/Horizon calls. A single
+    // `tx_bad_seq` is rebuilt and resubmitted once inside the multisig submitter;
+    // only sustained contention surfaces here, and it is retryable.
+    //
+    // `ambiguous_submit` is the one exception to the refund: it means the payout
+    // may already have settled on-chain, so returning the balance too would pay
+    // twice. See `needsManualReconciliation`.
     if (err instanceof StellarPaymentError && !err.retryable) {
+      const unreconciled = needsManualReconciliation(err);
       await prisma.payoutJob.update({
         where: { id: jobId },
         data: {
           status: "failed",
           completedAt: new Date(),
-          lastError: `non-retryable (${err.code}): ${message}`,
+          lastError: unreconciled
+            ? `needs manual reconciliation (${err.code}): ${message}`
+            : `non-retryable (${err.code}): ${message}`,
           retryCount: MAX_RETRIES,
         },
       });
+      if (unreconciled) {
+        console.error(`[payout-worker] withdrawal job ${jobId} needs manual reconciliation (${err.code}); balance NOT refunded: ${message}`);
+        Sentry.captureMessage(`[payout-worker] withdrawal job ${jobId} needs manual reconciliation (${err.code}): ${message}`, { level: "error" });
+        return;
+      }
       await safeRefund(userId, amountUnits, jobId, `Refund for non-retryable payout (${err.code})`);
       console.warn(`[payout-worker] withdrawal job ${jobId} failed non-retryably (${err.code}): ${message}`);
       Sentry.captureMessage(`[payout-worker] withdrawal job ${jobId} non-retryable (${err.code}): ${message}`, { level: "warning" });
@@ -227,6 +334,11 @@ async function processWithdrawalJob(
   }
 }
 
+/**
+ * Settle one submission reward: pay the linked wallet, record the broadcast
+ * tuple, then credit the submission and user bookkeeping. The tuple is persisted
+ * before the bookkeeping so a bookkeeping failure cannot unwind a paid reward.
+ */
 async function processSubmissionPayout(
   jobId: string,
   submissionId: string,
@@ -287,15 +399,61 @@ async function processSubmissionPayout(
       .catch(() => {});
   }, HEARTBEAT_REFRESH_MS);
 
+  let accepted: AcceptedPayment | undefined;
   try {
-    const txHash = await payReward(walletAddress, amount);
+    const txHash = await payReward(walletAddress, amount, {
+      kind: "submission",
+      id: submissionId,
+    });
+    const broadcastAt = new Date();
+    accepted = { reference: `payout_job:${jobId}`, txHash, amountUnits: amount, broadcastAt };
+
+    // The job's tuple and the submission's hash land in one write. The retry cron
+    // re-broadcasts any `pending` submission without a hash, so writing the hash
+    // in the bookkeeping transaction below would let a bookkeeping failure roll
+    // it back and re-pay a settled payment (#73).
+    //
+    // If that write itself never lands, the quarantine has to cover both rows
+    // for the same reason: failing only the job would still leave the
+    // submission `pending` with no hash for the retry cron to find.
+    const quarantine = () =>
+      prisma.$transaction([
+        prisma.submission.update({
+          where: { id: submissionId },
+          data: { payoutStatus: "needs_reconciliation", payoutTxHash: txHash },
+        }),
+        prisma.payoutJob.update({
+          where: { id: jobId },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            lastError: RECONCILIATION_ERROR,
+            retryCount: MAX_RETRIES,
+          },
+        }),
+      ]);
+    const persisted = await persistAcceptedPayment(
+      accepted,
+      () =>
+        prisma.$transaction([
+          prisma.payoutJob.update({
+            where: { id: jobId },
+            data: { txHash, amountUnits: amount, broadcastAt, workerHeartbeatAt: broadcastAt },
+          }),
+          prisma.submission.update({
+            where: { id: submissionId },
+            data: { payoutStatus: "sent", payoutTxHash: txHash },
+          }),
+        ]),
+      quarantine,
+    );
+    if (!persisted) return;
+
+    // See the note in `processWithdrawalJob`: raised here rather than inside
+    // `payReward` so the ledger the alert sums already carries this payout.
+    maybeSendCapAlert().catch(() => {});
 
     await prisma.$transaction(async (tx) => {
-      await tx.submission.update({
-        where: { id: submissionId },
-        data: { payoutStatus: "sent", payoutTxHash: txHash },
-      });
-
       // Identity is the FK `userId` (ST-5d), not the wallet — the wallet is just the
       // on-chain destination validated above.
       await tx.user.update({
@@ -350,40 +508,64 @@ async function processSubmissionPayout(
 
     console.log(`[payout-worker] submission job ${jobId} completed: submission ${submissionId} paid ${txHash}`);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    if (accepted) {
+      // The tuple may have persisted, but the job is still `processing` with a
+      // dying heartbeat — quarantine it or a sweep re-pays it.
+      await abandonAcceptedPayment(accepted, quarantinePayoutJob(jobId));
+      return;
+    }
+    // F-04b: same reasoning as the withdrawal path — keep Horizon's result codes.
+    const message = describeStellarError(err);
 
     if (err instanceof PayoutCapError) {
       await prisma.$transaction([
         prisma.submission.update({
           where: { id: submissionId },
-          data: { payoutStatus: "skipped" },
+          data: { payoutStatus: "pending" },
         }),
         prisma.payoutJob.update({
           where: { id: jobId },
-          data: { status: "failed", completedAt: new Date(), lastError: `payout cap exceeded: ${message}`, retryCount: MAX_RETRIES },
+          data: {
+            status: "failed",
+            completedAt: new Date(),
+            lastError: `payout cap exceeded: ${message}`,
+          },
         }),
       ]);
-      await refundCampaignBalance(submission.task, submissionId, amount, "refund: payout cap reached");
-      console.warn(`[payout-worker] submission job ${jobId} failed: daily cap reached`);
+      console.warn(`[payout-worker] submission job ${jobId} deferred: daily cap reached`);
       return;
     }
 
     // Non-retryable rail errors (`op_no_trust` / `op_no_destination`) can never
     // succeed on a blind retry — the recipient `G…` must add a USDC trustline /
     // be funded first. Fail immediately (consume the full retry budget) and refund
-    // the campaign balance rather than requeue. `tx_bad_seq` is retried once inside
-    // `payUsdc`, so it never surfaces here.
+    // the campaign balance rather than requeue. A single `tx_bad_seq` is rebuilt
+    // and resubmitted once inside the multisig submitter; only sustained
+    // contention surfaces here, and it is retryable.
+    //
+    // `ambiguous_submit` is the one exception to the refund: it means the payout
+    // may already have settled on-chain, so returning the balance too would pay
+    // twice. See `needsManualReconciliation`.
     if (err instanceof StellarPaymentError && !err.retryable) {
+      const unreconciled = needsManualReconciliation(err);
+      const label = unreconciled
+        ? `needs manual reconciliation (${err.code})`
+        : `non-retryable (${err.code})`;
       await prisma.$transaction([
         prisma.submission.update({
           where: { id: submissionId },
-          data: { payoutStatus: "failed", payoutError: `non-retryable (${err.code})`, retryCount: MAX_RETRIES },
+          data: { payoutStatus: "failed", payoutError: label, retryCount: MAX_RETRIES },
         }),
         prisma.payoutJob.update({
           where: { id: jobId },
-          data: { status: "failed", completedAt: new Date(), lastError: `non-retryable (${err.code}): ${message}`, retryCount: MAX_RETRIES },
+          data: { status: "failed", completedAt: new Date(), lastError: `${label}: ${message}`, retryCount: MAX_RETRIES },
         }),
       ]);
+      if (unreconciled) {
+        console.error(`[payout-worker] submission job ${jobId} needs manual reconciliation (${err.code}); campaign balance NOT refunded: ${message}`);
+        Sentry.captureMessage(`[payout-worker] submission job ${jobId} needs manual reconciliation (${err.code}): ${message}`, { level: "error" });
+        return;
+      }
       await refundCampaignBalance(submission.task, submissionId, amount, `refund: non-retryable payout (${err.code})`);
       console.error(`[payout-worker] submission job ${jobId} failed non-retryably (${err.code}): ${message}`);
       Sentry.captureMessage(`[payout-worker] submission job ${jobId} non-retryable (${err.code}): ${message}`, { level: "warning" });
@@ -397,7 +579,10 @@ async function processSubmissionPayout(
       await prisma.$transaction([
         prisma.submission.update({
           where: { id: submissionId },
-          data: { payoutStatus: "failed" },
+          // F-04b: this branch used to set only the status, leaving payoutError
+          // NULL — so the retry-exhausted failures an operator most needs to read
+          // were the ones carrying no explanation at all.
+          data: { payoutStatus: "failed", payoutError: `retries exhausted: ${message}` },
         }),
         prisma.payoutJob.update({
           where: { id: jobId },
@@ -419,6 +604,7 @@ async function processSubmissionPayout(
   }
 }
 
+/** Dispatch one claimed job to its handler, failing jobs whose type and fields disagree. */
 export async function processJob(
   jobId: string,
   submissionId: string | null,
@@ -443,6 +629,11 @@ export async function processJob(
   currentJobId = null;
 }
 
+/**
+ * Claim and process payout jobs until {@link stopWorker} is called, idling on an
+ * empty queue. A loop-level error is reported and slept off rather than killing
+ * the worker, so one bad job cannot stop the rail.
+ */
 export async function runWorkerLoop(): Promise<void> {
   console.log("[payout-worker] starting loop");
 
@@ -465,14 +656,17 @@ export async function runWorkerLoop(): Promise<void> {
   console.log("[payout-worker] loop stopped");
 }
 
+/** Ask the loop to exit after the in-flight job finishes. */
 export function stopWorker(): void {
   shouldStop = true;
 }
 
+/** Resolve after `ms`, used for the idle-poll and error backoff. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Stop the loop cleanly on SIGINT/SIGTERM so an in-flight payout is not cut short. */
 function installSignalHandlers() {
   const handler = (signal: string) => {
     console.log(`[payout-worker] received ${signal}, finishing in-flight job then exiting`);

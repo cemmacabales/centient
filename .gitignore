@@ -11,3 +11,4 @@ ngrok.exe
 *.exe
 ROADMAP.md
 .venv-pdf/
+.worktrees/

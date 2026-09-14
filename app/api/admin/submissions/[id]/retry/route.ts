@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 import { reprocessPayoutWithNonceSafety } from "@/lib/payout-service";
+import { RETRY_CLAIM_LEASE_MS, retryClaimIsLive } from "@/lib/payout-retry-claim";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,21 @@ export async function POST(
       return { kind: "bad_status" as const, status: row.payoutStatus };
     }
 
+    // A retry in flight holds a lease on `lastRetriedAt`, and the reset below
+    // would clear it — leaving nothing for the claim in phase 2 to stand down
+    // on, so both attempts broadcast. A row mid-broadcast still reads `failed`
+    // with no hash, so the status check above cannot see it; this is the only
+    // thing that can. Refuse rather than reset a lease we do not own.
+    //
+    // `retryClaimIsLive` is conservative by construction (see its docstring), so
+    // this also refuses for up to a minute after a retry that has already
+    // finished. Say that plainly below rather than asserting a broadcast is in
+    // flight — an operator who is told the wrong thing about a payout stops
+    // trusting the ones they are told correctly.
+    if (retryClaimIsLive(row.lastRetriedAt)) {
+      return { kind: "claim_held" as const, lastRetriedAt: row.lastRetriedAt as Date };
+    }
+
     const originals = {
       retryCount: row.retryCount,
       status: row.payoutStatus,
@@ -63,6 +79,23 @@ export async function POST(
     return NextResponse.json(
       { error: `cannot retry submission with status "${claim.status}"` },
       { status: 400 },
+    );
+  }
+  if (claim.kind === "claim_held") {
+    const retryAfterSeconds = Math.max(
+      1,
+      Math.ceil(
+        (RETRY_CLAIM_LEASE_MS - (Date.now() - claim.lastRetriedAt.getTime())) / 1000,
+      ),
+    );
+    return NextResponse.json(
+      {
+        error: "retry_claim_held",
+        detail:
+          "a retry was claimed for this submission less than a minute ago and may still be in flight; retrying now could pay it twice",
+        retryAfterSeconds,
+      },
+      { status: 409, headers: { "Retry-After": String(retryAfterSeconds) } },
     );
   }
 

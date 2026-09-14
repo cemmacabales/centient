@@ -26,6 +26,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     task: { count: vi.fn(async () => 0) },
     user: { count: vi.fn(async () => 0) },
+    payoutJob: {
+      aggregate: vi.fn(async () => ({ _count: { _all: 0 }, _sum: { amountUnits: 0n } })),
+    },
   },
 }));
 

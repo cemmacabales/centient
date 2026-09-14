@@ -38,7 +38,7 @@ The name is a portmanteau of **cent** (the micropayment) and **sentient** (the A
 
 Do NOT use: Supabase, wagmi, RainbowKit, WalletConnect, Prisma Postgres managed. MiniPay injects the provider directly.
 
-**Next.js 16 rules the coding agent MUST follow:**
+**Next.js 16 implementation rules:**
 - `params` and `searchParams` are async. Always `await props.params` / `await props.searchParams`.
 - Turbopack is default — do NOT pass `--turbopack` flag, do NOT ship a `webpack` config.
 - Middleware is `middleware.ts` at the project root.
