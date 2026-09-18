@@ -1,12 +1,12 @@
 // Dual-asset wallet-health for the pooled platform account (ST-3c #297).
-// Replaces lib/celo-balance.ts. USDC is non-native, so the pooled account holds
+// USDC is non-native, so the pooled account holds
 // TWO balances that both matter:
 //   - USDC — the payout float; if it runs low, withdrawals can't be funded.
 //   - XLM  — pays every transaction's fee + the base/trustline reserves; if it
 //            runs low, NO payout can be submitted even with USDC on hand.
 // A USDC-only check would silently strand payouts on an XLM-starved account, so
-// both assets get their own thresholds. The Discord alert + cooldown mechanism is
-// preserved from celo-balance; alerts say which asset crossed its threshold.
+// both assets get their own thresholds. Discord alerts (with a cooldown) say
+// which asset crossed its threshold.
 import { StrKey } from "@stellar/stellar-sdk";
 import { REWARD_TOKEN_SYMBOL } from "../constants";
 import { sendDedupedDiscordAlert } from "../health-alert";

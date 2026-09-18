@@ -22,6 +22,7 @@ import {
 } from "@/lib/campaign-balance";
 import { creditReward } from "@/lib/user-balance";
 import { getLabelerSession } from "@/lib/labeler-auth";
+import { isValidStellarAddress } from "@/lib/stellar/signature";
 import { REWARDED_STATUSES } from "@/lib/constants";
 
 function errorResponse(code: string, status: number, context: Record<string, unknown> = {}) {
@@ -34,9 +35,9 @@ function errorResponse(code: string, status: number, context: Record<string, unk
 }
 
 export async function POST(req: NextRequest) {
-  // ST-5d: identity is the session (userId), not a `0x` wallet in the body — an
-  // email-only labeler with no linked wallet can answer. The wallet is retained
-  // on the submission only when the account has one linked.
+  // ST-5d: identity is the session (userId), not a `0x` wallet in the body. #30:
+  // the account must hold a bound wallet to answer; it is checked after the user
+  // is loaded.
   const userId = await getLabelerSession(req);
   if (!userId) {
     return errorResponse("unauthorized", 401);
@@ -82,6 +83,13 @@ export async function POST(req: NextRequest) {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
       return errorResponse("unauthorized", 401, { userId });
+    }
+    // #30: the bound wallet is the account and its payout destination. An account
+    // made by email before wallet sign-in binds one before it can earn; a legacy
+    // EVM `0x…` value can never receive USDC, so it counts as no wallet. 409, not
+    // 403: the client reads a 403 here as a ban.
+    if (!user.walletAddress || !isValidStellarAddress(user.walletAddress)) {
+      return errorResponse("wallet_required", 409, { userId });
     }
     const walletAddress = user.walletAddress;
 

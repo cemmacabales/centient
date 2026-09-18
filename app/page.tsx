@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import TaskCard from "@/components/TaskCard";
 import EarningsBadge from "@/components/EarningsBadge";
@@ -11,18 +11,23 @@ import AccountSheet from "@/components/AccountSheet";
 import InAppLanding from "@/components/InAppLanding";
 import LoginScreen from "@/components/LoginScreen";
 import AccountAuthScreen from "@/components/AccountAuthScreen";
+import WalletClaim from "@/components/WalletClaim";
+import PayoutSetup from "@/components/PayoutSetup";
 import Toast, { type ToastKind, type ToastMessage } from "@/components/Toast";
 import OnboardingScreen from "@/components/OnboardingScreen";
 import DisputeForm from "@/components/DisputeForm";
-import { posthog } from "@/components/PostHogProvider";
+import { identify, track } from "@/lib/analytics";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { isValidStellarAddress } from "@/lib/stellar/signature";
 
 const MIN_LOADING_MS = 1500;
 
 type Screen =
   | "checking"
   | "login"
-  | "account_auth"
+  | "email_sign_in"
+  | "claim_wallet"
+  | "payout_setup"
   | "loading"
   | "onboarding"
   | "landing"
@@ -99,6 +104,12 @@ function submitErrorMessage(status: number, code?: string): string {
   return `Submission failed (${code ?? status}). Please try again.`;
 }
 
+/**
+ * The contributor app. #30: first connect is one flow — sign in with Freighter
+ * (or, for an account created by email, sign in and claim a wallet), set the
+ * wallet up for USDC payouts, then onboard. The proven wallet is the account and
+ * its payout destination.
+ */
 export default function Home() {
   const [screen, setScreen] = useState<Screen>("checking");
   const [wallet, setWallet] = useState<string | null>(null);
@@ -108,7 +119,6 @@ export default function Home() {
   const [submitting, setSubmitting] = useState(false);
   const [submissionCount, setSubmissionCount] = useState(0);
   const [accountOpen, setAccountOpen] = useState(false);
-  const [accountAuthMode, setAccountAuthMode] = useState<"login" | "register">("register");
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [onboardingCompleted, setOnboardingCompleted] = useState(false);
   const [unbannedAt, setUnbannedAt] = useState<string | null>(null);
@@ -121,6 +131,13 @@ export default function Home() {
     ageRange: string | null;
   }>({ country: null, gender: null, ageRange: null });
 
+  // Logging out no longer unloads the page, so work that was already in flight
+  // can still resolve afterwards. Anything async captures this generation when
+  // it starts and drops its result if a logout has bumped it since — otherwise
+  // a submission that lands a moment later would move a logged-out tab to the
+  // success screen.
+  const sessionGeneration = useRef(0);
+
   const showToast = useCallback((message: string, kind: ToastKind = "info") => {
     setToast({ id: Date.now(), message, kind });
   }, []);
@@ -128,12 +145,18 @@ export default function Home() {
   const dismissToast = useCallback(() => setToast(null), []);
 
   // ST-5d: identity comes from the session cookie (`labeler_session`), not a
-  // `?wallet=` query param — an email-only labeler with no linked wallet can
-  // read their profile and answer tasks. `credentials` are same-origin so the
-  // cookie rides along automatically.
+  // `?wallet=` query param. `credentials` are same-origin so the cookie rides
+  // along automatically.
   const fetchUserData = useCallback(async () => {
+    const generation = sessionGeneration.current;
     const res = await fetch("/api/me");
+    // A logged-out /api/me answers 401 with an error body. Applying that would
+    // blank the profile rather than leave it alone, so stop at the status.
+    if (!res.ok) return null;
     const data = await res.json();
+    // A request issued just before a logout can still answer 200; keep its
+    // contents off a tab that has since been signed out.
+    if (sessionGeneration.current !== generation) return null;
     setSubmissionCount(data.submissionCount ?? 0);
     setOnboardingCompleted(data.onboardingCompleted ?? false);
     setUnbannedAt(data.unbannedAt ?? null);
@@ -153,10 +176,12 @@ export default function Home() {
   // session-scoped off-chain balance instead of a per-question on-chain payout.
   // Best-effort: a transient balance fetch failure must not block the flow.
   const fetchBalance = useCallback(async () => {
+    const generation = sessionGeneration.current;
     try {
       const res = await fetch("/api/me/balance");
       if (!res.ok) return;
       const data = await res.json();
+      if (sessionGeneration.current !== generation) return;
       setBalance(data.pendingBalance ?? "0");
       setRecentCredits(Array.isArray(data.ledger) ? data.ledger : []);
     } catch {
@@ -166,6 +191,11 @@ export default function Home() {
 
   const fetchTask = useCallback(async () => {
     const res = await fetch("/api/task");
+    // #30: an account without a bound wallet is served no work until it claims one.
+    if (res.status === 409) {
+      setScreen("claim_wallet");
+      return;
+    }
     const data = await res.json();
     if (data.task) {
       setTask({
@@ -178,73 +208,102 @@ export default function Home() {
         rewardSymbol: data.task.rewardSymbol,
       });
       setScreen("task");
-      if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
-        posthog.capture("task_viewed", { taskId: data.task.id });
-      }
+      track("task_presented", { task_id: data.task.id });
     } else {
       setScreen("no_tasks");
     }
   }, []);
 
+  /**
+   * #30: where a session belongs in first connect. Sign-in, email sign-in and a
+   * reload all resolve through here, so a contributor who stopped partway —
+   * declined a prompt, closed the tab mid-sponsorship — resumes at that step.
+   * A returning wallet that is already set up passes through payout setup
+   * without a signature.
+   */
+  const resolveSession = useCallback(async (): Promise<Screen> => {
+    const res = await fetch("/api/auth/me");
+    if (!res.ok) return "login";
+    const data = (await res.json()) as {
+      authenticated?: boolean;
+      userId?: string;
+      wallet?: string | null;
+    };
+    if (!data.authenticated) return "login";
+    if (data.userId) identify(data.userId);
+    // No wallet, or a legacy EVM `0x…` that can never receive USDC: claim one.
+    if (!data.wallet || !isValidStellarAddress(data.wallet)) return "claim_wallet";
+    setWallet(data.wallet);
+    return "payout_setup";
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/auth/me");
-        if (!res.ok) {
-          if (!cancelled) setScreen("login");
-          return;
-        }
-        const data = (await res.json()) as {
-          authenticated?: boolean;
-          wallet?: string | null;
-        };
-        if (data.authenticated) {
-          if (cancelled) return;
-          // ST-5d: a linked wallet is display-only (the withdrawal destination),
-          // not a gate. Any authenticated labeler — wallet-linked or email-only —
-          // proceeds to answer tasks, keyed on the session.
-          setWallet(data.wallet ?? null);
-          setScreen("loading");
-          const userData = await fetchUserData();
-          await fetchBalance();
-          if (cancelled) return;
-          if (userData?.onboardingCompleted) {
-            setScreen("landing");
-          } else {
-            setScreen("onboarding");
-          }
-        } else {
-          if (!cancelled) setScreen("login");
-        }
-      } catch {
-        if (!cancelled) setScreen("login");
-      }
-    })();
+    resolveSession()
+      .catch((): Screen => "login")
+      .then((next) => {
+        if (!cancelled) setScreen(next);
+      });
     return () => {
       cancelled = true;
     };
-  }, [fetchUserData, fetchBalance]);
+  }, [resolveSession]);
 
-  const handleAccountLoggedIn = useCallback(async () => {
+  // Freighter sign-in and email sign-in set the same `labeler_session` cookie,
+  // so both resolve the session the same way.
+  const handleSignedIn = useCallback(async () => {
     setScreen("loading");
     try {
-      const res = await fetch("/api/auth/me");
-      const data = res.ok ? await res.json() : null;
-      if (data?.authenticated) {
-        // ST-5d: identity is the session; a linked wallet (if any) is display-only.
-        // Both wallet-linked and email-only accounts go straight to answering.
-        setWallet(data.wallet ?? null);
-        const userData = await fetchUserData();
-        await fetchBalance();
-        setScreen(userData?.onboardingCompleted ? "landing" : "onboarding");
-        return;
-      }
-      setScreen("login");
+      setScreen(await resolveSession());
     } catch {
       setScreen("login");
     }
+  }, [resolveSession]);
+
+  const handleWalletClaimed = useCallback((address: string) => {
+    setWallet(address);
+    setScreen("payout_setup");
+  }, []);
+
+  /** Past payout setup, whether it finished or was left for later: onboarding or the landing. */
+  const enterApp = useCallback(async () => {
+    setScreen("loading");
+    try {
+      const userData = await fetchUserData();
+      await fetchBalance();
+      // fetchUserData has already shown the cooldown screen; don't replace it.
+      if (userData?.isCooldown) return;
+      setScreen(userData?.onboardingCompleted ? "landing" : "onboarding");
+    } catch {
+      setScreen("wallet_error");
+    }
   }, [fetchUserData, fetchBalance]);
+
+  const handlePayoutReady = useCallback(
+    async ({ address, sponsored }: { address: string; sponsored: boolean }) => {
+      setWallet(address);
+      track("payout_ready", { sponsored });
+      await enterApp();
+    },
+    [enterApp],
+  );
+
+  // PR #105 review: tasks and submissions need only a bound wallet; payout setup
+  // is needed to withdraw. A failure there — Horizon down, the sponsor short of
+  // XLM, a legacy account at the sponsorship cap — must not keep a contributor
+  // out of the app. A withdrawal refused `payout_setup_required` brings them back.
+  const handlePayoutSkipped = useCallback(
+    async (reason: string) => {
+      track("payout_setup_skipped", { reason });
+      await enterApp();
+    },
+    [enterApp],
+  );
+
+  const handlePayoutSetupRequired = useCallback(() => {
+    setAccountOpen(false);
+    setScreen("payout_setup");
+  }, []);
 
   useEffect(() => {
     if (!unbannedAt || screen !== "cooldown") return;
@@ -272,16 +331,36 @@ export default function Home() {
     fetchTask();
   }, [fetchTask]);
 
+  // Logging out clears the session cookie server-side; everything the signed-in
+  // session put in client state has to be dropped here too, or the next labeler
+  // to sign in on this tab would flash the previous one's wallet and balance.
+  const handleLogout = useCallback(() => {
+    sessionGeneration.current += 1;
+    setAccountOpen(false);
+    setWallet(null);
+    setTask(null);
+    setBalance("0");
+    setRecentCredits([]);
+    setSubmissionCount(0);
+    setOnboardingCompleted(false);
+    setUnbannedAt(null);
+    setCooldownRemaining("");
+    setBannedReason(null);
+    setDisputeOpen(false);
+    setDemographics({ country: null, gender: null, ageRange: null });
+    setScreen("login");
+  }, []);
+
   const handleOnboardingComplete = useCallback(() => {
     setOnboardingCompleted(true);
     setScreen("landing");
-    if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
-      posthog.capture("onboarding_completed", { wallet });
-    }
-  }, [wallet]);
+    track("onboarding_completed");
+  }, []);
 
   async function handleSubmit(choice: "A" | "B", reason: string) {
     if (!task) return;
+    const generation = sessionGeneration.current;
+    const loggedOutSince = () => sessionGeneration.current !== generation;
     setSubmitting(true);
     try {
       let res: Response;
@@ -305,19 +384,24 @@ export default function Home() {
         console.error("[submit] non-JSON response", { status: res.status });
       }
 
+      // The answer still counts — the server recorded it — but this tab belongs
+      // to nobody now, so none of the outcomes below should reach the screen.
+      if (loggedOutSince()) return;
+
+      if (res.status === 409 && data.error === "wallet_required") {
+        setScreen("claim_wallet");
+        return;
+      }
+
       if (res.status === 403) {
         setScreen("banned");
-        if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
-          posthog.capture("user_banned", { wallet, taskId: task.id });
-        }
+        track("submission_blocked", { task_id: task.id, reason: "account_banned" });
         return;
       }
 
       if (!data.paid && data.reason === "quality_check_failed") {
         setScreen("quality_failed");
-        if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
-          posthog.capture("quality_check_failed", { wallet, taskId: task.id });
-        }
+        track("submission_quality_check_failed", { task_id: task.id });
         setTimeout(() => fetchTask(), 1500);
         return;
       }
@@ -327,10 +411,13 @@ export default function Home() {
         // the balance + recent credits instead of polling a per-question payout.
         await fetchUserData();
         await fetchBalance();
+        if (loggedOutSince()) return;
         setScreen("success");
-        if (process.env.NEXT_PUBLIC_POSTHOG_KEY) {
-          posthog.capture("submission_success", { wallet, taskId: task.id, status: data.status });
-        }
+        track("submission_approved", {
+          task_id: task.id,
+          choice,
+          credit_status: data.status,
+        });
         return;
       }
 
@@ -348,24 +435,18 @@ export default function Home() {
   } else if (screen === "login") {
     body = (
       <LoginScreen
-        onEmailAuth={(mode) => {
-          setAccountAuthMode(mode);
-          setScreen("account_auth");
-        }}
+        onWalletSignedIn={handleSignedIn}
+        onEmailSignIn={() => setScreen("email_sign_in")}
         error={null}
       />
     );
-  } else if (screen === "account_auth") {
-    body = (
-      <AccountAuthScreen
-        onBack={() => setScreen("login")}
-        onLoggedIn={handleAccountLoggedIn}
-        initialMode={accountAuthMode}
-      />
-    );
+  } else if (screen === "email_sign_in") {
+    body = <AccountAuthScreen onBack={() => setScreen("login")} onLoggedIn={handleSignedIn} />;
+  } else if (screen === "claim_wallet") {
+    body = <WalletClaim onClaimed={handleWalletClaimed} />;
+  } else if (screen === "payout_setup") {
+    body = <PayoutSetup onReady={handlePayoutReady} onSkip={handlePayoutSkipped} />;
   } else if (screen === "onboarding") {
-    // ST-5d: onboarding no longer requires a linked wallet — the session is the
-    // identity, so email-only labelers onboard and answer like anyone else.
     body = <OnboardingScreen onComplete={handleOnboardingComplete} />;
   } else if (screen === "landing") {
     body = (
@@ -426,9 +507,11 @@ export default function Home() {
           gender={demographics.gender}
           ageRange={demographics.ageRange}
           showToast={showToast}
+          onPayoutSetupRequired={handlePayoutSetupRequired}
           onDemographicsDeleted={() =>
             setDemographics({ country: null, gender: null, ageRange: null })
           }
+          onLoggedOut={handleLogout}
         />
       </div>
     );
@@ -454,7 +537,7 @@ export default function Home() {
           </h2>
           <p className="text-center font-body text-sm text-on-surface-variant">
             Your contribution helps improve AI. Earnings build up in your balance —
-            connect a wallet to withdraw anytime.
+            withdraw to your wallet anytime.
           </p>
           <div className="w-full rounded-3xl bg-surface-container-lowest p-6 shadow-[0_8px_32px_rgba(25,28,30,0.06)]">
             <div className="flex flex-col items-center">
@@ -549,8 +632,8 @@ export default function Home() {
               <DisputeForm walletAddress={wallet ?? ""} onDone={() => setDisputeOpen(false)} />
             </div>
           )}
-          <a href="mailto:support@centient.work" className="text-sm text-primary underline">
-            support@centient.work
+          <a href="mailto:centient@artisam.xyz" className="text-sm text-primary underline">
+            centient@artisam.xyz
           </a>
         </div>
       </div>
@@ -580,8 +663,8 @@ export default function Home() {
               {cooldownRemaining}
             </div>
           </div>
-          <a href="mailto:support@centient.work" className="text-sm text-primary underline">
-            support@centient.work
+          <a href="mailto:centient@artisam.xyz" className="text-sm text-primary underline">
+            centient@artisam.xyz
           </a>
         </div>
       </div>

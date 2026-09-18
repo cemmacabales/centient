@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { track } from "@/lib/analytics";
 
 interface DeleteCustomerButtonProps {
   customerId: string;
@@ -25,6 +26,7 @@ export default function DeleteCustomerButton({ customerId, companyName }: Delete
         setDeleting(false);
         return;
       }
+      track("customer_deleted", { customer_id: customerId });
       router.push("/admin/customers");
       router.refresh();
     } catch {

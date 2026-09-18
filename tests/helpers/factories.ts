@@ -1,3 +1,4 @@
+import { Keypair } from "@stellar/stellar-sdk";
 import type { PrismaClient } from "@/app/generated/prisma/client";
 import { prisma } from "./db";
 
@@ -81,8 +82,10 @@ export async function createUser(
 ) {
   // An explicit `walletAddress: null` models an email-only labeler (ST-5d); when the
   // key is omitted the factory generates a wallet for the common wallet-linked case.
+  // #30: that wallet is a Stellar `G…`, since only a Stellar wallet can earn or be
+  // paid. Pass `makeWallet()` explicitly to model a legacy EVM `0x…` account.
   const walletAddress =
-    "walletAddress" in overrides ? overrides.walletAddress ?? null : makeWallet();
+    "walletAddress" in overrides ? overrides.walletAddress ?? null : Keypair.random().publicKey();
   const user = await db.user.create({
     data: {
       walletAddress,

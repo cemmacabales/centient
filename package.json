@@ -21,6 +21,7 @@
     "stellar:payout:proof": "tsx scripts/stellar-payout-service-proof.ts",
     "stellar:reserve:setup": "tsx scripts/stellar-cold-reserve-setup.ts",
     "stellar:reserve:refill": "tsx scripts/stellar-reserve-refill.ts",
+    "stellar:sponsorship:reclaim": "tsx scripts/stellar-sponsorship-reclaim.ts",
     "test": "vitest run",
     "test:payments": "vitest run --config vitest.payments.config.ts",
     "typecheck": "tsc --noEmit",
@@ -38,7 +39,6 @@
     "qa:recipients:sponsor": "tsx scripts/qa-sponsor-recipient.ts"
   },
   "dependencies": {
-    "@albedo-link/intent": "^0.13.0",
     "@prisma/adapter-pg": "^7.0.0",
     "@prisma/client": "^7.8.0",
     "@sentry/nextjs": "^10.56.0",
@@ -50,12 +50,12 @@
     "jose": "^6.2.3",
     "next": "^16.2.0",
     "posthog-js": "^1.379.2",
+    "posthog-node": "^5.52.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "recharts": "^3.8.1",
     "resend": "^6.12.3",
-    "sonner": "^2.0.7",
-    "viem": "^2.21.0"
+    "sonner": "^2.0.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.3",

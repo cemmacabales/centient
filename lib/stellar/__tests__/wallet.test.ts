@@ -3,22 +3,32 @@ import { Keypair, hash } from "@stellar/stellar-sdk";
 
 process.env.STELLAR_USDC_ISSUER = Keypair.random().publicKey();
 
-const { mockIsConnected, mockSignTransaction } = vi.hoisted(() => ({
-  mockIsConnected: vi.fn(),
-  mockSignTransaction: vi.fn(),
-}));
+const { mockIsConnected, mockSignTransaction, mockRequestAccess, mockSignMessage, freighterState } =
+  vi.hoisted(() => ({
+    mockIsConnected: vi.fn(),
+    mockSignTransaction: vi.fn(),
+    mockRequestAccess: vi.fn(),
+    mockSignMessage: vi.fn(),
+    // Lets one test simulate a Freighter build that has no signMessage.
+    freighterState: { signMessageMissing: false },
+  }));
 
 vi.mock("@stellar/freighter-api", () => ({
   isConnected: mockIsConnected,
   signTransaction: mockSignTransaction,
-  requestAccess: vi.fn(),
-  signMessage: vi.fn(),
+  requestAccess: mockRequestAccess,
+  get signMessage() {
+    return freighterState.signMessageMissing ? undefined : mockSignMessage;
+  },
 }));
 
 import {
   freighterSignatureToBase64,
-  albedoSignatureToBase64,
+  connect,
+  signOwnership,
   signTransaction,
+  FREIGHTER_REQUIRED_MESSAGE,
+  WalletError,
 } from "@/lib/stellar/wallet";
 import { verify } from "@/lib/stellar/signature";
 
@@ -59,15 +69,6 @@ describe("freighterSignatureToBase64", () => {
   });
 });
 
-describe("albedoSignatureToBase64", () => {
-  it("converts a hex ed25519 signature to base64", () => {
-    const sig = sep53Sign(MESSAGE);
-    expect(albedoSignatureToBase64(sig.toString("hex"))).toBe(
-      sig.toString("base64"),
-    );
-  });
-});
-
 describe("interop with server verify (SEP-53)", () => {
   it("a Freighter V4 base64 signature verifies after normalization", () => {
     const normalized = freighterSignatureToBase64(
@@ -79,6 +80,108 @@ describe("interop with server verify (SEP-53)", () => {
   it("a Freighter V3 Buffer signature verifies after normalization", () => {
     const normalized = freighterSignatureToBase64(sep53Sign(MESSAGE));
     expect(verify(kp.publicKey(), MESSAGE, normalized)).toBe(true);
+  });
+});
+
+describe("connect", () => {
+  it("returns the Freighter address when access is granted", async () => {
+    mockRequestAccess.mockResolvedValue({ address: ADDR });
+    await expect(connect()).resolves.toEqual({ address: ADDR, wallet: "freighter" });
+  });
+
+  it("throws install guidance when Freighter is unavailable — there is no fallback wallet", async () => {
+    mockIsConnected.mockResolvedValue({ isConnected: false });
+    await expect(connect()).rejects.toThrow(FREIGHTER_REQUIRED_MESSAGE);
+    expect(mockRequestAccess).not.toHaveBeenCalled();
+  });
+});
+
+describe("signOwnership", () => {
+  it("returns a SEP-53 proof that the server verifies", async () => {
+    mockSignMessage.mockResolvedValue({
+      signedMessage: sep53Sign(MESSAGE).toString("base64"),
+      signerAddress: kp.publicKey(),
+    });
+    const proof = await signOwnership(MESSAGE, kp.publicKey());
+    expect(proof).toMatchObject({ scheme: "sep53", wallet: "freighter" });
+    expect(verify(kp.publicKey(), MESSAGE, proof.signature)).toBe(true);
+  });
+
+  it("throws install guidance when Freighter is unavailable", async () => {
+    mockIsConnected.mockResolvedValue({ isConnected: false });
+    await expect(signOwnership(MESSAGE, ADDR)).rejects.toThrow(FREIGHTER_REQUIRED_MESSAGE);
+  });
+});
+
+describe("WalletError codes (#26)", () => {
+  const REJECTED = { code: -4, message: "The user rejected this request." };
+
+  /** Await a call expected to throw a WalletError and return its code. */
+  async function codeOf(p: Promise<unknown>): Promise<string | undefined> {
+    const err = await p.then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(WalletError);
+    return (err as WalletError).code;
+  }
+
+  it("connect: a missing extension is freighter_missing", async () => {
+    mockIsConnected.mockResolvedValue({ isConnected: false });
+    expect(await codeOf(connect())).toBe("freighter_missing");
+  });
+
+  it("connect: declining access (-4) is rejected", async () => {
+    mockRequestAccess.mockResolvedValue({ address: "", error: REJECTED });
+    expect(await codeOf(connect())).toBe("rejected");
+  });
+
+  it("connect: any other Freighter error is failed", async () => {
+    mockRequestAccess.mockResolvedValue({ address: "", error: { code: -1, message: "locked" } });
+    expect(await codeOf(connect())).toBe("failed");
+  });
+
+  it("connect: a non-StrKey address is invalid_address", async () => {
+    mockRequestAccess.mockResolvedValue({ address: ADDR.toLowerCase() });
+    expect(await codeOf(connect())).toBe("invalid_address");
+  });
+
+  it("signOwnership: declining the signature (-4) is rejected", async () => {
+    mockSignMessage.mockResolvedValue({ signedMessage: null, signerAddress: "", error: REJECTED });
+    expect(await codeOf(signOwnership(MESSAGE, ADDR))).toBe("rejected");
+  });
+
+  it("signOwnership: a null signature without an error is rejected", async () => {
+    mockSignMessage.mockResolvedValue({ signedMessage: null, signerAddress: ADDR });
+    expect(await codeOf(signOwnership(MESSAGE, ADDR))).toBe("rejected");
+  });
+
+  it("signOwnership: signing with another account is wrong_account", async () => {
+    mockSignMessage.mockResolvedValue({
+      signedMessage: sep53Sign(MESSAGE).toString("base64"),
+      signerAddress: kp.publicKey(),
+    });
+    expect(await codeOf(signOwnership(MESSAGE, ADDR))).toBe("wrong_account");
+  });
+
+  it("signOwnership: a Freighter build without signMessage is unsupported", async () => {
+    freighterState.signMessageMissing = true;
+    try {
+      expect(await codeOf(signOwnership(MESSAGE, ADDR))).toBe("unsupported");
+    } finally {
+      freighterState.signMessageMissing = false;
+    }
+  });
+
+  it("signTransaction: declining (-4) is rejected", async () => {
+    mockSignTransaction.mockResolvedValue({ signedTxXdr: "", signerAddress: "", error: REJECTED });
+    expect(await codeOf(signTransaction("UNSIGNED_XDR", ADDR))).toBe("rejected");
+  });
+
+  it("signTransaction: signing with another account is wrong_account", async () => {
+    const other = Keypair.random().publicKey();
+    mockSignTransaction.mockResolvedValue({ signedTxXdr: "X", signerAddress: other });
+    expect(await codeOf(signTransaction("UNSIGNED_XDR", ADDR))).toBe("wrong_account");
   });
 });
 
@@ -99,8 +202,8 @@ describe("signTransaction", () => {
     await expect(signTransaction("UNSIGNED_XDR", ADDR)).rejects.toThrow(/user declined/);
   });
 
-  it("throws guidance when Freighter is unavailable (Albedo-only)", async () => {
+  it("throws install guidance when Freighter is unavailable", async () => {
     mockIsConnected.mockResolvedValue({ isConnected: false });
-    await expect(signTransaction("UNSIGNED_XDR", ADDR)).rejects.toThrow(/Freighter/);
+    await expect(signTransaction("UNSIGNED_XDR", ADDR)).rejects.toThrow(FREIGHTER_REQUIRED_MESSAGE);
   });
 });

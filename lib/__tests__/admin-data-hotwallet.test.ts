@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Regression: the status-health / dashboard hot-wallet card must read the pooled
-// Stellar platform account (via getWalletHealth) — the correctly-formatted USDC
-// float and the G… address — not the legacy Celo/EVM viem `balanceOf` read that
-// surfaced a raw 18-decimal value (e.g. "0.00000000005966") and an 0x… address.
+// Stellar platform account (via getWalletHealth): the correctly-formatted USDC
+// float and the G… address, never a raw 18-decimal value (e.g.
+// "0.00000000005966") or an 0x… address.
 const { mockGetWalletHealth } = vi.hoisted(() => ({
   mockGetWalletHealth: vi.fn(),
 }));
@@ -37,8 +37,6 @@ import { getHealthSnapshot, getDashboardTotals } from "@/lib/admin-data";
 describe("admin hot-wallet card is sourced from Stellar, not the legacy EVM wallet", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Ensure the legacy viem path can't accidentally satisfy the assertion.
-    delete process.env.PAYOUT_PRIVATE_KEY;
     mockGetWalletHealth.mockResolvedValue({
       address: "GABCDE1234567890STELLARPLATFORMACCOUNTXYZ",
       usdcBalance: "45.0000",

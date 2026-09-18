@@ -23,6 +23,16 @@ import { recordFlaggedWithdrawal } from "@/lib/flagged-withdrawal";
 import { isValidStellarAddress } from "@/lib/stellar/signature";
 import { accountHasUsdcTrustline } from "@/lib/stellar/client";
 
+/**
+ * POST — withdraw the whole pending balance to the account's bound wallet.
+ *
+ * #30 — the destination is the Stellar address the account proved, at wallet
+ * sign-in or by claiming an email account. It is never taken from the body. This
+ * reverses the 2026-07-05 paste-and-send decision, under which the recipient was
+ * typed fresh on every withdrawal with no ownership proof. A client that still
+ * sends `destinationAddress` must send the bound wallet exactly; anything else is
+ * refused rather than silently redirected.
+ */
 export async function POST(req: NextRequest) {
   const userId = await getLabelerSession(req);
   const unauthorized = requireLabelerSession(userId);
@@ -32,6 +42,7 @@ export async function POST(req: NextRequest) {
     where: { id: userId! },
     select: {
       email: true,
+      walletAddress: true,
       isBanned: true,
       submissionCount: true,
       goldCorrect: true,
@@ -48,23 +59,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "account_frozen" }, { status: 403 });
   }
 
-  // Paste-and-send: the recipient Stellar address is supplied fresh in the body
-  // on every withdrawal — no persistent linked wallet and no ownership proof.
-  // This deliberately reverses the earlier "destination is never from the body"
-  // rule (product decision, 2026-07-05 spec). A typo sends USDC irreversibly, so
-  // the client shows a confirm step before calling this.
+  // StrKey is case-sensitive — never normalize. An account with no wallet, or a
+  // legacy `0x…` one, can never receive USDC; refuse before touching any balance.
+  const destinationAddress = user.walletAddress;
+  if (!destinationAddress || !isValidStellarAddress(destinationAddress)) {
+    return NextResponse.json({ error: "wallet_required" }, { status: 409 });
+  }
   const body = await req.json().catch(() => null);
-  const destinationAddress =
+  const named =
     body && typeof body === "object"
       ? (body as { destinationAddress?: unknown }).destinationAddress
       : undefined;
-  if (typeof destinationAddress !== "string" || !destinationAddress) {
-    return NextResponse.json({ error: "missing_address" }, { status: 400 });
-  }
-  // StrKey is case-sensitive — never normalize. A malformed or legacy `0x…`
-  // value can never receive USDC; reject before touching any balance.
-  if (!isValidStellarAddress(destinationAddress)) {
-    return NextResponse.json({ error: "invalid_wallet" }, { status: 400 });
+  if (named !== undefined && named !== destinationAddress) {
+    return NextResponse.json({ error: "address_not_bound" }, { status: 403 });
   }
 
   // P4c — record blocked withdrawals for the admin queue. Best-effort; a failure
@@ -83,7 +90,7 @@ export async function POST(req: NextRequest) {
       Sentry.captureException(err, { extra: { context: "flag-withdrawal", userId } });
     });
 
-  // P4b — identity-based anti-fraud gates run against the typed destination.
+  // P4b — identity-based anti-fraud gates run against the bound destination.
   const banError = await isAnyIdentifierBanned(user.email, destinationAddress, userId!);
   if (banError) {
     await flag("BANNED_IDENTITY", {
@@ -145,9 +152,9 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // USDC-trustline precheck on the typed address before locking any balance: an
-  // untrusted address would fail the on-chain payout with `op_no_trust`. Reject
-  // with guidance so the recipient adds the trustline in their own wallet.
+  // USDC-trustline precheck before locking any balance: an untrusted address
+  // would fail the on-chain payout with `op_no_trust`. The wallet's payout setup
+  // (the sponsored trustline) has not finished, so send the contributor back to it.
   let hasTrustline: boolean;
   try {
     hasTrustline = await accountHasUsdcTrustline(destinationAddress);
@@ -158,9 +165,8 @@ export async function POST(req: NextRequest) {
   if (!hasTrustline) {
     return NextResponse.json(
       {
-        error: "no_trustline",
-        message:
-          "Your Stellar address has no USDC trustline yet. Add a USDC trustline in your wallet, then withdraw again.",
+        error: "payout_setup_required",
+        message: "Your wallet isn't set up to receive USDC yet. Finish payout setup, then withdraw again.",
       },
       { status: 409 },
     );
@@ -231,16 +237,15 @@ export async function POST(req: NextRequest) {
 
 /**
  * GET — withdrawal summary for the labeler's own account: pending balance, the
- * minimum-withdrawal threshold, whether a withdrawal can be attempted right now,
- * and recent lump-sum withdrawals. This is the read the withdrawal card loads on
- * open and re-fetches after a successful wallet link (ST-4b) or withdrawal, so a
- * freshly-linked `G…` payout address is reflected immediately.
+ * minimum-withdrawal threshold, the bound wallet withdrawals go to, whether a
+ * withdrawal can be attempted right now, and recent lump-sum withdrawals. The
+ * withdrawal card loads it on open and re-fetches it after a withdrawal.
  *
- * `canWithdraw` mirrors POST's cheap gates only — not banned, a valid Stellar
- * destination, eligibility, balance ≥ minimum, and no withdrawal already in
- * flight. The network USDC-trustline precheck deliberately stays on POST so this
- * read never blocks on Horizon; an untrusted address is surfaced there as
- * `no_trustline` with guidance.
+ * `canWithdraw` mirrors POST's cheap gates only — not banned, a bound Stellar
+ * wallet, eligibility, balance ≥ minimum, and no withdrawal already in flight.
+ * The network USDC-trustline precheck deliberately stays on POST so this read
+ * never blocks on Horizon; an unfinished payout setup is surfaced there as
+ * `payout_setup_required`.
  */
 export async function GET(req: NextRequest) {
   const userId = await getLabelerSession(req);
@@ -250,6 +255,7 @@ export async function GET(req: NextRequest) {
   const user = await prisma.user.findUnique({
     where: { id: userId! },
     select: {
+      walletAddress: true,
       isBanned: true,
       submissionCount: true,
       goldCorrect: true,
@@ -262,6 +268,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  const destinationAddress =
+    user.walletAddress && isValidStellarAddress(user.walletAddress) ? user.walletAddress : null;
   const minUnits = getMinWithdrawalUnits();
   const eligibility = checkWithdrawalEligibility(
     {
@@ -298,6 +306,7 @@ export async function GET(req: NextRequest) {
 
   const canWithdraw =
     !user.isBanned &&
+    destinationAddress !== null &&
     eligibility.eligible &&
     user.pendingBalanceUnits >= minUnits &&
     !hasInFlightWithdrawal;
@@ -305,6 +314,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     pendingBalanceUnits: user.pendingBalanceUnits.toString(),
     thresholdUnits: minUnits.toString(),
+    destinationAddress,
     canWithdraw,
     withdrawals: jobs.map((j) => ({
       id: j.id,

@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Manrope, Inter } from "next/font/google";
 import { ErrorBoundary } from "@sentry/nextjs";
-import PostHogProvider from "@/components/PostHogProvider";
 import { Toaster } from "sonner";
 import "./globals.css";
 
@@ -83,10 +82,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="bg-surface text-on-surface antialiased">
         <ErrorBoundary fallback={<ErrorFallback />}>
-          <PostHogProvider>
-            {children}
-            <Toaster position="bottom-right" richColors />
-          </PostHogProvider>
+          {children}
+          <Toaster position="bottom-right" richColors />
         </ErrorBoundary>
       </body>
     </html>

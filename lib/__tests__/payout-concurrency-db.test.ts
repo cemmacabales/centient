@@ -53,6 +53,7 @@ vi.mock("@sentry/nextjs", () => ({
   captureException: vi.fn(),
 }));
 
+import appPrisma from "@/lib/prisma";
 import { claimNextJob, processJob } from "@/lib/payout-worker";
 import {
   RETRY_CLAIM_HEARTBEAT_MS,
@@ -299,6 +300,24 @@ describe("N concurrent payouts settle once each", () => {
           })
         )?.lastRetriedAt ?? null;
 
+      // Spied on the *service's* client, not this suite's. They are separate
+      // PrismaClient instances against one database, so a spy on the suite's
+      // client would see none of the heartbeat's writes and would pass by
+      // observing nothing — which is how the scope below went unasserted at
+      // first.
+      const realUpdateMany = appPrisma.submission.updateMany.bind(appPrisma.submission);
+      const heartbeatWrites: { where: unknown; count: Promise<number> }[] = [];
+      const updateManySpy = vi
+        .spyOn(appPrisma.submission, "updateMany")
+        .mockImplementation(((args: Parameters<typeof realUpdateMany>[0]) => {
+          const pending = realUpdateMany(args);
+          heartbeatWrites.push({
+            where: (args as { where?: unknown }).where,
+            count: Promise.resolve(pending).then((r) => r.count),
+          });
+          return pending;
+        }) as unknown as typeof appPrisma.submission.updateMany);
+
       let claimedAt: Date | null = null;
       let refreshedAt: Date | null = null;
       mockSubmitMultisigPayout.mockImplementationOnce(async () => {
@@ -330,20 +349,29 @@ describe("N concurrent payouts settle once each", () => {
       expect(stored?.payoutStatus).toBe("sent");
       expect(stored?.payoutTxHash).toBe("heartbeat-hash");
 
-      // The refresh is scoped to rows with no hash, which is what stops a late
-      // heartbeat from writing over the recorded broadcast time. Asserted by
-      // issuing that exact write against the settled row: it matches nothing.
-      //
-      // This checks the scope, not the timer. Whether an interval fires in the
-      // window between the tuple landing and `clearInterval` is not observable
-      // from here — the service uses its own PrismaClient — so it is deliberately
-      // not asserted rather than asserted vacuously.
+      // Every refresh the heartbeat issued was scoped to a row with no hash.
+      // That scope is what stops a late refresh from writing over the recorded
+      // broadcast time once the tuple lands, and it is asserted against the
+      // service's own calls rather than against a copy of the query.
+      expect(heartbeatWrites.length).toBeGreaterThan(0);
+      for (const write of heartbeatWrites) {
+        expect(write.where).toMatchObject({
+          id: submission.id,
+          payoutTxHash: null,
+        });
+      }
+      // And the refresh that ran mid-broadcast matched the row it was renewing.
+      await expect(heartbeatWrites[0].count).resolves.toBe(1);
+
+      // The same scoped write against the settled row now matches nothing, which
+      // is the property the scope buys.
       const rescoped = await prisma.submission.updateMany({
         where: { id: submission.id, payoutTxHash: null },
         data: { lastRetriedAt: new Date() },
       });
       expect(rescoped.count).toBe(0);
       expect((await lastRetriedAt())?.getTime()).toBe(stored?.lastRetriedAt?.getTime());
+      updateManySpy.mockRestore();
     } finally {
       vi.useRealTimers();
     }

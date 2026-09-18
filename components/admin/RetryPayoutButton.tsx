@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { track } from "@/lib/analytics";
 import { toast } from "sonner";
 
 interface Props {
@@ -33,6 +34,7 @@ export default function RetryPayoutButton({ submissionId, currentStatus, onSucce
       if (!res.ok) {
         throw new Error(data.error || "Retry request failed");
       }
+      track("payout_retry_requested", { submission_id: submissionId });
       toast.success("Payout retry triggered successfully.", { id: loadingToast });
       if (onSuccess) onSuccess();
     } catch (err: any) {

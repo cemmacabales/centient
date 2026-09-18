@@ -156,7 +156,7 @@ describe("unitsToUsdcString", () => {
 });
 
 describe("unitsToUsdcDisplay", () => {
-  it("trims trailing fractional zeros (viem formatUnits parity)", () => {
+  it("trims trailing fractional zeros", () => {
     expect(unitsToUsdcDisplay(15_000_000n)).toBe("1.5");
     expect(unitsToUsdcDisplay(1_230_000n)).toBe("0.123");
     expect(unitsToUsdcDisplay(1n)).toBe("0.0000001");

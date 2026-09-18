@@ -45,6 +45,7 @@ import {
   createTask,
   createGoldTask,
   createCampaign,
+  makeWallet,
   seedSubmissionsForUser,
   VALID_REASON,
 } from "@/tests/helpers/factories";
@@ -170,26 +171,34 @@ describe("POST /api/submit - validation", () => {
   });
 });
 
-describe("POST /api/submit - email-only user (no linked wallet)", () => {
-  it("accrues an approved answer for a user whose walletAddress is null", async () => {
+describe("POST /api/submit - email-only user (no bound wallet)", () => {
+  it("refuses an answer until the account binds a wallet, recording nothing (#30)", async () => {
     const campaign = await createCampaign();
     const task = await createTask({ campaignId: campaign.id });
     const user = await createUser({ walletAddress: null, email: "labeler@example.com" });
 
     const res = await submitAs(user.id, validPayload({ taskId: task.id }));
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.status).toBe("pending");
-    expect(body.submissionId).toBeDefined();
+    // 409, not 403: the client routes a 403 from submit to the banned screen.
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("wallet_required");
 
-    const submission = await prisma.submission.findUniqueOrThrow({
-      where: { userId_taskId: { userId: user.id, taskId: task.id } },
-    });
-    expect(submission.walletAddress).toBeNull();
-    expect(submission.payoutStatus).toBe("accrued");
-
+    expect(await prisma.submission.count({ where: { userId: user.id } })).toBe(0);
     const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(refreshed.pendingBalanceUnits).toBeGreaterThan(0n);
+    expect(refreshed.pendingBalanceUnits).toBe(0n);
+  });
+
+  it("refuses an answer from an account holding only a legacy 0x wallet, recording nothing (#30)", async () => {
+    const campaign = await createCampaign();
+    const task = await createTask({ campaignId: campaign.id });
+    const user = await createUser({ walletAddress: makeWallet() });
+
+    const res = await submitAs(user.id, validPayload({ taskId: task.id }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("wallet_required");
+
+    expect(await prisma.submission.count({ where: { userId: user.id } })).toBe(0);
+    const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(refreshed.pendingBalanceUnits).toBe(0n);
   });
 });
 
@@ -259,7 +268,7 @@ describe("POST /api/submit - guards", () => {
   });
 
   it("rate-limits on the userId (opaque key), not a wallet", async () => {
-    const user = await createUser({ walletAddress: null });
+    const user = await createUser();
     const task = await createTask();
     vi.mocked(checkWalletRateLimit).mockResolvedValueOnce(false);
 

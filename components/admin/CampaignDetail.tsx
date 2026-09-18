@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { track } from "@/lib/analytics";
 import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 import { usdcToUnits, unitsToUsdcDisplay } from "@/lib/stellar/config";
 import ExportModal from "@/components/admin/ExportModal";
@@ -235,6 +236,7 @@ export default function CampaignDetail({
     }
 
     if (res.status === 202) {
+      track("campaign_tasks_upload_started", { campaign_id: campaignId });
       const accepted = await res.json();
       setLiveJob({
         ...accepted,
@@ -339,7 +341,12 @@ export default function CampaignDetail({
       if (!res.ok) {
         setPauseError(body.error ?? "Failed to update pause state");
       } else {
+        const isPaused = Boolean(body.pausedAt);
         setPausedAt(body.pausedAt ?? null);
+        track("campaign_pause_changed", {
+          campaign_id: campaignId,
+          paused: isPaused,
+        });
       }
     } catch {
       setPauseError("Network error");
@@ -407,6 +414,7 @@ export default function CampaignDetail({
     try {
       const res = await fetch(`/api/admin/campaigns/${campaignId}`, { method: "DELETE" });
       if (res.status === 204) {
+        track("campaign_deleted", { campaign_id: campaignId });
         setCampaignDeleteConfirm(false);
         router.push("/admin/campaigns");
         router.refresh();
@@ -476,6 +484,11 @@ export default function CampaignDetail({
         setTasks(prev => prev.map(t => t.taskId === editing.taskId ? original : t));
       }
       setError("Failed to save changes");
+    } else {
+      track("campaign_task_updated", {
+        campaign_id: campaignId,
+        task_id: editing.taskId,
+      });
     }
   }
 
@@ -531,6 +544,10 @@ export default function CampaignDetail({
 
     if (res.ok) {
       const created = await res.json();
+      track("campaign_task_created", {
+        campaign_id: campaignId,
+        task_id: created.taskId,
+      });
       setTasks(prev => prev.map(t => t.taskId === tempId ? {
         taskId: created.taskId,
         prompt: created.prompt,
@@ -572,6 +589,11 @@ export default function CampaignDetail({
       if (original) {
         setTasks(prev => [...prev, original]);
       }
+    } else {
+      track("campaign_task_deleted", {
+        campaign_id: campaignId,
+        task_id: taskId,
+      });
     }
   }
 

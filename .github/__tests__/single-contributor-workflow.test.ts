@@ -10,7 +10,7 @@ const workflow = readFileSync(
 describe("single-contributor pull request workflow", () => {
   it("checks every opened or updated pull request", () => {
     expect(workflow).toMatch(
-      /^on:\n  pull_request_target:\n    types: \[opened, synchronize, reopened, edited\]/m,
+      /^on:\n  pull_request_target:\n    branches: \[develop, staging, main\]\n    types: \[opened, synchronize, reopened, edited\]/m,
     );
     expect(workflow).toContain("github.rest.pulls.listCommits");
     expect(workflow).toContain("github.paginate(");

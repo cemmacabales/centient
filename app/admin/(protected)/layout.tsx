@@ -28,7 +28,7 @@ export default async function ProtectedAdminLayout({
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <AdminNav role={session.role} />
+            <AdminNav adminUserId={session.sub} role={session.role} />
             <form action="/api/admin/logout" method="post">
               <button
                 type="submit"

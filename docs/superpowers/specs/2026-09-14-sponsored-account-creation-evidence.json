@@ -1,0 +1,326 @@
+{
+  "issue": "webnxt-2030/Centient#27",
+  "title": "E2-4 — sponsored account creation for a brand-new zero-XLM address",
+  "network": "testnet",
+  "horizon": "https://horizon-testnet.stellar.org",
+  "ranAt": "2026-09-14T09:35:58.555Z",
+  "method": "Headless run against the issue-27 dev server (RUN_WORKERS=false, isolated test DB). A fresh never-funded keypair signs in wallet-only and co-signs exactly the envelope the server built, standing in for Freighter. The sponsor is a throwaway friendbot-funded testnet key configured as the platform account, so the shared D1/#31 platform account is untouched.",
+  "notExercisedHere": "Freighter's own decline dialog. Server-side a decline is an envelope never submitted (step 3); the client's WalletError 'rejected' branch is hand-tested in #31.",
+  "recipient": "GB4QXUXSD4Y7XNTXLYKVRJ2KIRBAYBKMBJNQN7657WIMMS3XH3QDZ32T",
+  "sponsor": "GAE5AGT2DHZZZLGPR22UPEGGO7IINHAF7L3KQ2M4U56PNWYB2ZOVMBXR",
+  "result": "PASS",
+  "steps": [
+    {
+      "step": "0-preconditions",
+      "at": "2026-09-14T09:34:43.070Z",
+      "recipient": "GB4QXUXSD4Y7XNTXLYKVRJ2KIRBAYBKMBJNQN7657WIMMS3XH3QDZ32T",
+      "recipientHorizon": "404 — never funded, zero XLM",
+      "sponsor": "GAE5AGT2DHZZZLGPR22UPEGGO7IINHAF7L3KQ2M4U56PNWYB2ZOVMBXR",
+      "sponsorBefore": {
+        "exists": true,
+        "sequence": "20061508771774464",
+        "sponsor": null,
+        "num_sponsoring": 0,
+        "num_sponsored": 0,
+        "subentry_count": 0,
+        "thresholds": {
+          "low_threshold": 0,
+          "med_threshold": 0,
+          "high_threshold": 0
+        },
+        "signers": [
+          {
+            "weight": 1,
+            "key": "GAE5AGT2DHZZZLGPR22UPEGGO7IINHAF7L3KQ2M4U56PNWYB2ZOVMBXR",
+            "type": "ed25519_public_key"
+          }
+        ],
+        "balances": [
+          {
+            "asset_type": "native",
+            "balance": "10000.0000000",
+            "sponsor": null
+          }
+        ]
+      },
+      "walletHealthBefore": {
+        "status": 200,
+        "address": "GAE5AGT2DHZZZLGPR22UPEGGO7IINHAF7L3KQ2M4U56PNWYB2ZOVMBXR",
+        "numSponsoring": 0,
+        "sponsorshipLiability": {
+          "outstanding": 0,
+          "pending": 0,
+          "reserveUnits": 0,
+          "byKind": {
+            "trustline": {
+              "confirmed": 0,
+              "pending": 0
+            },
+            "account+trustline": {
+              "confirmed": 0,
+              "pending": 0
+            }
+          }
+        },
+        "sponsorshipReserveDriftUnits": 0
+      }
+    },
+    {
+      "step": "1-wallet-sign-in",
+      "at": "2026-09-14T09:34:43.580Z",
+      "status": 200,
+      "created": true,
+      "userId": "e57fc2a4-e991-4236-809d-723e55d747f2"
+    },
+    {
+      "step": "2-build-account+trustline",
+      "at": "2026-09-14T09:34:45.686Z",
+      "status": 200,
+      "kind": "account+trustline",
+      "envelope": {
+        "hash": "c6dd247824104f8d0ebc6a33b17536adbace315c8749099f3a596de2a501e5f0",
+        "source": "GAE5AGT2DHZZZLGPR22UPEGGO7IINHAF7L3KQ2M4U56PNWYB2ZOVMBXR",
+        "sequence": "20061508771774465",
+        "fee": "400",
+        "timeBounds": {
+          "minTime": "0",
+          "maxTime": "1789378665"
+        },
+        "operations": [
+          {
+            "type": "beginSponsoringFutureReserves",
+            "sponsoredId": "GB4QXUXSD4Y7XNTXLYKVRJ2KIRBAYBKMBJNQN7657WIMMS3XH3QDZ32T"
+          },
+          {
+            "type": "createAccount",
+            "destination": "GB4QXUXSD4Y7XNTXLYKVRJ2KIRBAYBKMBJNQN7657WIMMS3XH3QDZ32T",
+            "startingBalance": "0.0000000"
+          },
+          {
+            "type": "changeTrust",
+            "source": "GB4QXUXSD4Y7XNTXLYKVRJ2KIRBAYBKMBJNQN7657WIMMS3XH3QDZ32T",
+            "limit": "922337203685.4775807",
+            "asset": "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+          },
+          {
+            "type": "endSponsoringFutureReserves",
+            "source": "GB4QXUXSD4Y7XNTXLYKVRJ2KIRBAYBKMBJNQN7657WIMMS3XH3QDZ32T"
+          }
+        ],
+        "signatureHints": [
+          "01d65d56"
+        ]
+      }
+    },
+    {
+      "step": "3-decline-leaves-nothing",
+      "at": "2026-09-14T09:34:46.936Z",
+      "ledgerRows": 0,
+      "sponsorNumSponsoring": 0,
+      "recipientExists": false
+    },
+    {
+      "step": "4-rebuild-after-decline",
+      "at": "2026-09-14T09:35:05.845Z",
+      "status": 200,
+      "kind": "account+trustline",
+      "hash": "a04358e78f6441b193a0f9908b08520653d0c0c97053d86bd439cce06b503ea9",
+      "declinedHash": "c6dd247824104f8d0ebc6a33b17536adbace315c8749099f3a596de2a501e5f0"
+    },
+    {
+      "step": "5-live-tx_bad_seq",
+      "at": "2026-09-14T09:35:15.244Z",
+      "sequenceConsumedBy": "0fc1579a41e0fceedbf70c5e2a829a6fb284cfcc708a09e3db791e18f8fd310e",
+      "post": {
+        "status": 409,
+        "body": {
+          "error": "retry"
+        }
+      },
+      "ledgerRows": [
+        {
+          "userId": "e57fc2a4-e991-4236-809d-723e55d747f2",
+          "address": "GB4QXUXSD4Y7XNTXLYKVRJ2KIRBAYBKMBJNQN7657WIMMS3XH3QDZ32T",
+          "kind": "account+trustline",
+          "txHash": "a04358e78f6441b193a0f9908b08520653d0c0c97053d86bd439cce06b503ea9",
+          "status": "failed",
+          "createdAt": "2026-09-14T01:35:12.760Z",
+          "confirmedAt": null,
+          "expiresAt": "2026-09-14T01:38:05.000Z",
+          "revokedAt": null
+        }
+      ],
+      "recipientExists": false,
+      "sponsorNumSponsoring": 0
+    },
+    {
+      "step": "6-sponsored-creation",
+      "at": "2026-09-14T09:35:38.154Z",
+      "build": {
+        "status": 200,
+        "kind": "account+trustline",
+        "envelope": {
+          "hash": "b1ef0d3aa2d3f74f7b86c3cbff840205718e76164b70e3774b5263a3051a435b",
+          "source": "GAE5AGT2DHZZZLGPR22UPEGGO7IINHAF7L3KQ2M4U56PNWYB2ZOVMBXR",
+          "sequence": "20061508771774466",
+          "fee": "400",
+          "timeBounds": {
+            "minTime": "0",
+            "maxTime": "1789378714"
+          },
+          "operations": [
+            {
+              "type": "beginSponsoringFutureReserves",
+              "sponsoredId": "GB4QXUXSD4Y7XNTXLYKVRJ2KIRBAYBKMBJNQN7657WIMMS3XH3QDZ32T"
+            },
+            {
+              "type": "createAccount",
+              "destination": "GB4QXUXSD4Y7XNTXLYKVRJ2KIRBAYBKMBJNQN7657WIMMS3XH3QDZ32T",
+              "startingBalance": "0.0000000"
+            },
+            {
+              "type": "changeTrust",
+              "source": "GB4QXUXSD4Y7XNTXLYKVRJ2KIRBAYBKMBJNQN7657WIMMS3XH3QDZ32T",
+              "limit": "922337203685.4775807",
+              "asset": "USDC:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+            },
+            {
+              "type": "endSponsoringFutureReserves",
+              "source": "GB4QXUXSD4Y7XNTXLYKVRJ2KIRBAYBKMBJNQN7657WIMMS3XH3QDZ32T"
+            }
+          ],
+          "signatureHints": [
+            "01d65d56"
+          ]
+        }
+      },
+      "post": {
+        "status": 200,
+        "body": {
+          "established": true
+        }
+      }
+    },
+    {
+      "step": "7-evidence",
+      "at": "2026-09-14T09:35:39.665Z",
+      "transaction": {
+        "hash": "b1ef0d3aa2d3f74f7b86c3cbff840205718e76164b70e3774b5263a3051a435b",
+        "successful": true,
+        "ledger": 4670990,
+        "created_at": "2026-09-14T09:35:37Z",
+        "source_account": "GAE5AGT2DHZZZLGPR22UPEGGO7IINHAF7L3KQ2M4U56PNWYB2ZOVMBXR",
+        "fee_account": "GAE5AGT2DHZZZLGPR22UPEGGO7IINHAF7L3KQ2M4U56PNWYB2ZOVMBXR",
+        "fee_charged": "400",
+        "operation_count": 4,
+        "explorer": "https://stellar.expert/explorer/testnet/tx/b1ef0d3aa2d3f74f7b86c3cbff840205718e76164b70e3774b5263a3051a435b"
+      },
+      "recipientAfter": {
+        "exists": true,
+        "sequence": "20061749289943040",
+        "sponsor": "GAE5AGT2DHZZZLGPR22UPEGGO7IINHAF7L3KQ2M4U56PNWYB2ZOVMBXR",
+        "num_sponsoring": 0,
+        "num_sponsored": 3,
+        "subentry_count": 1,
+        "thresholds": {
+          "low_threshold": 0,
+          "med_threshold": 0,
+          "high_threshold": 0
+        },
+        "signers": [
+          {
+            "weight": 1,
+            "key": "GB4QXUXSD4Y7XNTXLYKVRJ2KIRBAYBKMBJNQN7657WIMMS3XH3QDZ32T",
+            "type": "ed25519_public_key"
+          }
+        ],
+        "balances": [
+          {
+            "asset_type": "credit_alphanum4",
+            "asset_code": "USDC",
+            "asset_issuer": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+            "balance": "0.0000000",
+            "limit": "922337203685.4775807",
+            "sponsor": "GAE5AGT2DHZZZLGPR22UPEGGO7IINHAF7L3KQ2M4U56PNWYB2ZOVMBXR"
+          },
+          {
+            "asset_type": "native",
+            "balance": "0.0000000",
+            "sponsor": null
+          }
+        ]
+      },
+      "sponsorNumSponsoringDelta": 3,
+      "sponsorXlmDelta": "-0.0000500",
+      "ledgerRows": [
+        {
+          "userId": "e57fc2a4-e991-4236-809d-723e55d747f2",
+          "address": "GB4QXUXSD4Y7XNTXLYKVRJ2KIRBAYBKMBJNQN7657WIMMS3XH3QDZ32T",
+          "kind": "account+trustline",
+          "txHash": "a04358e78f6441b193a0f9908b08520653d0c0c97053d86bd439cce06b503ea9",
+          "status": "failed",
+          "createdAt": "2026-09-14T01:35:12.760Z",
+          "confirmedAt": null,
+          "expiresAt": "2026-09-14T01:38:05.000Z",
+          "revokedAt": null
+        },
+        {
+          "userId": "e57fc2a4-e991-4236-809d-723e55d747f2",
+          "address": "GB4QXUXSD4Y7XNTXLYKVRJ2KIRBAYBKMBJNQN7657WIMMS3XH3QDZ32T",
+          "kind": "account+trustline",
+          "txHash": "b1ef0d3aa2d3f74f7b86c3cbff840205718e76164b70e3774b5263a3051a435b",
+          "status": "confirmed",
+          "createdAt": "2026-09-14T01:35:34.207Z",
+          "confirmedAt": "2026-09-14T01:35:38.128Z",
+          "expiresAt": "2026-09-14T01:38:34.000Z",
+          "revokedAt": null
+        }
+      ]
+    },
+    {
+      "step": "8-duplicate-submit",
+      "at": "2026-09-14T09:35:56.713Z",
+      "post": {
+        "status": 200,
+        "body": {
+          "established": true
+        }
+      },
+      "ledgerRows": 2,
+      "sponsorNumSponsoring": 3
+    },
+    {
+      "step": "9-needed-false-and-wallet-health",
+      "at": "2026-09-14T09:35:58.539Z",
+      "sponsorGet": {
+        "status": 200,
+        "body": {
+          "needed": false
+        }
+      },
+      "walletHealth": {
+        "status": 200,
+        "address": "GAE5AGT2DHZZZLGPR22UPEGGO7IINHAF7L3KQ2M4U56PNWYB2ZOVMBXR",
+        "numSponsoring": 3,
+        "sponsoredReserveXlm": "1.5000",
+        "availableXlmBalance": "9997.4999",
+        "sponsorshipLiability": {
+          "outstanding": 1,
+          "pending": 0,
+          "reserveUnits": 3,
+          "byKind": {
+            "trustline": {
+              "confirmed": 0,
+              "pending": 0
+            },
+            "account+trustline": {
+              "confirmed": 1,
+              "pending": 0
+            }
+          }
+        },
+        "sponsorshipReserveDriftUnits": 0
+      }
+    }
+  ]
+}
