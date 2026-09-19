@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import FreighterPairing from "./FreighterPairing";
 import { signTransaction } from "@/lib/stellar/wallet";
 import {
   PAYOUT_SETUP_MESSAGES,
@@ -186,13 +187,19 @@ export default function PayoutSetup({ onReady, onSkip, run = runSetUpPayouts }: 
   }, [attempt]);
 
   return (
-    <PayoutSetupView
-      phase={phase}
-      signingKind={signingKind}
-      waitSeconds={waitSeconds}
-      reason={reason}
-      onRetry={attempt}
-      onContinue={onSkip ? () => onSkip(reason ?? "failed") : undefined}
-    />
+    <>
+      <PayoutSetupView
+        phase={phase}
+        signingKind={signingKind}
+        waitSeconds={waitSeconds}
+        reason={reason}
+        onRetry={attempt}
+        onContinue={onSkip ? () => onSkip(reason ?? "failed") : undefined}
+      />
+      {/* Setup normally rides the session sign-in already paired, but that
+          session can expire; if the trustline co-signature has to pair again,
+          the prompt needs somewhere to render. */}
+      <FreighterPairing />
+    </>
   );
 }

@@ -38,7 +38,7 @@ GoCent!123
 | Database | PostgreSQL + Prisma 7 |
 | **Settlement** | **Stellar** classic (Horizon) payments via `@stellar/stellar-sdk` 16 |
 | **Asset** | **USDC** — Circle's Stellar-issued asset (7-decimal units) |
-| Wallet | Freighter (`@stellar/freighter-api`) — Albedo descoped, see ADR-0003 |
+| Wallet | Freighter — extension via `@stellar/freighter-api`, mobile app via WalletConnect v2. Albedo descoped, see ADR-0003 |
 | Rate limiting | Redis (`ioredis`) |
 | Email | Resend |
 | Observability | Sentry |
@@ -306,6 +306,8 @@ container, applies migrations, and seeds test data.
 | Key | Meaning |
 |---|---|
 | `STELLAR_NETWORK` | `testnet` (default) or `public` (mainnet) |
+| `NEXT_PUBLIC_STELLAR_NETWORK` | The same value again, for the browser. Only `NEXT_PUBLIC_*` vars reach the client bundle, so without it the signing code in the browser assumes testnet |
+| `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | Optional. Enables the Freighter **mobile app**; leave unset to stay extension-only. Free from [dashboard.reown.com](https://dashboard.reown.com) |
 | `STELLAR_PLATFORM_ACCOUNT` | `G…` public key of the payout account. Required for wallet health and payout configuration — reading balances and planning refills needs no signing key |
 | `STELLAR_SPONSOR_SECRET` | `S…` seed that sponsors recipients' USDC trustlines. **Must not be a signer on the payout account** (F-01); it needs XLM for reserves and no payout authority |
 | `STELLAR_OPS_SIGNER_SECRET` | `S…` seed of the ops signer — signature #1 of the 2-of-3 payout. This is the *only* payout-account seed a deployment may hold |
@@ -326,9 +328,45 @@ Once seeded, log in to test every area:
 > Seeing `P3005 — database schema is not empty`? Your local DB predates the
 > migration history. Rebuild it cleanly with `pnpm db:reset` (destructive).
 
+### Connecting a wallet on mobile
+
+`@stellar/freighter-api` only ever talks to the Freighter **browser extension**, and
+no Stellar wallet ships an extension for mobile browsers — so on a phone the wallet
+flows had nowhere to go but "install the browser extension", which no phone can do.
+
+Freighter's mobile app speaks **WalletConnect v2** instead, so that is the second
+transport. `lib/stellar/wallet.ts` picks between them: the extension whenever one
+answers, otherwise the mobile app when `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` is set.
+Callers don't know which ran.
+
+| | Extension | Mobile app |
+|---|---|---|
+| Transport | `@stellar/freighter-api` | WalletConnect v2, `stellar` namespace |
+| Ownership proof | `signMessage` | `stellar_signMessage` (SEP-53 — byte-identical) |
+| Trustline co-signature | `signTransaction` | `stellar_signXDR` |
+| Chain | network passphrase | `stellar:testnet` / `stellar:pubnet` |
+
+Two things to know when configuring it:
+
+- **The networks must agree.** Freighter mobile rejects a request whose chain
+  doesn't match the network the wallet is on, so `NEXT_PUBLIC_STELLAR_NETWORK` has
+  to track `STELLAR_NETWORK`, and a contributor on mainnet Freighter can't sign
+  against a testnet deployment (they get a "switch networks" message, not a
+  silent failure).
+- **The mobile wallet returns no signer address.** `stellar_signMessage` answers
+  with a bare signature, so the extension's "did the right account sign this?"
+  check has nothing to compare against. The transport verifies the signature
+  against the expected address locally instead — a real check rather than a
+  self-report.
+
+On a phone the pairing is handed straight to the Freighter app via its deep link,
+resolved from the WalletConnect registry rather than hardcoded. On a desktop with
+no extension the same pairing renders as a QR code for the app to scan.
+
 ### Going to mainnet
 
-The cutover is config-only: set `STELLAR_NETWORK=public`, point `STELLAR_USDC_ISSUER`
+The cutover is config-only: set `STELLAR_NETWORK=public` (and
+`NEXT_PUBLIC_STELLAR_NETWORK=public`), point `STELLAR_USDC_ISSUER`
 at Circle's mainnet USDC issuer, fund the platform account with real XLM (reserves +
 fees) and USDC, add its trustline, then run one small smoke-test payout and verify it
 on [stellar.expert](https://stellar.expert).

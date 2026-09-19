@@ -9,142 +9,109 @@
 // connected with it could never sign the ownership proof or the sponsored
 // trustline this module exists to produce.
 //
-//   • Freighter (`@stellar/freighter-api`) signs per **SEP-53** and returns a
-//     base64 ed25519 signature (newer "V4") or a Buffer ("V3", older). Its
-//     `signMessage` return shape changed across versions:
-//         V3: { signedMessage: Buffer | null,  signerAddress, error? }
-//         V4: { signedMessage: string | null,  signerAddress, error? }   // base64
-//     `freighterSignatureToBase64` normalizes both to base64. signerAddress is
-//     the G… signer.
+// Freighter comes in two shapes, and this module is the seam between them:
 //
-// SEP-10 fallback (issue note): SEP-53 message signing proved consistent for
-// Freighter (confirmed shape above), so we did NOT need the SEP-10
-// challenge-transaction fallback. Revisit only if a target wallet lacks
-// SEP-53 `signMessage`.
+//   • the **browser extension** (wallet-extension.ts), over
+//     `@stellar/freighter-api` — the desktop path, unchanged;
+//   • the **mobile app** (wallet-connect.ts), over WalletConnect v2 — the phone
+//     path, and also what a desktop without the extension can pair with by QR.
 //
-// The wallet SDK is loaded with dynamic `import()` inside each call so this module
-// is import-safe under SSR (no `window` access at module load) and the wallet
-// bundle stays out of the server build.
-import { isValidStellarAddress } from "./signature";
-import { networkPassphrase } from "./config";
+// The extension wins whenever it is reachable, because it needs no pairing and
+// no relay. Everything else falls through to WalletConnect when the deployment
+// has a project id, so a phone browser and Freighter's own in-app browser — in
+// which `@stellar/freighter-api` is just as absent — both land on a path that
+// works instead of on "install the browser extension", which no phone can do.
+//
+// Callers (wallet-sign-in.ts, wallet-claim.ts, payout-setup.ts,
+// freighter-proof.ts) import from here and don't know which transport ran.
+import {
+  isWalletConnectConfigured,
+  type WalletConnectPairing,
+} from "./wallet-connect";
+import {
+  isFreighterAvailable as isExtensionAvailable,
+  connect as extensionConnect,
+  signOwnership as extensionSignOwnership,
+  signTransaction as extensionSignTransaction,
+} from "./wallet-extension";
+import {
+  FREIGHTER_REQUIRED_MESSAGE,
+  WalletError,
+  type StellarConnection,
+  type StellarSignedMessage,
+} from "./wallet-errors";
 
-/** Which signing scheme produced a signature — selects the server verify path. */
-export type SignatureScheme = "sep53";
+export {
+  FREIGHTER_REQUIRED_MESSAGE,
+  WalletError,
+  type SignatureScheme,
+  type StellarConnection,
+  type StellarSignedMessage,
+  type StellarWallet,
+  type WalletErrorCode,
+} from "./wallet-errors";
+export { freighterSignatureToBase64 } from "./wallet-extension";
+export {
+  isFreighterInAppBrowser,
+  isMobileBrowser,
+  isWalletConnectConfigured,
+  onPairing,
+  type WalletConnectPairing,
+} from "./wallet-connect";
 
-/** Which browser wallet a connection/signature came from. */
-export type StellarWallet = "freighter";
-
-/** A connected wallet address plus the wallet it came from. */
-export interface StellarConnection {
-  address: string; // G… (case-sensitive — never normalized)
-  wallet: StellarWallet;
-}
-
-/** A normalized ownership proof ready to POST to the server for verification. */
-export interface StellarSignedMessage {
-  address: string; // G… signer
-  signature: string; // base64-encoded ed25519 signature
-  scheme: SignatureScheme;
-  wallet: StellarWallet;
-}
-
-/** Shown whenever an action needs Freighter and the extension is not reachable. */
-export const FREIGHTER_REQUIRED_MESSAGE =
-  "Freighter is required. Install the Freighter browser extension, then try again.";
-
-/** Freighter's `FreighterApiError.code` when the user declines a prompt. */
-const FREIGHTER_USER_REJECTED = -4;
+/** Which Freighter a call will talk to. */
+export type WalletTransport = "extension" | "walletconnect";
 
 /**
- * Why a wallet call failed, so a caller can pick a state instead of parsing
- * `message`:
+ * Pick the transport for this browser. The extension is preferred wherever it
+ * answers; otherwise the mobile app, when this deployment can offer it.
  *
- *   • `freighter_missing` — the extension is not installed or not reachable.
- *   • `rejected`          — the user declined access or signing.
- *   • `wrong_account`     — Freighter signed with a different account.
- *   • `unsupported`       — this Freighter build cannot sign messages.
- *   • `invalid_address`   — the wallet returned something that is not a G… key.
- *   • `failed`            — any other wallet error.
+ * Exported so the UI can word itself before anything is clicked — "Connect
+ * Freighter" on a desktop with the extension, "Open the Freighter app" on a
+ * phone — rather than finding out only after a failure.
  */
-export type WalletErrorCode =
-  | "freighter_missing"
-  | "rejected"
-  | "wrong_account"
-  | "unsupported"
-  | "invalid_address"
-  | "failed";
-
-/** Thrown by every call in this module; `message` stays human-readable. */
-export class WalletError extends Error {
-  constructor(
-    readonly code: WalletErrorCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "WalletError";
-  }
+export async function resolveTransport(): Promise<WalletTransport | null> {
+  if (await isExtensionAvailable()) return "extension";
+  if (isWalletConnectConfigured()) return "walletconnect";
+  return null;
 }
 
-/** Map a Freighter API error to a {@link WalletError}. */
-function freighterError(
-  error: { code?: number; message: string },
-  prefix: string,
-): WalletError {
-  const code = error.code === FREIGHTER_USER_REJECTED ? "rejected" : "failed";
-  return new WalletError(code, `${prefix}: ${error.message}`);
-}
-
-/**
- * Normalize a Freighter `signMessage` `signedMessage` to a base64 string.
- * Accepts the V4 base64 string as-is and encodes the V3 Buffer/Uint8Array.
- * Throws on `null` — Freighter returns null when the user rejects signing.
- */
-export function freighterSignatureToBase64(
-  signedMessage: string | ArrayBufferView | null | undefined,
-): string {
-  if (signedMessage == null) {
-    throw new Error("Freighter returned no signature (signing was rejected).");
-  }
-  if (typeof signedMessage === "string") return signedMessage; // V4: already base64
-  // V3: raw signature bytes.
-  const view = signedMessage as ArrayBufferView;
-  return Buffer.from(
-    view.buffer,
-    view.byteOffset,
-    view.byteLength,
-  ).toString("base64");
-}
-
-/** True if the Freighter extension is installed and reachable. */
+/** True if any Freighter — extension or mobile app — can be reached from here. */
 export async function isFreighterAvailable(): Promise<boolean> {
-  try {
-    const { isConnected } = await import("@stellar/freighter-api");
-    const res = await isConnected();
-    return Boolean(res?.isConnected);
-  } catch {
-    return false;
-  }
+  return (await resolveTransport()) !== null;
 }
 
 /**
- * Connect Freighter and return its `G…` address, prompting for access. Throws
- * {@link FREIGHTER_REQUIRED_MESSAGE} when the extension is not reachable.
+ * Load the WalletConnect transport. Kept behind a dynamic `import()` so a
+ * desktop session that never leaves the extension path doesn't download the
+ * relay SDK, and so a deployment with no project id never touches it at all.
+ */
+async function walletConnect() {
+  return import("./wallet-connect");
+}
+
+/** Refuse the same way the extension-only build used to, when nothing is reachable. */
+function noFreighter(): WalletError {
+  return new WalletError("freighter_missing", FREIGHTER_REQUIRED_MESSAGE);
+}
+
+/**
+ * Connect Freighter and return its `G…` address, prompting for access.
+ *
+ * On the mobile path the pairing itself is surfaced through {@link onPairing}:
+ * the promise stays pending while the user approves in the app, exactly as it
+ * does while they approve an extension prompt.
  */
 export async function connect(): Promise<StellarConnection> {
-  if (!(await isFreighterAvailable())) {
-    throw new WalletError("freighter_missing", FREIGHTER_REQUIRED_MESSAGE);
-  }
-
-  const { requestAccess } = await import("@stellar/freighter-api");
-  const { address, error } = await requestAccess();
-  if (error) throw freighterError(error, "Freighter access denied");
-  assertAddress(address);
-  return { address, wallet: "freighter" };
+  const transport = await resolveTransport();
+  if (transport === "extension") return extensionConnect();
+  if (transport === "walletconnect") return (await walletConnect()).connect();
+  throw noFreighter();
 }
 
 /**
- * Prove ownership of `expectedAddress` by signing `message` with Freighter
- * (SEP-53), producing a signature the server verifies in signature.ts.
+ * Prove ownership of `expectedAddress` by signing `message` (SEP-53), producing
+ * a signature the server verifies in signature.ts.
  *
  * @param message         The server-issued challenge string to sign.
  * @param expectedAddress The G… address the proof must be bound to — the signer
@@ -154,36 +121,12 @@ export async function signOwnership(
   message: string,
   expectedAddress: string,
 ): Promise<StellarSignedMessage> {
-  assertAddress(expectedAddress);
-
-  if (!(await isFreighterAvailable())) {
-    throw new WalletError("freighter_missing", FREIGHTER_REQUIRED_MESSAGE);
+  const transport = await resolveTransport();
+  if (transport === "extension") return extensionSignOwnership(message, expectedAddress);
+  if (transport === "walletconnect") {
+    return (await walletConnect()).signOwnership(message, expectedAddress);
   }
-
-  const { signMessage } = await import("@stellar/freighter-api");
-  if (typeof signMessage !== "function") {
-    throw new WalletError(
-      "unsupported",
-      "This version of Freighter cannot sign messages. Update Freighter, then try again.",
-    );
-  }
-  const res = await signMessage(message, { address: expectedAddress });
-  if (res.error) throw freighterError(res.error, "Freighter signing failed");
-  if (res.signedMessage == null) {
-    throw new WalletError("rejected", "Freighter returned no signature (signing was rejected).");
-  }
-  if (res.signerAddress !== expectedAddress) {
-    throw new WalletError(
-      "wrong_account",
-      `Signed with the wrong account: expected ${expectedAddress}, got ${res.signerAddress}.`,
-    );
-  }
-  return {
-    address: res.signerAddress,
-    signature: freighterSignatureToBase64(res.signedMessage),
-    scheme: "sep53",
-    wallet: "freighter",
-  };
+  throw noFreighter();
 }
 
 /**
@@ -199,30 +142,21 @@ export async function signTransaction(
   xdr: string,
   expectedAddress: string,
 ): Promise<string> {
-  assertAddress(expectedAddress);
-
-  if (!(await isFreighterAvailable())) {
-    throw new WalletError("freighter_missing", FREIGHTER_REQUIRED_MESSAGE);
+  const transport = await resolveTransport();
+  if (transport === "extension") return extensionSignTransaction(xdr, expectedAddress);
+  if (transport === "walletconnect") {
+    return (await walletConnect()).signTransaction(xdr, expectedAddress);
   }
-
-  const { signTransaction: freighterSign } = await import("@stellar/freighter-api");
-  const res = await freighterSign(xdr, {
-    address: expectedAddress,
-    networkPassphrase: networkPassphrase(),
-  });
-  if (res.error) throw freighterError(res.error, "Freighter signing failed");
-  if (res.signerAddress !== expectedAddress) {
-    throw new WalletError(
-      "wrong_account",
-      `Signed with the wrong account: expected ${expectedAddress}, got ${res.signerAddress}.`,
-    );
-  }
-  return res.signedTxXdr;
+  throw noFreighter();
 }
 
-/** Guard a wallet-returned address: reject non-StrKey / corrupted input. */
-function assertAddress(address: string | undefined): asserts address is string {
-  if (!address || !isValidStellarAddress(address)) {
-    throw new WalletError("invalid_address", `Wallet returned an invalid Stellar address: ${address}`);
-  }
+/**
+ * Drop a paired mobile session, so the next connect starts clean. A no-op on
+ * the extension path, which holds no session of its own. Call it on sign-out.
+ */
+export async function disconnect(): Promise<void> {
+  if (!isWalletConnectConfigured()) return;
+  await (await walletConnect()).disconnect();
 }
+
+export type { WalletConnectPairing as Pairing };

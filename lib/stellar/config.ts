@@ -33,6 +33,11 @@ const DEFAULT_USDC_CODE = "USDC";
  * Active network from `STELLAR_NETWORK` (`testnet` | `public`), defaulting to
  * testnet. Fails fast on any other value so a typo can't silently point payouts
  * at the wrong ledger.
+ *
+ * Server-side only. `STELLAR_NETWORK` is not a `NEXT_PUBLIC_` var, so Next.js
+ * inlines it as `undefined` in the browser bundle and this would answer
+ * "testnet" on a mainnet deployment. Client code — wallet.ts and the
+ * WalletConnect transport — must call {@link clientStellarNetwork} instead.
  */
 export function stellarNetwork(): StellarNetwork {
   const raw = (process.env.STELLAR_NETWORK ?? "testnet").trim().toLowerCase();
@@ -42,6 +47,54 @@ export function stellarNetwork(): StellarNetwork {
     );
   }
   return raw;
+}
+
+/**
+ * The active network as the **browser** sees it, from the build-time
+ * `NEXT_PUBLIC_STELLAR_NETWORK`, falling back to the server-side
+ * `STELLAR_NETWORK` when this runs on the server.
+ *
+ * Both are read so one module works on either side of the boundary: the
+ * signing path in wallet.ts runs in the browser, but its unit tests run in
+ * Node, where only `STELLAR_NETWORK` is set.
+ *
+ * Keep `NEXT_PUBLIC_STELLAR_NETWORK` equal to `STELLAR_NETWORK`: they select
+ * the network passphrase a wallet signs under and the CAIP-2 chain Freighter
+ * mobile is asked to sign on, and Freighter mobile **rejects** a request whose
+ * chain does not match the network the wallet is currently on.
+ */
+export function clientStellarNetwork(): StellarNetwork {
+  const raw = (
+    process.env.NEXT_PUBLIC_STELLAR_NETWORK ??
+    process.env.STELLAR_NETWORK ??
+    "testnet"
+  )
+    .trim()
+    .toLowerCase();
+  if (raw !== "testnet" && raw !== "public") {
+    throw new Error(
+      `NEXT_PUBLIC_STELLAR_NETWORK must be "testnet" or "public", got "${raw}"`,
+    );
+  }
+  return raw;
+}
+
+/**
+ * The CAIP-2 chain the wallet is asked to sign on, as Freighter mobile names
+ * them (`stellar:pubnet` / `stellar:testnet` — verified against the wallet's
+ * own `StellarRpcChains`). Note `pubnet`, not `public`.
+ */
+export function caipChainId(): string {
+  return clientStellarNetwork() === "public" ? "stellar:pubnet" : "stellar:testnet";
+}
+
+/**
+ * The network passphrase as the browser sees it. Mirrors
+ * {@link networkPassphrase} but reads the client-visible network, so a signed
+ * transaction is scoped to the right ledger on a mainnet build.
+ */
+export function clientNetworkPassphrase(): string {
+  return clientStellarNetwork() === "public" ? Networks.PUBLIC : Networks.TESTNET;
 }
 
 /** Horizon base URL. `STELLAR_HORIZON_URL` overrides the network default. */

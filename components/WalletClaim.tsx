@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { track } from "@/lib/analytics";
+import FreighterPairing from "./FreighterPairing";
+import { resolveTransport, type WalletTransport } from "@/lib/stellar/wallet";
 import {
   WALLET_CLAIM_MESSAGES,
   claimWallet,
@@ -17,6 +19,8 @@ interface WalletClaimViewProps {
   phase: WalletClaimPhase;
   /** Set when `phase` is "failed". */
   reason?: WalletClaimFailure;
+  /** Which Freighter this browser will reach; null until resolved. */
+  transport?: WalletTransport | null;
   onConnect: () => void;
 }
 
@@ -24,10 +28,25 @@ interface WalletClaimViewProps {
  * The claim step for an account created by email (#30), for one state.
  * Stateless, so every state can be rendered and tested on its own.
  */
-export function WalletClaimView({ phase, reason, onConnect }: WalletClaimViewProps) {
+export function WalletClaimView({
+  phase,
+  reason,
+  transport,
+  onConnect,
+}: WalletClaimViewProps) {
   const connecting = phase === "connecting";
   const failure = phase === "failed" ? (reason ?? "failed") : null;
-  const label = connecting ? "Waiting for Freighter…" : failure ? "Try again" : "Connect Freighter";
+  // See WalletSignIn: the mobile app is opened, not prompted in this browser.
+  const mobile = transport === "walletconnect";
+  const label = connecting
+    ? mobile
+      ? "Waiting for the Freighter app…"
+      : "Waiting for Freighter…"
+    : failure
+      ? "Try again"
+      : mobile
+        ? "Open Freighter app"
+        : "Connect Freighter";
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-6 text-center">
@@ -103,6 +122,18 @@ interface WalletClaimProps {
 export default function WalletClaim({ onClaimed, claim = claimWallet }: WalletClaimProps) {
   const [phase, setPhase] = useState<WalletClaimPhase>("idle");
   const [reason, setReason] = useState<WalletClaimFailure | undefined>();
+  const [transport, setTransport] = useState<WalletTransport | null>(null);
+
+  // See WalletSignIn: resolved on mount, because detection needs `window`.
+  useEffect(() => {
+    let live = true;
+    void resolveTransport().then((t) => {
+      if (live) setTransport(t);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   /** Run one claim attempt; ignores clicks while one is already in flight. */
   const handleConnect = async () => {
@@ -119,5 +150,15 @@ export default function WalletClaim({ onClaimed, claim = claimWallet }: WalletCl
     setPhase("failed");
   };
 
-  return <WalletClaimView phase={phase} reason={reason} onConnect={handleConnect} />;
+  return (
+    <>
+      <WalletClaimView
+        phase={phase}
+        reason={reason}
+        transport={transport}
+        onConnect={handleConnect}
+      />
+      <FreighterPairing />
+    </>
+  );
 }

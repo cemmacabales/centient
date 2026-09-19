@@ -22,6 +22,7 @@ export type PayoutSetupFailure =
   | "freighter_missing"
   | "rejected"
   | "wrong_account"
+  | "wrong_network"
   | "pending"
   | "cap_reached"
   | "address_in_use"
@@ -83,7 +84,12 @@ function failureFromError(err: unknown): PayoutSetupFailure {
       case "freighter_missing":
       case "rejected":
       case "wrong_account":
+      case "wrong_network":
         return err.code;
+      // See wallet-sign-in.ts: an unconfigured mobile path is, to the
+      // contributor, just Freighter being unreachable.
+      case "walletconnect_unconfigured":
+        return "freighter_missing";
       default:
         return "failed";
     }
@@ -191,10 +197,14 @@ export function payoutWaitingNotice(seconds: number): string {
 export const PAYOUT_SETUP_MESSAGES: Record<PayoutSetupFailure, string> = {
   wallet_required: "Connect your Stellar wallet to this account first.",
   freighter_missing:
-    "Freighter isn't installed or isn't reachable. Install the Freighter browser extension, then try again.",
+    "We couldn't reach Freighter. Install the Freighter browser extension, or open this " +
+    "page on a phone with the Freighter app, then try again.",
   rejected: "You declined in Freighter. Nothing was submitted — try again when you're ready.",
   wrong_account:
     "Freighter signed with a different account. Switch to the wallet you signed in with, then try again.",
+  wrong_network:
+    "Freighter is on a different Stellar network than Centient. Switch networks in " +
+    "Freighter, then try again.",
   pending: "Your wallet setup is still confirming on the network. Try again in a minute.",
   cap_reached:
     "You've reached the limit of payout wallets we can set up for your account. Contact centient@artisam.xyz.",
