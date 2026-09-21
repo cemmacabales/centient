@@ -69,26 +69,28 @@ export function FreighterPairingView({
         </p>
 
         {onWalletDevice ? (
+          /* The button stays put whether or not the automatic hand-off landed:
+             a deep link either switches apps or does nothing observable, so
+             there is no event to recover from — only a control the user can
+             reach. It is disabled for the moment before the link resolves,
+             which `warmUp` normally makes invisible. */
           <>
-            {pairing.deepLink ? (
-              <button
-                type="button"
-                onClick={onOpenApp}
-                className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-br from-primary to-primary-container font-label text-lg font-bold text-white shadow-[0_8px_24px_rgba(0,109,61,0.2)] transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-              >
-                <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
-                  open_in_new
-                </span>
-                Open Freighter
-              </button>
-            ) : (
-              /* The registry lookup didn't answer, so we can't link into the
-                 app. Copying the pairing into Freighter's own connect screen
-                 still works, and the QR below covers a second device. */
-              <p className="font-body text-sm text-on-surface-variant">
-                Copy the pairing link below, then paste it into Freighter.
-              </p>
-            )}
+            <button
+              type="button"
+              onClick={onOpenApp}
+              disabled={!pairing.deepLink}
+              data-link={pairing.deepLink ? (pairing.linkIsExact ? "exact" : "fallback") : "pending"}
+              className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-br from-primary to-primary-container font-label text-lg font-bold text-white shadow-[0_8px_24px_rgba(0,109,61,0.2)] transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-60"
+            >
+              <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
+                open_in_new
+              </span>
+              Open Freighter
+            </button>
+            <p className="font-body text-sm text-on-surface-variant">
+              Nothing happened? Copy the pairing link below, open Freighter, and
+              paste it into <span className="whitespace-nowrap">Connect&nbsp;dApp</span>.
+            </p>
           </>
         ) : (
           /* The SVG is generated locally by `qrcode` from the `wc:` URI we just

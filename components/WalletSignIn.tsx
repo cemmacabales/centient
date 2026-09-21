@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { track } from "@/lib/analytics";
 import FreighterPairing from "./FreighterPairing";
-import { resolveTransport, type WalletTransport } from "@/lib/stellar/wallet";
+import { prepareWallet, type WalletTransport } from "@/lib/stellar/wallet";
 import {
   WALLET_SIGN_IN_MESSAGES,
   signInWithWallet,
@@ -109,11 +109,13 @@ export default function WalletSignIn({ onSignedIn, signIn = signInWithWallet }: 
   const [reason, setReason] = useState<WalletSignInFailure | undefined>();
   const [transport, setTransport] = useState<WalletTransport | null>(null);
 
-  // Resolved on mount so the button reads correctly before it is pressed.
-  // Extension detection needs `window`, so it cannot happen during render.
+  // Resolved on mount so the button reads correctly before it is pressed —
+  // extension detection needs `window`, so it can't happen during render — and
+  // so the mobile path's slow parts (relay SDK, deep-link lookup) happen while
+  // the contributor is still reading, not between their tap and the app.
   useEffect(() => {
     let live = true;
-    void resolveTransport().then((t) => {
+    void prepareWallet().then((t) => {
       if (live) setTransport(t);
     });
     return () => {

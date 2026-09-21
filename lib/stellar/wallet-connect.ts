@@ -68,6 +68,21 @@ const WC_USER_REJECTED = 5000;
 const WC_EXPLORER_API = "https://explorer-api.walletconnect.com/v3/wallets";
 
 /**
+ * Where to send a phone when the registry can't say.
+ *
+ * `freighterwallet` is the scheme Freighter mobile registers with the OS, read
+ * off its own build config — `CFBundleURLSchemes` in `ios/…/Info.plist` and
+ * `deepLinkScheme` in `android/app/build.gradle`. The `wc` path is
+ * WalletConnect's convention for the pairing entry point.
+ *
+ * This is a fallback, not the first choice: the wallet only pairs from a URL
+ * containing the redirect string it was *built* with, and that value lives in
+ * its private CI config, so this can open the app without the pairing landing.
+ * The prompt therefore always keeps a manual path visible.
+ */
+const FREIGHTER_NATIVE_FALLBACK = "freighterwallet://wc";
+
+/**
  * How a pairing should be handed to the user. `deepLink` is set only once the
  * registry has told us where Freighter mobile lives; `uri` is always present so
  * the UI can fall back to a QR code or a copy button.
@@ -75,8 +90,14 @@ const WC_EXPLORER_API = "https://explorer-api.walletconnect.com/v3/wallets";
 export interface WalletConnectPairing {
   /** The raw `wc:` pairing URI — render as a QR on desktop. */
   uri: string;
-  /** A link that opens the Freighter app on this phone, when we know one. */
+  /** A link that opens the Freighter app on this phone; null until resolved. */
   deepLink: string | null;
+  /**
+   * True when `deepLink` came from the WalletConnect registry, false when it is
+   * {@link FREIGHTER_NATIVE_FALLBACK}. The prompt keeps a manual path visible
+   * either way, but only promises the app will open when this is true.
+   */
+  linkIsExact: boolean;
 }
 
 type PairingListener = (pairing: WalletConnectPairing | null) => void;
@@ -211,11 +232,22 @@ function appUrl(): string {
   return "https://centient.xyz";
 }
 
-/** Resolve the deep link for `uri`, then publish the pairing to the UI. */
+/**
+ * Resolve where this pairing should be sent, then publish it to the UI.
+ *
+ * Published twice on purpose: once immediately, so a desktop can start drawing
+ * its QR code without waiting on a network round trip, and again once the
+ * registry answers. On a phone `warmUp` has usually already cached that answer,
+ * so the second publish lands in the same tick as the first.
+ */
 async function publishPairingFor(uri: string): Promise<void> {
-  publishPairing({ uri, deepLink: null });
+  publishPairing({ uri, deepLink: null, linkIsExact: false });
   const link = await freighterMobileLink();
-  publishPairing({ uri, deepLink: link ? formatNativeUrl(link, uri) : null });
+  publishPairing({
+    uri,
+    deepLink: formatNativeUrl(link ?? FREIGHTER_NATIVE_FALLBACK, uri),
+    linkIsExact: link !== null,
+  });
 }
 
 /** Memoized across pairings; only a *successful* lookup is kept (see below). */
@@ -488,6 +520,30 @@ async function assertSignedBy(signedXdr: string, expectedAddress: string): Promi
   }
 }
 
+/**
+ * Get the slow parts of the mobile path out of the way before the user taps:
+ * the relay SDK download and handshake, and the registry lookup for the deep
+ * link. Both are idempotent and memoized, so calling this repeatedly is free.
+ *
+ * The cost is deliberate and bounded: a contributor who opens the sign-in
+ * screen on a phone downloads the relay bundle and holds one relay socket open
+ * whether or not they go on to tap. That buys the thing the screen exists for —
+ * the tap hands them to Freighter instead of starting a download. It is only
+ * ever reached on the WalletConnect path, so a desktop with the extension pays
+ * none of it, and a deployment with no project id never gets here at all.
+ *
+ * Never throws: this is a head start, and a failure here just means the real
+ * attempt pays the cost and reports the error itself.
+ */
+export async function warmUp(): Promise<void> {
+  void freighterMobileLink();
+  try {
+    await getProvider();
+  } catch {
+    // Deliberately swallowed — see above.
+  }
+}
+
 /** Drop the current session so the next connect pairs afresh. Never throws. */
 export async function disconnect(): Promise<void> {
   if (!providerPromise) return;
@@ -500,6 +556,15 @@ export async function disconnect(): Promise<void> {
     providerPromise = null;
     publishPairing(null);
   }
+}
+
+/**
+ * Publish a pairing exactly as a live relay would. For tests: the UI's whole
+ * job is reacting to this, and driving it through the real subscription is the
+ * only way to test that without standing up a relay.
+ */
+export function emitPairingForTest(pairing: WalletConnectPairing | null): void {
+  publishPairing(pairing);
 }
 
 /** Reset the memoized registry lookup. For tests. */

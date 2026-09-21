@@ -26,11 +26,17 @@ vi.mock("@stellar/freighter-api", () => ({
 import {
   connect,
   isFreighterAvailable,
+  prepareWallet,
+  resetTransport,
   resolveTransport,
   signOwnership,
   signTransaction,
 } from "@/lib/stellar/wallet";
-import { setWalletConnectProvider, type WalletConnectProvider } from "@/lib/stellar/wallet-connect";
+import {
+  resetMobileLinkCache,
+  setWalletConnectProvider,
+  type WalletConnectProvider,
+} from "@/lib/stellar/wallet-connect";
 
 const ADDR = Keypair.random().publicKey();
 const CHAIN = "stellar:testnet";
@@ -48,11 +54,15 @@ function mobileProvider(): WalletConnectProvider & { request: ReturnType<typeof 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The transport is memoized for the life of the page (a 2s extension probe is
+  // not worth repeating); each test is a fresh page.
+  resetTransport();
   process.env.NEXT_PUBLIC_STELLAR_NETWORK = "testnet";
 });
 
 afterEach(() => {
   setWalletConnectProvider(null);
+  resetMobileLinkCache();
   delete process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
   delete process.env.NEXT_PUBLIC_STELLAR_NETWORK;
 });
@@ -91,6 +101,81 @@ describe("resolveTransport", () => {
     process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID = "test-project-id";
 
     await expect(isFreighterAvailable()).resolves.toBe(true);
+  });
+});
+
+describe("memoization", () => {
+  // `@stellar/freighter-api` waits a hard-coded 2s before reporting "no
+  // extension", so probing per call would cost seconds of dead time on a phone.
+  it("probes for the extension once, however many wallet calls follow", async () => {
+    mockIsConnected.mockResolvedValue({ isConnected: false });
+    process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID = "test-project-id";
+    setWalletConnectProvider(mobileProvider());
+
+    await resolveTransport();
+    await resolveTransport();
+    await connect();
+    await isFreighterAvailable();
+
+    expect(mockIsConnected).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares one probe between callers that race", async () => {
+    let release: (v: { isConnected: boolean }) => void = () => {};
+    mockIsConnected.mockReturnValue(
+      new Promise<{ isConnected: boolean }>((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    const both = Promise.all([resolveTransport(), resolveTransport()]);
+    release({ isConnected: true });
+
+    expect(await both).toEqual(["extension", "extension"]);
+    expect(mockIsConnected).toHaveBeenCalledTimes(1);
+  });
+
+  it("probes again after a reset", async () => {
+    mockIsConnected.mockResolvedValue({ isConnected: true });
+    await resolveTransport();
+    resetTransport();
+    await resolveTransport();
+
+    expect(mockIsConnected).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("prepareWallet", () => {
+  it("looks the deep link up ahead of the tap, not after it", async () => {
+    mockIsConnected.mockResolvedValue({ isConnected: false });
+    process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID = "test-project-id";
+    setWalletConnectProvider(mobileProvider());
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ listings: {} })));
+
+    await expect(prepareWallet()).resolves.toBe("walletconnect");
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+    expect(String(fetchSpy.mock.calls[0][0])).toContain("explorer-api.walletconnect.com");
+
+    fetchSpy.mockRestore();
+  });
+
+  it("leaves the extension path alone — no relay, no registry call", async () => {
+    mockIsConnected.mockResolvedValue({ isConnected: true });
+    process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID = "test-project-id";
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await expect(prepareWallet()).resolves.toBe("extension");
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    fetchSpy.mockRestore();
+  });
+
+  it("resolves to null when no wallet is reachable, without throwing", async () => {
+    mockIsConnected.mockResolvedValue({ isConnected: false });
+
+    await expect(prepareWallet()).resolves.toBeNull();
   });
 });
 

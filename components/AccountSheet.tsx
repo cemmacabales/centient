@@ -6,6 +6,7 @@ import { resetIdentity, track } from "@/lib/analytics";
 import { truncateAddress } from "@/lib/wallet";
 import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 import { isValidStellarAddress } from "@/lib/stellar/signature";
+import { disconnect as disconnectWallet } from "@/lib/stellar/wallet";
 
 // Withdrawal statuses that are still in flight — while any withdrawal is in one of
 // these, the account sheet polls so the chip advances live. Terminal states
@@ -198,6 +199,12 @@ export default function AccountSheet({
       // be dropped here for the same reason — the next person on this browser
       // starts anonymous.
       resetIdentity();
+      // Same reasoning, for the wallet. A WalletConnect pairing is stored by
+      // the relay SDK and outlives the session cookie, so without this the next
+      // person to tap "Connect Freighter" on this phone is handed the previous
+      // contributor's still-live session and signed straight back in as them.
+      // Best-effort: a logout must not fail because a relay did.
+      await disconnectWallet().catch(() => {});
       onLoggedOut();
     } catch {
       showToast("Log out failed. Please try again.", "error");

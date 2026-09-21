@@ -360,8 +360,32 @@ Two things to know when configuring it:
   self-report.
 
 On a phone the pairing is handed straight to the Freighter app via its deep link,
-resolved from the WalletConnect registry rather than hardcoded. On a desktop with
-no extension the same pairing renders as a QR code for the app to scan.
+resolved from the WalletConnect registry rather than hardcoded — the wallet only
+pairs from a URL carrying the redirect string it was built with, and that value
+lives in its private CI config. When the registry can't answer, the prompt falls
+back to `freighterwallet://` (the scheme Freighter registers with the OS, read
+off its own build config) and always keeps a copy-the-link path visible, because
+a deep link either switches apps or does nothing observable — there is no failure
+event to recover from. On a desktop with no extension the same pairing renders as
+a QR code for the app to scan.
+
+Two details that decide whether this feels instant or broken:
+
+- **The transport is resolved once per page.** `@stellar/freighter-api` detects
+  the extension by posting a message and waiting for a content script to answer,
+  and waits a hard-coded **2 seconds** before concluding there isn't one. Probing
+  per call would cost about four seconds across a single mobile sign-in, so
+  `resolveTransport()` memoizes. A newly installed extension only injects itself
+  into a fresh page load, which starts the probe over anyway.
+- **The connect button warms the path on mount.** `prepareWallet()` starts the
+  relay SDK download, the WalletConnect handshake and the registry lookup while
+  the contributor is still reading the screen. Without it all three land between
+  the tap and the app opening.
+
+Signing out drops the pairing as well as the session cookie: a WalletConnect
+session is stored by the relay SDK and outlives the cookie, so without that the
+next person on a shared phone would tap "Connect Freighter" and be signed back in
+as the previous contributor.
 
 ### Going to mainnet
 

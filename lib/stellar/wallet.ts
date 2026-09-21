@@ -63,17 +63,59 @@ export {
 export type WalletTransport = "extension" | "walletconnect";
 
 /**
+ * Memoized for the life of the page — see {@link resolveTransport} for why that
+ * matters, and why it is safe.
+ */
+let transportPromise: Promise<WalletTransport | null> | null = null;
+
+/**
  * Pick the transport for this browser. The extension is preferred wherever it
  * answers; otherwise the mobile app, when this deployment can offer it.
  *
  * Exported so the UI can word itself before anything is clicked — "Connect
  * Freighter" on a desktop with the extension, "Open the Freighter app" on a
  * phone — rather than finding out only after a failure.
+ *
+ * **Answered once per page.** `@stellar/freighter-api` detects the extension by
+ * posting a message and waiting for the content script to answer, and when
+ * nothing answers it waits a hard-coded 2 seconds before giving up. Without
+ * memoizing, every wallet call would pay that on a phone — roughly four seconds
+ * of dead time across a sign-in, and a "Connect Freighter" label that visibly
+ * flips to "Open Freighter app" two seconds after the screen settles. The
+ * answer can't go stale underneath us either: a newly installed extension only
+ * injects itself into a fresh page load, which starts this over anyway.
  */
 export async function resolveTransport(): Promise<WalletTransport | null> {
-  if (await isExtensionAvailable()) return "extension";
-  if (isWalletConnectConfigured()) return "walletconnect";
-  return null;
+  // The promise, not the value, so concurrent callers share one probe.
+  transportPromise ??= (async () => {
+    if (await isExtensionAvailable()) return "extension";
+    if (isWalletConnectConfigured()) return "walletconnect";
+    return null;
+  })();
+  return transportPromise;
+}
+
+/** Forget the memoized transport, so the next call probes again. For tests. */
+export function resetTransport(): void {
+  transportPromise = null;
+}
+
+/**
+ * Resolve the transport and, on the mobile path, get the slow parts out of the
+ * way: the relay SDK download and its connection, and the registry lookup that
+ * says where the Freighter app lives.
+ *
+ * Call it when a connect button mounts. All of that would otherwise land
+ * between the tap and the app opening, which is the difference between being
+ * handed to Freighter and watching a spinner. Failures are swallowed — this is
+ * a head start, and the real attempt reports its own errors.
+ */
+export async function prepareWallet(): Promise<WalletTransport | null> {
+  const transport = await resolveTransport();
+  if (transport === "walletconnect") {
+    void (await walletConnect()).warmUp();
+  }
+  return transport;
 }
 
 /** True if any Freighter — extension or mobile app — can be reached from here. */

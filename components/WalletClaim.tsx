@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { track } from "@/lib/analytics";
 import FreighterPairing from "./FreighterPairing";
-import { resolveTransport, type WalletTransport } from "@/lib/stellar/wallet";
+import { prepareWallet, type WalletTransport } from "@/lib/stellar/wallet";
 import {
   WALLET_CLAIM_MESSAGES,
   claimWallet,
@@ -124,10 +124,10 @@ export default function WalletClaim({ onClaimed, claim = claimWallet }: WalletCl
   const [reason, setReason] = useState<WalletClaimFailure | undefined>();
   const [transport, setTransport] = useState<WalletTransport | null>(null);
 
-  // See WalletSignIn: resolved on mount, because detection needs `window`.
+  // See WalletSignIn: resolved on mount, and the mobile path warmed up there.
   useEffect(() => {
     let live = true;
-    void resolveTransport().then((t) => {
+    void prepareWallet().then((t) => {
       if (live) setTransport(t);
     });
     return () => {
