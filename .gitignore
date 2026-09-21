@@ -12,3 +12,7 @@ ngrok.exe
 ROADMAP.md
 .venv-pdf/
 .worktrees/
+
+# QA reproduction kit: throwaway testnet keystore, never committed
+D2-QA-UNBLOCK/keys.json
+keys.json

@@ -15,6 +15,17 @@ on:
   push:
     branches: [develop]
 
+# A force-push supersedes the run it interrupts, and both jobs below stand up
+# their own Postgres and reinstall from scratch. Letting the old one finish
+# burns a runner on an answer about code that no longer exists.
+#
+# Only pull requests cancel. A push to develop is grouped by its own SHA, so two
+# quick merges each keep their run: B10 above needs one at every merge commit,
+# and a shared group would cancel the pending one even without cancel-in-progress.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest

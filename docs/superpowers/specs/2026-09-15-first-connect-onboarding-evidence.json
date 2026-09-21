@@ -1,0 +1,87 @@
+{
+  "issue": 30,
+  "title": "[E2-7] First-connect onboarding: wallet identity is the USDC payout destination",
+  "epic": 21,
+  "branch": "feat/issue-30-first-connect-onboarding",
+  "base": "b83a358",
+  "date": "2026-09-15",
+  "network": "testnet",
+  "design": "docs/superpowers/specs/2026-09-15-first-connect-onboarding-design.md",
+  "decisions": [
+    {
+      "id": "legacy-claim-path",
+      "decidedBy": "cemmacabales",
+      "date": "2026-09-15",
+      "decision": "Email registration is retired (410). An existing email account signs in, claims a wallet through /api/me/wallet, and from then on signs in with that wallet. It cannot earn or withdraw before the claim.",
+      "context": "Staging on 2026-09-15 held 10 email-only accounts (5 with a balance), 4 email accounts with a linked wallet and 5 wallet-only accounts."
+    }
+  ],
+  "definitionOfDone": [
+    {
+      "criterion": "A first-time and a returning contributor reach payout-ready state with the same proven address.",
+      "evidence": [
+        "lib/__tests__/first-connect-db.test.ts › reaches payout-ready as a new account whose proven address is its payout destination",
+        "lib/__tests__/first-connect-db.test.ts › returns as the same account and passes payout setup with no second sponsorship",
+        "lib/__tests__/first-connect-db.test.ts › claims a wallet, keeps its balance, sets up payouts, and then signs in with that wallet"
+      ]
+    },
+    {
+      "criterion": "Partial and rejected paths recover without duplicating identity or sponsorship state.",
+      "evidence": [
+        "lib/__tests__/first-connect-db.test.ts › resumes a submit whose outcome was unknown without a second sponsorship",
+        "lib/__tests__/first-connect-db.test.ts › releases an envelope that provably cannot land, and settles the rebuilt one on a single live row",
+        "lib/__tests__/first-connect-db.test.ts › cannot take a wallet another account holds, or move to a second wallet once bound",
+        "lib/stellar/__tests__/payout-setup.test.ts › maps a rejected signing error to rejected and submits nothing",
+        "lib/stellar/__tests__/payout-setup.test.ts › answers pending on a 202 and does not rebuild — rebuilding could sponsor twice",
+        "lib/stellar/__tests__/wallet-claim.test.ts › maps a declined signature to rejected and binds nothing"
+      ]
+    },
+    {
+      "criterion": "The authenticated Stellar address is the payout destination, with no separately typed or bound address.",
+      "evidence": [
+        "app/api/me/withdraw/__tests__/route.test.ts › returns 403 address_not_bound when the body names an address other than the bound wallet (#30)",
+        "app/api/me/withdraw/__tests__/route.test.ts › queues a single lump-sum payout to the bound wallet and decrements the balance on success",
+        "app/api/me/wallet/sponsor/__tests__/route.test.ts › 403 address_not_bound when the named address is not the session's wallet (#30)",
+        "app/api/me/wallet/__tests__/route.test.ts › 409 wallet_already_bound when the account holds a different Stellar wallet (#30)"
+      ]
+    },
+    {
+      "criterion": "No active contributor dependency on email/password registration and login.",
+      "evidence": [
+        "app/api/auth/register/__tests__/route.test.ts › answers 410 email_registration_retired",
+        "app/api/task/__tests__/route.test.ts › serves no task to an email-only account until it binds a wallet (#30)",
+        "app/api/submit/__tests__/route.test.ts › refuses an answer until the account binds a wallet, recording nothing (#30)",
+        "components/__tests__/account-first-entry.test.ts › offers no way to create an account"
+      ]
+    },
+    {
+      "criterion": "Session and logout behavior confirmed.",
+      "evidence": [
+        "lib/__tests__/first-connect-db.test.ts › logs out by clearing the session, after which the app treats the browser as signed out"
+      ]
+    },
+    {
+      "criterion": "No contributor private key enters Centient infrastructure.",
+      "evidence": [
+        "lib/__tests__/contributor-key-custody.test.ts — 19 modules on the first-connect path, client and server, handle no secret seed; signing goes only through @stellar/freighter-api; the onboarding routes read only addresses, signatures and signed envelopes"
+      ]
+    }
+  ],
+  "suites": {
+    "full": { "command": "npm test", "files": 100, "passed": 1479, "todo": 1, "failed": 0 },
+    "paymentsLane": { "command": "npm run test:payments", "files": 64, "passed": 1019, "failed": 0 },
+    "typecheck": { "command": "tsc --noEmit", "result": "clean" },
+    "build": { "command": "npm run build", "result": "exit 0; Turbopack Edge-runtime warnings only, all in files this branch does not touch" }
+  },
+  "notExercisedHere": [
+    "Freighter's own prompts in a real browser (sign-in, claim, sponsorship co-signature) — manual QA in #31",
+    "A live testnet sponsorship through this flow — the sponsor route's on-chain behaviour is unchanged and was proven in #27 and #28; this branch changes which address it accepts"
+  ],
+  "residualRisks": [
+    "Logout clears the cookie but does not revoke the JWT; a copied token stays valid until it expires (7 days). Pre-existing.",
+    "Freighter Mobile needs WalletConnect v2, which no Epic 2 issue builds (ADR-0003).",
+    "A stale pending sponsorship reconciles only through an operator reclaim run (#29).",
+    "An email account whose wallet already signed in as a separate account cannot claim it; there is no account merge.",
+    "A legacy 0x wallet is treated as no wallet; the first claim replaces it."
+  ]
+}

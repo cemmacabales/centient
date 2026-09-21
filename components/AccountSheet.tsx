@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { type ToastKind } from "@/components/Toast";
+import { resetIdentity, track } from "@/lib/analytics";
 import { truncateAddress } from "@/lib/wallet";
 import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 import { isValidStellarAddress } from "@/lib/stellar/signature";
@@ -37,6 +38,10 @@ interface AccountSheetProps {
   ageRange: string | null;
   showToast: (message: string, kind?: ToastKind) => void;
   onDemographicsDeleted: () => void;
+  /** A withdrawal was refused because payout setup is unfinished: take the contributor there. */
+  onPayoutSetupRequired?: () => void;
+  /** The session cookie is gone: drop the app back to the logged-out screen. */
+  onLoggedOut: () => void;
 }
 
 function formatDemographicField(value: string | null): string {
@@ -70,6 +75,8 @@ interface Withdrawal {
 interface WithdrawalData {
   pendingBalanceUnits: string;
   thresholdUnits: string;
+  /** #30: the account's bound wallet — the only address a withdrawal is paid to. */
+  destinationAddress: string | null;
   canWithdraw: boolean;
   withdrawals: Withdrawal[];
 }
@@ -103,8 +110,11 @@ export default function AccountSheet({
   ageRange,
   showToast,
   onDemographicsDeleted,
+  onPayoutSetupRequired,
+  onLoggedOut,
 }: AccountSheetProps) {
   const [deleting, setDeleting] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [showDataSection, setShowDataSection] = useState(false);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -112,7 +122,6 @@ export default function AccountSheet({
   const [withdrawalData, setWithdrawalData] = useState<WithdrawalData | null>(null);
   const [loadingWithdrawal, setLoadingWithdrawal] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
-  const [payoutAddress, setPayoutAddress] = useState("");
   const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
@@ -166,30 +175,62 @@ export default function AccountSheet({
   if (!open) return null;
 
   const truncated = truncateAddress(walletAddress);
+  const destination = withdrawalData?.destinationAddress ?? null;
 
-  const addressValid = isValidStellarAddress(payoutAddress.trim());
+  // Logging out in place: the sheet makes the call itself and hands control back
+  // to the page, which swaps to the logged-out screen. The old form POST relied
+  // on the route's 303 to navigate, which meant a full page load on success and
+  // nothing at all on a response the browser would not follow.
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      const res = await fetch("/api/auth/logout", {
+        method: "POST",
+        redirect: "manual",
+      });
+      // `redirect: "manual"` surfaces the 303 as an opaque response (type
+      // "opaqueredirect", status 0); the Set-Cookie on it has already applied.
+      if (res.type !== "opaqueredirect" && !res.ok) {
+        throw new Error(`logout failed: ${res.status}`);
+      }
+      // The form used to reset PostHog on submit; the analytics identity has to
+      // be dropped here for the same reason — the next person on this browser
+      // starts anonymous.
+      resetIdentity();
+      onLoggedOut();
+    } catch {
+      showToast("Log out failed. Please try again.", "error");
+      setLoggingOut(false);
+    }
+  };
 
   const submitWithdraw = async () => {
     setConfirming(false);
     setWithdrawing(true);
     try {
-      const res = await fetch("/api/me/withdraw", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ destinationAddress: payoutAddress.trim() }),
-      });
+      // #30: no destination is sent. The server pays the account's bound wallet.
+      const res = await fetch("/api/me/withdraw", { method: "POST" });
       const data = await res.json();
       if (res.ok) {
+        track("withdrawal_initiated");
         showToast(`Withdrawal initiated: ${formatTokenBalance(data.amountUnits)} ${rewardSymbol}`, "success");
-        setPayoutAddress("");
         const updated = await fetch("/api/me/withdraw")
           .then((r) => (r.ok ? r.json() : Promise.reject(r)))
           .catch(() => null);
         if (updated) setWithdrawalData(updated);
       } else {
+        // Only the route's snake_case codes are sent, never its free-text message.
+        const reason =
+          typeof data.error === "string" && /^[a-z_]+$/.test(data.error) ? data.error : `http_${res.status}`;
+        track("withdrawal_failed", { reason, http_status: res.status });
         showToast(data.message || data.error || "Withdrawal failed", "error");
+        // Payout setup may have been left for later; this is where it is needed.
+        if (res.status === 409 && data.error === "payout_setup_required") onPayoutSetupRequired?.();
       }
     } catch {
+      // A dropped request, or a response that is not JSON (e.g. a gateway error page).
+      track("withdrawal_failed", { reason: "network" });
       showToast("Withdrawal failed", "error");
     } finally {
       setWithdrawing(false);
@@ -197,7 +238,7 @@ export default function AccountSheet({
   };
 
   const handleWithdraw = () => {
-    if (!withdrawalData?.canWithdraw || withdrawing || !addressValid) return;
+    if (!withdrawalData?.canWithdraw || withdrawing || !destination) return;
     setConfirming(true);
   };
 
@@ -207,6 +248,7 @@ export default function AccountSheet({
     try {
       const res = await fetch("/api/me/demographics", { method: "DELETE" });
       if (res.ok) {
+        track("demographics_deleted");
         // Clear the parent's cached demographics so reopening the sheet doesn't
         // show the just-deleted values from stale state.
         onDemographicsDeleted();
@@ -294,36 +336,24 @@ export default function AccountSheet({
           <span className="font-body text-xs text-on-surface-variant">
             Min withdrawal: {loadingWithdrawal ? "..." : withdrawalData ? formatTokenBalance(withdrawalData.thresholdUnits) : "—"} {rewardSymbol}
           </span>
-          <input
-            type="text"
-            value={payoutAddress}
-            onChange={(e) => setPayoutAddress(e.target.value)}
-            spellCheck={false}
-            autoCapitalize="none"
-            autoCorrect="off"
-            placeholder="Recipient Stellar address (G…)"
-            aria-label="Recipient Stellar address"
-            className="mt-3 w-full rounded-xl bg-surface-container-low px-3 py-2 font-mono text-xs text-on-surface placeholder:text-outline focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-          />
-          {payoutAddress.trim() && !addressValid && (
-            <p className="mt-1 font-body text-[11px] text-error">
-              Enter a valid Stellar address (starts with G).
+          {withdrawalData && (
+            <p className="mt-2 font-body text-[11px] text-on-surface-variant">
+              {destination
+                ? `Paid to your wallet ${truncateAddress(destination)}`
+                : "Connect your Stellar wallet to withdraw."}
             </p>
           )}
-          {confirming ? (
+          {confirming && destination ? (
             <div className="mt-3 w-full rounded-xl bg-surface-container-low p-3 text-center">
               <p className="font-body text-xs text-on-surface">
                 Send{" "}
                 <strong>
                   {withdrawalData ? formatTokenBalance(withdrawalData.pendingBalanceUnits) : "—"} {rewardSymbol}
                 </strong>{" "}
-                to
+                to your wallet
               </p>
               <p className="mt-1 break-all font-mono text-[11px] text-on-surface-variant">
-                {payoutAddress.trim()}
-              </p>
-              <p className="mt-1 font-body text-[10px] text-error">
-                This is irreversible. Double-check the address.
+                {destination}
               </p>
               <div className="mt-3 flex gap-2">
                 <button
@@ -337,7 +367,7 @@ export default function AccountSheet({
                 <button
                   type="button"
                   onClick={submitWithdraw}
-                  disabled={withdrawing || !addressValid}
+                  disabled={withdrawing}
                   className="flex-1 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 disabled:opacity-50"
                 >
                   {withdrawing ? "Sending..." : "Confirm & send"}
@@ -348,7 +378,7 @@ export default function AccountSheet({
             <button
               type="button"
               onClick={handleWithdraw}
-              disabled={loadingWithdrawal || !withdrawalData?.canWithdraw || withdrawing || !addressValid}
+              disabled={loadingWithdrawal || !withdrawalData?.canWithdraw || withdrawing || !destination}
               className="mt-3 rounded-xl bg-primary px-6 py-2 font-label text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-50"
             >
               Withdraw
@@ -444,9 +474,9 @@ export default function AccountSheet({
         </div>
 
         {/* Only link to stellar.expert when walletAddress is a real Stellar `G…`
-            key. A labeler who hasn't linked a payout wallet may still carry a
-            legacy EVM `0x…` here (see StellarWalletLink), which would 404 on the
-            stellar.expert /account/ path — hide the link rather than show a dead one. */}
+            key. An account that has not claimed a wallet yet may still carry a
+            legacy EVM `0x…` here, which would 404 on the stellar.expert /account/
+            path — hide the link rather than show a dead one. */}
         {isValidStellarAddress(walletAddress) && (
           <a
             href={`${explorerUrl}/account/${walletAddress}`}
@@ -503,14 +533,16 @@ export default function AccountSheet({
           )}
         </div>
 
-        <form action="/api/auth/logout" method="post" className="mt-6 border-t border-outline-variant/20 pt-6">
+        <div className="mt-6 border-t border-outline-variant/20 pt-6">
           <button
-            type="submit"
-            className="w-full rounded-xl bg-surface-container-high py-3 text-center font-label text-sm font-semibold text-on-surface-variant transition-colors hover:bg-surface-container-highest focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+            type="button"
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className="w-full rounded-xl bg-surface-container-high py-3 text-center font-label text-sm font-semibold text-on-surface-variant transition-colors hover:bg-surface-container-highest focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-60"
           >
-            Log out
+            {loggingOut ? "Logging out…" : "Log out"}
           </button>
-        </form>
+        </div>
       </div>
     </div>
   );

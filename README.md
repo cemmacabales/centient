@@ -38,7 +38,7 @@ GoCent!123
 | Database | PostgreSQL + Prisma 7 |
 | **Settlement** | **Stellar** classic (Horizon) payments via `@stellar/stellar-sdk` 16 |
 | **Asset** | **USDC** — Circle's Stellar-issued asset (7-decimal units) |
-| Wallets (withdrawal) | Freighter / Albedo (`@stellar/freighter-api`, `@albedo-link/intent`) |
+| Wallet | Freighter (`@stellar/freighter-api`) — Albedo descoped, see ADR-0003 |
 | Rate limiting | Redis (`ioredis`) |
 | Email | Resend |
 | Observability | Sentry |
@@ -190,7 +190,12 @@ sequenceDiagram
             API->>RL: reset failures
             API->>API: signLabelerJWT(sub = userId)
             API-->>UI: Set-Cookie session (userId-keyed)
-            UI-->>L: logged in — start labeling
+            alt account has a bound Stellar wallet
+                UI-->>L: payout setup (sponsored USDC trustline if needed), then start labeling
+            else email-only account (legacy, #30)
+                UI-->>L: claim a wallet — connect Freighter, prove and bind it (/api/me/wallet)
+                Note over UI,L: then payout setup; from then on the account signs in<br/>with that wallet. Email registration is retired (410).
+            end
         end
     end
 ```
@@ -238,13 +243,16 @@ sequenceDiagram
     participant HZ as Stellar Horizon
     participant W as Labeler wallet (G...)
 
-    L->>API: POST { destinationAddress } (paste-and-send)
-    API->>API: validate StrKey (G...)
+    L->>API: POST (no address — #30 pays the account's bound wallet)
+    API->>DB: destination = User.walletAddress (proven at sign-in or claim)
+    alt no bound Stellar wallet
+        API-->>L: 409 wallet_required (claim a wallet)
+    end
     API->>DB: anti-fraud — banned identity? shared wallet? eligibility gates
     API->>HZ: accountHasUsdcTrustline(destination)?
     alt no trustline
         HZ-->>API: false
-        API-->>L: 409 no_trustline (add USDC trustline, retry)
+        API-->>L: 409 payout_setup_required (finish sponsored payout setup)
     else all checks pass
         API->>DB: atomic lock balance -> enqueue single WITHDRAWAL PayoutJob<br/>decrement pendingBalanceUnits + WITHDRAWAL ledger row
         API-->>L: 200 { status: queued }

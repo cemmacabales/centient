@@ -3,7 +3,7 @@
 // mechanism — login stays email/password; this just links + proves a `G…`
 // address the user controls before we pay it.
 //
-// The browser wallet (Freighter, with Albedo as fallback — see wallet.ts) signs
+// The browser wallet (Freighter — the only supported wallet, see wallet.ts) signs
 // a challenge string per **SEP-53**. SEP-53 does NOT sign the raw message: it
 // signs the SHA-256 of a fixed-prefix-framed message, the same anti-blind-signing
 // pattern Bitcoin/Ethereum use. The exact construction is:
@@ -45,7 +45,7 @@ export function sep53Digest(message: string | Uint8Array): Buffer {
  * @param publicKey Stellar address (`G…`) of the claimed signer.
  * @param message   The original challenge string (or raw bytes) that was signed.
  * @param signature The 64-byte ed25519 signature, as a base64 string (Freighter
- *                  V4 / Albedo) or raw bytes (Freighter V3 Buffer).
+ *                  V4) or raw bytes (Freighter V3 Buffer).
  * @returns `true` only on a cryptographically valid signature. Returns `false`
  *          — never throws — for an invalid/lowercased/non-StrKey key or a
  *          malformed signature, so callers can treat it as a plain boolean gate.

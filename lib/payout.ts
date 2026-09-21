@@ -1,6 +1,7 @@
+import { capturePayoutTransaction } from "./payout-analytics";
 import { REWARD_AMOUNT } from "./constants";
 import { usdcToUnits } from "./stellar/config";
-import { getTxStatus } from "./stellar/client";
+import { getTxStatus, StellarPaymentError } from "./stellar/client";
 import { resolvePayoutCoSigner } from "./stellar/payout-cosigner";
 import type { PayoutReference } from "./stellar/payout-envelope";
 import { submitMultisigPayout } from "./stellar/payout-submitter";
@@ -61,12 +62,36 @@ export async function payReward(
   // rather than after an envelope has been built and a sequence number spent.
   const coSigner = resolvePayoutCoSigner();
 
-  const { hash } = await submitMultisigPayout(
-    { destination: to, amountUnits: amount, reference },
-    { coSigner },
-  );
+  let hash: string;
+  try {
+    ({ hash } = await submitMultisigPayout(
+      { destination: to, amountUnits: amount, reference },
+      { coSigner },
+    ));
+  } catch (err) {
+    capturePayoutTransaction({
+      walletAddress: to,
+      amountUnits: amount,
+      reference,
+      txHash: txHashFromError(err),
+      success: false,
+      errorCode: err instanceof StellarPaymentError ? err.code : "unknown",
+    });
+    throw err;
+  }
 
+  capturePayoutTransaction({ walletAddress: to, amountUnits: amount, reference, txHash: hash, success: true });
   return hash;
+}
+
+/**
+ * The envelope hash a failed submit names, when it names one. The submitter
+ * knows the hash before submitting and puts it in the message of an included-
+ * and-failed or ambiguous outcome; a rejection before submit has none.
+ */
+function txHashFromError(err: unknown): string | null {
+  const message = err instanceof Error ? err.message : "";
+  return message.match(/\b[0-9a-f]{64}\b/)?.[0] ?? null;
 }
 
 /**

@@ -33,7 +33,7 @@ The mockups use a Material-3-derived token set. Install in `app/globals.css` as 
 @import "tailwindcss";
 
 @theme {
-  /* Primary — Celo-adjacent deep green */
+  /* Primary — deep green */
   --color-primary: #006d3d;
   --color-on-primary: #ffffff;
   --color-primary-container: #35d07f;

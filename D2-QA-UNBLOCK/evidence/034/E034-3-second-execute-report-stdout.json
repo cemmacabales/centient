@@ -1,0 +1,341 @@
+{
+  "mode": "execute",
+  "network": "testnet",
+  "sponsor": "GDF6XPTBW64G3UM7RJ4FSVNXTGRTJGX2SDAHGGW5PHAJQPG6ZMLVXD5S",
+  "runId": "b10249f3-d887-433f-b06f-cb944b5575c6",
+  "startedAt": "2026-09-18T02:55:00.494Z",
+  "finishedAt": "2026-09-18T02:55:11.124Z",
+  "baseReserveStroops": "5000000",
+  "totals": {
+    "sponsorships": 27,
+    "byDisposition": {
+      "protected_linked_wallet": 22,
+      "protected_payout_in_flight": 1,
+      "protected_unsettled_submission": 1,
+      "protected_owed_balance": 1,
+      "protected_holds_usdc": 1,
+      "owner_cannot_cover_reserve": 1
+    },
+    "reclaimedStroops": "0",
+    "ownerReleasedStroops": "0",
+    "lockedReserveUnits": 65
+  },
+  "sponsorships": [
+    {
+      "sponsorshipId": "88d966d9-a004-4d1a-ad23-93d442bb26ef",
+      "address": "GDRCMB7PUW2ZHZKAWJXETL52L6GCRDNAHHVQU2EJBXPMKJGWFDXSDGPS",
+      "kind": "trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline"
+      ],
+      "reserveUnits": 1,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "4ccddb74-4b9f-43e1-b85e-676358dc456a",
+      "address": "GAKHHFUGVRWHO2CRBO4BQ6VOZH36SM344QNIWICO6BXVXLQ2U53AKCSS",
+      "kind": "trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline"
+      ],
+      "reserveUnits": 1,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "a97446e6-c5b4-41ef-ba61-326c0506d2eb",
+      "address": "GASJ7Z5BCXOSZFDQDHI5NN75ZQP6SGZBLHAN7YF5KPF47DQSNXF6BS4X",
+      "kind": "trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline"
+      ],
+      "reserveUnits": 1,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "232897ce-9680-4c5f-9d0f-d59ef2075767",
+      "address": "GC5R6UJKVFWO53BR5GOL6AIN6F7ETAKCXFRGUEPYSJWVYVPGRHTOZBAK",
+      "kind": "trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline"
+      ],
+      "reserveUnits": 1,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "3665433b-ca18-413c-9f45-ceb15aab71e8",
+      "address": "GA3IS72BPIQVNGNNXQG35U4QOEPPRZ3LWIZD4XEKXTWLJXVGGKAA3EK2",
+      "kind": "account+trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "21e7093f-5332-49f9-ac6b-98c9009c9081",
+      "address": "GALQDB5LK466MCND7SVI2UMDFRGT7MLZTZA3QRUFXMJNLRX3OUGB4U5Z",
+      "kind": "account+trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "365dcd4a-6107-41ab-b555-1be870ebc192",
+      "address": "GASA4TP35D2HE6AJK43FSZSGZ7VHVQP6CLMGTHMVGHYPUN4ZVQ5PR6RP",
+      "kind": "trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline"
+      ],
+      "reserveUnits": 1,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "35220a09-2dbe-43dc-b899-b4316e082a4b",
+      "address": "GBH2E7ARIXC6SO4G7KFTVKRY5SS2ZSK4FROLMDI3ZYXC665CQAXYNEPM",
+      "kind": "account+trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "2d204f2c-30f0-40aa-a709-e4f614c6e619",
+      "address": "GCEYUABZETGYJ2ZV2MBDXADBCY44NKEJJPTXMDD2LY6LCHS6GP3IAN3W",
+      "kind": "account+trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "6e6ecda8-4852-4b08-8f49-2d9fc65f1446",
+      "address": "GCK2NY6CPEJ3RF47WUEWYJOTNT3U2RBMNAXCJKFZJWCVYZ2WS7UX7LH2",
+      "kind": "trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline"
+      ],
+      "reserveUnits": 1,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "925b85ff-8197-482c-8d36-f9be56fafaa8",
+      "address": "GB5Z6SPBEIQSKENYDUJD56A34R47HV4QORUESLSBXSW63NRHMOUWNABU",
+      "kind": "trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline"
+      ],
+      "reserveUnits": 1,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "7aedb9f8-dd1f-4b0d-b118-c29859d68079",
+      "address": "GDGDREFBKIWRCLPDJXWDZZOZJVL4OVUHOPSJZZO5V7LOAWS7OWADQZPH",
+      "kind": "trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline"
+      ],
+      "reserveUnits": 1,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "d2fbc6c9-7f08-48f2-9c27-92bd78b365c2",
+      "address": "GBK7VK2PA5CVROV3EEYSQJF2F2GT5664WHT2FPL5KQORHSV3SMOKQRGS",
+      "kind": "account+trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "ffa3d365-00eb-4411-9ba3-0237889b5743",
+      "address": "GANZVL2IBQ4VTVBZOSGTOFDWU7VW35GVVOS34ZNKHFOA65NE4ZY6TFRA",
+      "kind": "account+trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "9367531e-40b7-4f51-b86d-6fa14640e0bc",
+      "address": "GDJ6CTPAOZGWBPK43VLJWNTXBE2L3P4HED5M27ZWVS5IAFTXKDIUJSGW",
+      "kind": "account+trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "bd1ae821-6f36-4405-ac17-1306e0f8fb89",
+      "address": "GA7PCLARAEFI3YEKJXDEZGP2YJT4DE4FDMGF67HZWO2XLRCECI464Z5Q",
+      "kind": "account+trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "5fa3df8f-c330-4212-8c4e-1d42a186a815",
+      "address": "GAHXGQ3STQPUNLCUG3ODH4WVP5BOCMB65NS5ERI34MLZDAGQJKEAZBEB",
+      "kind": "account+trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "3a993f3f-d404-4a0f-b3a1-a22ebd72ff2a",
+      "address": "GD27ONZC6YVYIUKHZX4DVYY5JZICCMKXSOUBMB33WJHVEZUSB27LNMPH",
+      "kind": "account+trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "a6c77afe-2891-4cab-9303-909b96a9eb0c",
+      "address": "GDN72EPJQEPTRMHN6IIFKCY4VJH72KSBBP66CNUR765ONN36EUNFOPBV",
+      "kind": "account+trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "3984a8e5-b7df-4920-a767-acacde67e731",
+      "address": "GAXN3I2LFKVXXAEVOSC3VSVTJYYIKBYTJ55G3EXNHBZNRHIUFY73NWZL",
+      "kind": "account+trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "24b5f0ff-a86b-4f6b-90f8-cc5b2d208f53",
+      "address": "GCSZHLFZQSIZ2XR5HBVKCOWHJ5SCILKJH6F5K6LJWA7KUMLXGNW5Z44I",
+      "kind": "account+trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "12b70108-015b-40da-be01-3b2da482ecc2",
+      "address": "GDSAOMN5WDOAKYAGJO7DDUB2ULXNGFLBGWYBDIJIRYN7RMTIOSE7HQYB",
+      "kind": "account+trustline",
+      "disposition": "protected_payout_in_flight",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "05728c12-4671-4081-8eaa-8f454e7d2995",
+      "address": "GCV4BQFC5JRSNTCJHQXTSLF7UKHR3TO5PTD5IQWY7ZV44QZFXE4QYPJ2",
+      "kind": "account+trustline",
+      "disposition": "protected_unsettled_submission",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "be09f7fb-f736-44b3-9273-86efd63d721d",
+      "address": "GAPV426TZ4COYPJHSBG454MCY3WK24MGTBFWBQ6B23VMZ44S27QU7MME",
+      "kind": "account+trustline",
+      "disposition": "protected_owed_balance",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "4140d4e1-ddc8-4124-9838-a0d3dde40d1e",
+      "address": "GCHKXBN47L5OTTHZOQCVQU3LF4CYZ5NAFNDFODBVR5FSKSNXQERMDUOP",
+      "kind": "account+trustline",
+      "disposition": "protected_holds_usdc",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "d92a7f7b-73b2-45ac-b3f9-32fa1517861f",
+      "address": "GBF7BPPLJWKLWF2LL6GQME62TB733CUW6JSMKUUCXGRVGTSHSL5KM23J",
+      "kind": "account+trustline",
+      "disposition": "owner_cannot_cover_reserve",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    },
+    {
+      "sponsorshipId": "5287d917-2914-434f-aab4-09a839941bf6",
+      "address": "GDXT3YODRXC3EKP2N5WGPRTFIKAU3TB2NLAP2NLWFPQA455Z7S23ZZVJ",
+      "kind": "account+trustline",
+      "disposition": "protected_linked_wallet",
+      "entries": [
+        "trustline",
+        "account"
+      ],
+      "reserveUnits": 3,
+      "reclaimedStroops": "0"
+    }
+  ]
+}

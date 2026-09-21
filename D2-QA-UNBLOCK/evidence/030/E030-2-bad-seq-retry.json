@@ -1,0 +1,65 @@
+{
+  "F1": "GAXN3I2…NWZL",
+  "sponsor": "GDF6XPT…XD5S",
+  "steps": [
+    {
+      "step": "setup: envelope built for F1 and signed by F1",
+      "kind": "account+trustline",
+      "sponsorSeqAtBuild": "19826848938590228"
+    },
+    {
+      "step": "state: sponsor sequence advanced outside the app",
+      "tx": "b576cc298f4084c88eedbe2ca361319eabadd28a6121440bbaa27ea5f89e1f89",
+      "sponsorSeqNow": "19826848938590230"
+    },
+    {
+      "step": "1: submit the stale envelope",
+      "expect": "409 retry; row released; no leaked reserve",
+      "got": {
+        "status": 409,
+        "body": {
+          "error": "retry"
+        },
+        "at": "2026-09-18T02:44:43.009Z"
+      },
+      "rowsForF1": [
+        {
+          "status": "failed",
+          "kind": "account+trustline",
+          "live": true
+        }
+      ],
+      "f1OnChain": "404 (no partial account)",
+      "sponsorNumSponsoring": {
+        "before": 41,
+        "after": 41
+      }
+    },
+    {
+      "step": "2: retry (rebuild, re-sign, resubmit)",
+      "expect": "retry answered; onboarding completes",
+      "got": {
+        "rebuild": 200,
+        "submit": 200,
+        "body": {
+          "established": true
+        }
+      },
+      "rowsForF1": [
+        {
+          "status": "failed",
+          "kind": "account+trustline",
+          "live": true
+        },
+        {
+          "status": "confirmed",
+          "kind": "account+trustline",
+          "live": true
+        }
+      ],
+      "f1XlmBalance": "0.0000000",
+      "f1HasUsdcTrustline": true,
+      "sponsorNumSponsoring": 44
+    }
+  ]
+}

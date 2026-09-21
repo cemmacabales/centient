@@ -30,7 +30,29 @@ async function ensureRateLimitBuckets(client: PrismaClientLike): Promise<void> {
   bucketsEnsured = true;
 }
 
-export async function checkWalletRateLimit(bucketKey: string): Promise<boolean> {
+/** At most `max` requests per key within any `windowMs`. */
+export interface RateLimit {
+  max: number;
+  windowMs: number;
+}
+
+/** One request every 15s: the original wallet throttle, and the default. */
+const WALLET_LIMIT: RateLimit = { max: 1, windowMs: WALLET_WINDOW_MS };
+
+/**
+ * A small burst for flows a contributor legitimately repeats within seconds:
+ * declining a Freighter prompt and trying again, reloading mid-setup, or the
+ * payout-setup rebuild after `retry`.
+ */
+export const WALLET_BURST_LIMIT: RateLimit = { max: 5, windowMs: 60_000 };
+
+export type RateLimitDecision =
+  | { limited: false }
+  /** `retryAfterSeconds`: until the oldest request in the window expires. */
+  | { limited: true; retryAfterSeconds: number };
+
+/** Record one request against `bucketKey` unless it is already at `limit`. */
+export async function takeRateLimit(bucketKey: string, limit: RateLimit): Promise<RateLimitDecision> {
   return prisma.$transaction(async (tx) => {
     await ensureRateLimitBuckets(tx);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey("wallet", bucketKey)}))`;
@@ -40,21 +62,28 @@ export async function checkWalletRateLimit(bucketKey: string): Promise<boolean> 
       WHERE key = ${bucketKey} AND expires_at < NOW()
     `;
 
-    const rows = await tx.$queryRaw<Array<{ count: bigint }>>`
-      SELECT COUNT(*)::int8 as count FROM rate_limit_buckets WHERE key = ${bucketKey}
+    const rows = await tx.$queryRaw<Array<{ count: bigint; retry_after: bigint | null }>>`
+      SELECT COUNT(*)::int8 AS count,
+             CEIL(EXTRACT(EPOCH FROM (MIN(expires_at) - NOW())))::int8 AS retry_after
+      FROM rate_limit_buckets WHERE key = ${bucketKey}
     `;
 
-    if (Number(rows[0].count) > 0) {
-      return true;
+    if (Number(rows[0].count) >= limit.max) {
+      return { limited: true, retryAfterSeconds: Math.max(1, Number(rows[0].retry_after ?? 1)) };
     }
 
     await tx.$executeRaw`
       INSERT INTO rate_limit_buckets (key, expires_at)
-      VALUES (${bucketKey}, NOW() + make_interval(secs => ${WALLET_WINDOW_MS}::int / 1000.0))
+      VALUES (${bucketKey}, NOW() + make_interval(secs => ${limit.windowMs}::int / 1000.0))
     `;
 
-    return false;
+    return { limited: false };
   });
+}
+
+/** True when `bucketKey` is over `limit`; otherwise records the request. */
+export async function checkWalletRateLimit(bucketKey: string, limit: RateLimit = WALLET_LIMIT): Promise<boolean> {
+  return (await takeRateLimit(bucketKey, limit)).limited;
 }
 
 const LOGIN_PREFIX = "login:";

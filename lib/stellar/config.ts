@@ -1,7 +1,6 @@
 // Stellar chain configuration — the single source of truth for which network we
 // talk to (Horizon URL + passphrase + explorer), the USDC asset we pay in, and
-// the stroop<->USDC conversion boundary. Introduced in ST-1a (#291) as the
-// foundation Wave 1+ builds on, replacing the Celo/EVM chain-parameter layer.
+// the stroop<->USDC conversion boundary. Introduced in ST-1a (#291).
 //
 // Payouts settle in **USDC**, a Stellar *issued* asset (code + issuer account),
 // not the native XLM. Every Stellar asset — USDC included — uses integer
@@ -134,8 +133,7 @@ export function unitsToUsdcString(units: bigint): string {
  * Human-facing USDC amount: like {@link unitsToUsdcString} but trims trailing
  * fractional zeros (and a bare trailing dot) for display — `"0.1230000" → "0.123"`,
  * `"5.0000000" → "5"`. Use for UI/labels; use {@link unitsToUsdcString} for the
- * SDK payment `amount`, which needs the fixed 7-decimal form. This is the
- * viem-free replacement for `formatUnits(units, REWARD_TOKEN_DECIMALS)` display.
+ * SDK payment `amount`, which needs the fixed 7-decimal form.
  */
 export function unitsToUsdcDisplay(units: bigint): string {
   return unitsToUsdcString(units).replace(/\.?0+$/, "");

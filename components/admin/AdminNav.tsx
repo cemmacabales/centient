@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect } from "react";
 import { usePathname } from "next/navigation";
+import { identify } from "@/lib/analytics";
 
 const TABS_SUPER_ADMIN = [
   { href: "/admin/campaigns", label: "Campaigns" },
@@ -20,12 +22,19 @@ const TABS_CUSTOMER = [
 ];
 
 interface AdminNavProps {
+  adminUserId: string;
   role: "SUPER_ADMIN" | "CUSTOMER";
 }
 
-export default function AdminNav({ role }: AdminNavProps) {
+export default function AdminNav({ adminUserId, role }: AdminNavProps) {
   const pathname = usePathname();
   const tabs = role === "CUSTOMER" ? TABS_CUSTOMER : TABS_SUPER_ADMIN;
+
+  // Every protected admin page renders this nav, so it is the one client-side
+  // place that knows the signed-in admin.
+  useEffect(() => {
+    identify(adminUserId, { role });
+  }, [adminUserId, role]);
 
   return (
     <nav className="flex items-center gap-1">

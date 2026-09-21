@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { track } from "@/lib/analytics";
 
 interface DisputeFormProps {
   walletAddress: string;
@@ -26,6 +27,7 @@ export default function DisputeForm({ walletAddress, onDone }: DisputeFormProps)
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 201) {
+        track("dispute_submitted");
         setResult("success");
         setTimeout(() => onDone?.(), 2500);
       } else if (res.status === 409) {

@@ -51,8 +51,8 @@ model User {
 // outstanding row (revokedAt = null) represents ~0.5–1.5 XLM of platform reserves
 // locked on the recipient's behalf. Counting outstanding rows per user enforces a
 // hard cap so one labeler can't loop fresh keypairs and drain the pooled account's
-// reserves (an economic DoS on mainnet). `revokedAt` is set when a future
-// revocation/reclaim job frees the reserves (deferred — pairs with unlink).
+// reserves (an economic DoS on mainnet). `revokedAt` is set when reserve reclaim
+// (#29, `lib/sponsorship-reclaim.ts`) records the reserves released.
 // `address` is a case-sensitive `G…` StrKey and is never normalized.
 model SponsoredTrustline {
   id        String    @id @default(uuid())
@@ -60,14 +60,46 @@ model SponsoredTrustline {
   address   String
   kind      String    // "trustline" | "account+trustline"
   txHash    String
+  // #27: "pending" is written before broadcast, "confirmed" once Horizon accepts,
+  // "failed" only when the envelope can never apply. Pending counts as outstanding.
+  status      String    @default("confirmed")
+  confirmedAt DateTime?
+  // The envelope's maxTime: after it, an unreported pending envelope cannot land.
+  expiresAt   DateTime?
   createdAt DateTime  @default(now())
   revokedAt DateTime?
+  // #29: the revocation envelope recorded before it is broadcast, and its maxTime.
+  // Kept after it lands, as the hash that released the reserve.
+  reclaimTxHash    String?
+  reclaimExpiresAt DateTime?
+  // #29: how the reserve was released, set with `revokedAt`:
+  // "sponsor_revoke" (our revocation landed) | "owner" (the chain already shows it gone).
+  releasedBy       String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([address])
+  @@unique([address], name: "sponsored_trustlines_outstanding_address_key", map: "sponsored_trustlines_outstanding_address_key", where: raw("\"revokedAt\" IS NULL AND \"status\" <> 'failed'"))
   @@map("sponsored_trustlines")
+}
+
+// #29 — one row per executed sponsored-reserve reclaim run. `report` is the
+// per-sponsorship disposition (skips, failures, hashes, reserve units, stroops)
+// keyed by sponsorship id; it holds no keys, user ids, contact data or wallet
+// addresses. A dry run writes nothing; a null `finishedAt` marks a run that died
+// mid-way.
+model SponsorshipReclaimRun {
+  id               String    @id @default(uuid())
+  network          String
+  sponsor          String
+  startedAt        DateTime  @default(now())
+  finishedAt       DateTime?
+  reclaimedStroops BigInt    @default(0)
+  report           Json?
+
+  @@index([startedAt])
+  @@map("sponsorship_reclaim_runs")
 }
 
 enum BannedIdentifierType {
@@ -236,13 +268,21 @@ model Dispute {
 }
 
 model WalletNonce {
-  id            String    @id @default(uuid())
-  walletAddress String
-  nonce         String    @unique
-  expiresAt     DateTime
-  createdAt     DateTime  @default(now())
+  id                String   @id @default(uuid())
+  walletAddress     String
+  nonce             String   @unique
+  // Which flow issued the challenge: "link-payout-address" (/api/me/wallet) or
+  // "prove-stellar-address" (wallet sign-in, #25). Every query is scoped by it,
+  // so neither flow can delete or satisfy the other's challenges.
+  action            String   @default("link-payout-address")
+  // Bound at issue for sign-in challenges; the link flow leaves it null.
+  networkPassphrase String?
+  issuedAt          DateTime @default(now())
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
 
   @@index([walletAddress])
+  @@unique([walletAddress, action])
   @@index([expiresAt])
   @@map("wallet_nonces")
 }

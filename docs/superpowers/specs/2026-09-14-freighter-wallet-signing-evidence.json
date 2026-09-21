@@ -1,0 +1,213 @@
+{
+  "harness": "Centient #24 — Freighter proof",
+  "networkPassphrase": "Test SDF Network ; September 2015",
+  "address": "GD2IRAAPZE6WY2J6WOKEYZPIYKY4G7Z55MG5CUAF7QMQRHVGG7OM2YM4",
+  "entries": [
+    {
+      "at": "2026-09-14T04:14:49.962Z",
+      "step": "environment",
+      "data": {
+        "freighterInstalled": true,
+        "walletNetwork": "TESTNET",
+        "walletPassphrase": "Test SDF Network ; September 2015",
+        "expectedPassphrase": "Test SDF Network ; September 2015",
+        "passphraseMatches": true,
+        "error": null
+      }
+    },
+    {
+      "at": "2026-09-14T04:15:20.805Z",
+      "step": "connect",
+      "data": {
+        "address": "GD2IRAAPZE6WY2J6WOKEYZPIYKY4G7Z55MG5CUAF7QMQRHVGG7OM2YM4",
+        "horizon": {
+          "status": {
+            "address": "GD2IRAAPZE6WY2J6WOKEYZPIYKY4G7Z55MG5CUAF7QMQRHVGG7OM2YM4",
+            "exists": false,
+            "xlmBalance": null,
+            "usdcTrustline": false,
+            "usdcTrustlineSponsor": null,
+            "accountSponsor": null
+          }
+        }
+      }
+    },
+    {
+      "at": "2026-09-14T04:15:53.664Z",
+      "step": "challenge",
+      "data": {
+        "message": "Centient: prove you control this Stellar address.\n\nAddress: GD2IRAAPZE6WY2J6WOKEYZPIYKY4G7Z55MG5CUAF7QMQRHVGG7OM2YM4\nNetwork: Test SDF Network ; September 2015\nAction: prove-stellar-address\nNonce: 9118f38fa204014fa192d051b9651c7f\nIssued At: 2026-09-14T04:15:49.048Z\nExpires At: 2026-09-14T04:20:49.048Z",
+        "rawSignatureType": "string (base64, V4)",
+        "signature": "cbIBDqqSJc8qxh8pvGiT6GBZi21kw/dls6KaiwfneMy28i5yUA1Hh/pp1Lxye7pHJZhTYK7aLVgfJDjhc1kGCA==",
+        "signerAddress": "GD2IRAAPZE6WY2J6WOKEYZPIYKY4G7Z55MG5CUAF7QMQRHVGG7OM2YM4",
+        "verifyStatus": 200,
+        "verify": {
+          "ok": true,
+          "checks": [
+            { "name": "Signature verifies over the issued challenge (SEP-53)", "expect": "accept", "passed": true },
+            { "name": "Signature is over the SEP-53 digest, not the raw message", "expect": "reject", "passed": true },
+            { "name": "Same signature rejected for a different nonce", "expect": "reject", "passed": true },
+            { "name": "Same signature rejected for the other network", "expect": "reject", "passed": true },
+            { "name": "Same signature rejected for a different address", "expect": "reject", "passed": true },
+            { "name": "Bit-flipped signature rejected", "expect": "reject", "passed": true },
+            { "name": "Truncated signature rejected", "expect": "reject", "passed": true }
+          ]
+        }
+      }
+    },
+    {
+      "at": "2026-09-14T04:16:07.403Z",
+      "step": "challenge.replay",
+      "data": {
+        "status": 401,
+        "ok": false,
+        "reason": "replayed",
+        "rejectedAsExpected": true
+      }
+    },
+    {
+      "at": "2026-09-14T04:16:20.122Z",
+      "step": "challenge.reject",
+      "data": {
+        "instruction": "click Reject in Freighter",
+        "returnedError": null,
+        "signedAnyway": true
+      }
+    },
+    {
+      "at": "2026-09-14T04:18:01.743Z",
+      "step": "challenge.reject",
+      "data": {
+        "instruction": "click Reject in Freighter",
+        "returnedError": {
+          "code": -4,
+          "message": "The user rejected this request."
+        },
+        "signedAnyway": false
+      }
+    },
+    {
+      "at": "2026-09-14T04:18:34.760Z",
+      "step": "sponsorship.build",
+      "data": {
+        "recipient": "GD2IRAAPZE6WY2J6WOKEYZPIYKY4G7Z55MG5CUAF7QMQRHVGG7OM2YM4",
+        "kind": "account+trustline",
+        "hash": "a1bba204f31c72cacf646ed180949e576d919fca445f5216fe198402550f1821",
+        "sponsor": "GDDRUWSDRHUJ3GOBWDJCELSRI2PCOPBEBCUBR5K23PHABNCJWHNU53GH",
+        "before": {
+          "address": "GD2IRAAPZE6WY2J6WOKEYZPIYKY4G7Z55MG5CUAF7QMQRHVGG7OM2YM4",
+          "exists": false,
+          "xlmBalance": null,
+          "usdcTrustline": false,
+          "usdcTrustlineSponsor": null,
+          "accountSponsor": null
+        },
+        "operations": [
+          "beginSponsoringFutureReserves",
+          "createAccount",
+          "changeTrust",
+          "endSponsoringFutureReserves"
+        ]
+      }
+    },
+    {
+      "at": "2026-09-14T04:19:54.753Z",
+      "step": "sponsorship.reject",
+      "data": {
+        "instruction": "click Reject in Freighter",
+        "returnedError": {
+          "code": -4,
+          "message": "The user rejected this request."
+        },
+        "signedAnyway": false
+      }
+    },
+    {
+      "at": "2026-09-14T04:20:23.813Z",
+      "step": "sponsorship.build",
+      "data": {
+        "recipient": "GD2IRAAPZE6WY2J6WOKEYZPIYKY4G7Z55MG5CUAF7QMQRHVGG7OM2YM4",
+        "kind": "account+trustline",
+        "hash": "0ca34d58a22a5e1fa5428553b838c39055b281971c87b795363cc1de96602c89",
+        "sponsor": "GDDRUWSDRHUJ3GOBWDJCELSRI2PCOPBEBCUBR5K23PHABNCJWHNU53GH",
+        "before": {
+          "address": "GD2IRAAPZE6WY2J6WOKEYZPIYKY4G7Z55MG5CUAF7QMQRHVGG7OM2YM4",
+          "exists": false,
+          "xlmBalance": null,
+          "usdcTrustline": false,
+          "usdcTrustlineSponsor": null,
+          "accountSponsor": null
+        },
+        "operations": [
+          "beginSponsoringFutureReserves",
+          "createAccount",
+          "changeTrust",
+          "endSponsoringFutureReserves"
+        ]
+      }
+    },
+    {
+      "at": "2026-09-14T04:20:48.477Z",
+      "step": "sponsorship.submit",
+      "data": {
+        "signerAddress": "GD2IRAAPZE6WY2J6WOKEYZPIYKY4G7Z55MG5CUAF7QMQRHVGG7OM2YM4",
+        "signerMatches": true,
+        "feeBump": true,
+        "status": 200,
+        "result": {
+          "ok": true,
+          "kind": "account+trustline",
+          "checks": [
+            { "name": "Envelope is a plain transaction, not a fee bump", "expect": "accept", "passed": true },
+            {
+              "name": "Transaction bytes unchanged since the sponsor signed (hash matches)",
+              "expect": "accept",
+              "passed": true,
+              "detail": "0ca34d58a22a5e1fa5428553b838c39055b281971c87b795363cc1de96602c89"
+            },
+            {
+              "name": "Operations are exactly the sponsored onboarding sandwich",
+              "expect": "accept",
+              "passed": true,
+              "detail": "beginSponsoringFutureReserves, createAccount, changeTrust, endSponsoringFutureReserves"
+            },
+            { "name": "Sponsor signature still valid", "expect": "accept", "passed": true },
+            { "name": "Recipient (Freighter) signature valid for this network", "expect": "accept", "passed": true },
+            {
+              "name": "Recipient signature does not verify under the other network's passphrase",
+              "expect": "reject",
+              "passed": true
+            },
+            {
+              "name": "No signatures beyond sponsor and recipient",
+              "expect": "accept",
+              "passed": true,
+              "detail": "2 signature(s)"
+            }
+          ],
+          "hash": "0c16eadd6ea8f710371a3dfcf3f6935c632f2b46d12909c0709498095e72da1b",
+          "innerHash": "0ca34d58a22a5e1fa5428553b838c39055b281971c87b795363cc1de96602c89",
+          "feeBump": true,
+          "feeBumpFee": "1000",
+          "explorerTx": "https://stellar.expert/explorer/testnet/tx/0c16eadd6ea8f710371a3dfcf3f6935c632f2b46d12909c0709498095e72da1b",
+          "before": {
+            "address": "GD2IRAAPZE6WY2J6WOKEYZPIYKY4G7Z55MG5CUAF7QMQRHVGG7OM2YM4",
+            "exists": false,
+            "xlmBalance": null,
+            "usdcTrustline": false,
+            "usdcTrustlineSponsor": null,
+            "accountSponsor": null
+          },
+          "after": {
+            "address": "GD2IRAAPZE6WY2J6WOKEYZPIYKY4G7Z55MG5CUAF7QMQRHVGG7OM2YM4",
+            "exists": true,
+            "xlmBalance": "0.0000000",
+            "usdcTrustline": true,
+            "usdcTrustlineSponsor": "GDDRUWSDRHUJ3GOBWDJCELSRI2PCOPBEBCUBR5K23PHABNCJWHNU53GH",
+            "accountSponsor": "GDDRUWSDRHUJ3GOBWDJCELSRI2PCOPBEBCUBR5K23PHABNCJWHNU53GH"
+          }
+        }
+      }
+    }
+  ]
+}

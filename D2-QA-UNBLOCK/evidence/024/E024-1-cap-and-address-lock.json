@@ -1,0 +1,85 @@
+{
+  "fixture": {
+    "U1": {
+      "wallet": "GDXMA44…RJ7I",
+      "pendingRows": [
+        "GDGTCDW…QYVD",
+        "GBG55PY…N4CW"
+      ]
+    },
+    "U1b": {
+      "wallet": "GBWT7NC…QCJS",
+      "pendingRows": [
+        "GBWT7NC…QCJS (own wallet)",
+        "GCVAQRO…65DN"
+      ]
+    },
+    "U2": {
+      "wallet": "GBEBAZU…QJDK",
+      "pendingRows": [
+        "GBTOYER…GXHN"
+      ]
+    },
+    "U3": {
+      "wallet": "GBTOYER…GXHN (the address U2 holds an outstanding sponsorship for)"
+    },
+    "rowState": "status=pending, expiresAt one hour in the past (counts as outstanding; can never land)"
+  },
+  "steps": [
+    {
+      "step": 1,
+      "what": "U1 holds 2 pending rows; GET for its own new wallet",
+      "expect": "429 sponsorship_cap_reached",
+      "got": {
+        "status": 429,
+        "at": "2026-09-18T02:43:15.843Z",
+        "body": {
+          "error": "sponsorship_cap_reached"
+        }
+      }
+    },
+    {
+      "step": 2,
+      "what": "one of U1's rows marked failed (1 pending + 1 failed); GET again",
+      "expect": "envelope offered (failed rows do not count)",
+      "got": {
+        "status": 200,
+        "at": "2026-09-18T02:43:16.871Z",
+        "body": {
+          "needed": true,
+          "address": "GDXMA44JJ7LF5C2H33AMXNDHHZ47JJ5MTWBQA5Q6537EJ7VNL2OURJ7I",
+          "xdr": "<528-char XDR offered>",
+          "kind": "account+trustline"
+        }
+      }
+    },
+    {
+      "step": 3,
+      "what": "U1b holds 2 pending rows, one for its own wallet; GET for that wallet",
+      "expect": "envelope offered (own pending row not counted against itself)",
+      "got": {
+        "status": 200,
+        "at": "2026-09-18T02:43:18.077Z",
+        "body": {
+          "needed": true,
+          "address": "GBWT7NCVQY66WIDJKDIGBTXJ363R6ZNNJYBXOXJKPV5LFN4U3FNTQCJS",
+          "xdr": "<528-char XDR offered>",
+          "kind": "account+trustline"
+        }
+      }
+    },
+    {
+      "step": 4,
+      "what": "U3 (wallet = address U2 holds an outstanding sponsorship for); GET",
+      "expect": "no envelope (409 address_in_use)",
+      "got": {
+        "status": 409,
+        "at": "2026-09-18T02:43:19.291Z",
+        "body": {
+          "error": "address_in_use"
+        }
+      }
+    }
+  ],
+  "noSignatureRequested": "No offered XDR was signed or submitted."
+}

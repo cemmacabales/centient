@@ -1,0 +1,54 @@
+{
+  "fixtureEmail": "qa-d2-f4-devcheck@centient.work",
+  "address": "GDJLEDK…5NSX",
+  "steps": [
+    {
+      "step": "setup: wallet sign-in with A creates a wallet-only account",
+      "address": "GDJLEDK3G5Q6BRZ2E2R5Y6WN6OKNCPZR2JHFCBAZ24FL3AFOULHR5NSX",
+      "walletOnlyUserId": "0a7bcdbb-ecee-4e4d-a969-4b2cb1c97c8b"
+    },
+    {
+      "step": "preflight: F4 identity before (wallet must be null)",
+      "status": 200,
+      "me": {
+        "authenticated": true,
+        "userId": "b874971b-417a-4dfd-8427-eaf5db6d0fde",
+        "wallet": null,
+        "email": "qa-d2-f4-devcheck@centient.work",
+        "isVerified": true
+      }
+    },
+    {
+      "step": "1: claim A via POST /api/me/wallet",
+      "status": 200,
+      "body": {
+        "linked": true,
+        "walletAddress": "GDJLEDK3G5Q6BRZ2E2R5Y6WN6OKNCPZR2JHFCBAZ24FL3AFOULHR5NSX"
+      }
+    },
+    {
+      "step": "check: identity after",
+      "me": {
+        "authenticated": true,
+        "userId": "b874971b-417a-4dfd-8427-eaf5db6d0fde",
+        "wallet": "GDJLEDK3G5Q6BRZ2E2R5Y6WN6OKNCPZR2JHFCBAZ24FL3AFOULHR5NSX",
+        "email": "qa-d2-f4-devcheck@centient.work",
+        "isVerified": true
+      },
+      "usersHoldingA": [
+        {
+          "id": "b874971b-417a-4dfd-8427-eaf5db6d0fde",
+          "has_email": true,
+          "walletAddress": "GDJLEDK3G5Q6BRZ2E2R5Y6WN6OKNCPZR2JHFCBAZ24FL3AFOULHR5NSX"
+        }
+      ]
+    },
+    {
+      "step": "check: lowercased address refused",
+      "status": 400,
+      "body": {
+        "error": "invalid_address"
+      }
+    }
+  ]
+}

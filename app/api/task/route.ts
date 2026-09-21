@@ -9,6 +9,7 @@ import {
 import { resolveRewardUnits } from "@/lib/payout";
 import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 import { getLabelerSession } from "@/lib/labeler-auth";
+import { isValidStellarAddress } from "@/lib/stellar/signature";
 import {
   isInCooldown,
   isInRetest,
@@ -23,8 +24,7 @@ function computeResponseTarget(
 }
 
 export async function GET(req: NextRequest) {
-  // ST-5d: task assignment is keyed on the session (userId), not a `?wallet=`
-  // param — an email-only labeler with no linked wallet can still be served tasks.
+  // ST-5d: task assignment is keyed on the session (userId), not a `?wallet=` param.
   const userId = await getLabelerSession(req);
   if (!userId) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -35,6 +35,12 @@ export async function GET(req: NextRequest) {
   });
   if (!user) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  // #30: the bound wallet is the account and its payout destination. An account
+  // made by email before wallet sign-in binds one before it is served work. A
+  // legacy EVM `0x…` value can never receive USDC, so it counts as no wallet.
+  if (!user.walletAddress || !isValidStellarAddress(user.walletAddress)) {
+    return NextResponse.json({ error: "wallet_required" }, { status: 409 });
   }
 
   if (isInCooldown(user.isBanned, user.bannedUntil)) {

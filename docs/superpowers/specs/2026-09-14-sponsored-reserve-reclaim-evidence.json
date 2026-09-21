@@ -1,0 +1,722 @@
+{
+  "title": "#29 sponsored-reserve reclaim — testnet evidence",
+  "issue": "https://github.com/webnxt-2030/Centient/issues/29",
+  "network": "testnet",
+  "horizon": "https://horizon-testnet.stellar.org",
+  "codeAt": "reclaim code identical to 6aee8fb",
+  "method": "Headless run of the reclaim runner (lib/sponsorship-reclaim.ts, production dependencies) against an isolated evidence database. A throwaway friendbot sponsor is configured as STELLAR_SPONSOR_SECRET; every sponsorship is created through the #27/#28 path (buildSponsoredTrustlineTx → contributor signature → prepareSponsoredTrustline → openSponsorshipIntent → fee-bumped submit). No shared D1/#31 account is touched.",
+  "notExercisedHere": "A trustline holding USDC (testnet USDC was not minted for this run), an in-flight withdrawal, an unsettled submission and an owed balance: the protection rules are covered against the real database in lib/__tests__/sponsorship-reclaim.test.ts. An unanswered submit is covered there too.",
+  "ranAt": "2026-09-14T14:13:59.626Z",
+  "sponsor": "GDO55DUYOTMDQPWUQLQL7DCIXBKVV5YXCUAHJRGNXA3UYUWDRRCSP3S3",
+  "recipients": {
+    "A": "GAZF37TDXHAH36O5GKMNGBWHOHTQLYIREROBACH76TKGO4ZJ6DJHJY2A",
+    "B": "GC3RVSMFNIW6OOX4EYYKFRPROJZFONBAPVCPEOHLTDFRR5BHOSU6MSQW",
+    "C": "GBET7X73UJXB4XB6DLZ2CGPMA3YOUQALPWEXI7WI7OV7QOMGYGF6QLKV",
+    "D": "GADPNOGWWADKV2NQSRJZFFQWX5YU2C7QRQU7LRHY7KZMWDDRDOBGKZHU",
+    "E": "GCLOKDV2UDIS2GCQBCPUGVDJ6SS53ZAAWYV6OJWYN6HN2Q44AVKMFK7U",
+    "G": "GDFZVP3UELZXMBUM3RL4ZEZHYMFVWCNO5NXKRD4SRRCL5VWVOKWK2UM4"
+  },
+  "result": "PASS",
+  "checks": [
+    {
+      "name": "Five sponsorships landed through the #27/#28 path, one left pending unbroadcast",
+      "passed": true,
+      "detail": {
+        "num_sponsoring": 15,
+        "sponsorshipHashes": {
+          "A": "eb42524d2d9639ae2d8fcc43a546b6d85864f78e608ac01bdde913b1b1578f09",
+          "B": "390d6f015684d4c07dc8f7689ee52ca507aad22f4cb5a0e49598cfc1ff7a6912",
+          "C": "b6b4008b6c57415fd06fe44c50cabd7a9b3f654f5de8f4526d77b730abe66ba4",
+          "D": "fb6a0a9bfa1da49726d637b2a9be780e2497b6754c450d92bfd37055f5e974d8",
+          "G": "7059978de068d85b2809ff627388f4eeabcc510ad4081530e9bb6d703e8eceea"
+        },
+        "pendingNeverBroadcast": {
+          "E": "7be2c5780a8343a1c78ee561f78f057079ea431f2b9acc46c15d252e729899dc",
+          "expiresAt": "2026-09-14T14:13:22.000Z"
+        }
+      }
+    },
+    {
+      "name": "D removed its own trustline and merged away; the sponsor got 3 reserves back without acting",
+      "passed": true,
+      "detail": {
+        "tx": "07cdba0a8b21fe7dc40471738043842a9c52337f736cfa77da383086398e5e74",
+        "num_sponsoring": 12
+      }
+    },
+    {
+      "name": "A sponsor-only revocation of zero-XLM A is refused by the chain",
+      "passed": true,
+      "detail": {
+        "outcome": "owner_low_reserve"
+      }
+    },
+    {
+      "name": "A revocation built before the sponsor's sequence moved answers stale_sequence",
+      "passed": true,
+      "detail": {
+        "hash": "54a7156de4743bc4cf131131700f2161a30b060680f67e40e466571da725bad1",
+        "outcome": {
+          "outcome": "stale_sequence"
+        }
+      }
+    },
+    {
+      "name": "Dry run gives each sponsorship its disposition",
+      "passed": true,
+      "detail": {
+        "A": "owner_cannot_cover_reserve",
+        "B": "protected_linked_wallet",
+        "C": "eligible",
+        "D": "released_by_owner",
+        "E": "sponsorship_pending",
+        "G": "eligible"
+      }
+    },
+    {
+      "name": "Dry run wrote nothing",
+      "passed": true
+    },
+    {
+      "name": "Dry run sent nothing",
+      "passed": true,
+      "detail": {
+        "num_sponsoring": 12
+      }
+    },
+    {
+      "name": "Execute run: C and G revoked, D recorded released by owner, E released as never landed, A and B untouched",
+      "passed": true,
+      "detail": {
+        "A": "owner_cannot_cover_reserve",
+        "B": "protected_linked_wallet",
+        "C": "revoked",
+        "D": "released_by_owner",
+        "E": "sponsorship_never_landed",
+        "G": "revoked"
+      }
+    },
+    {
+      "name": "Revocation d064b947… is on the ledger",
+      "passed": true,
+      "detail": {
+        "hash": "d064b94722463b8a4d3e9cfa335ca57644e1857665c69e7d60d0721fd8779484"
+      }
+    },
+    {
+      "name": "Revocation 1f9cefbf… is on the ledger",
+      "passed": true,
+      "detail": {
+        "hash": "1f9cefbf66e7b5c9a203851e811213b5e4f9da223d1df052c59236e59c4c131c"
+      }
+    },
+    {
+      "name": "The sponsor's on-chain liability fell by 6 reserves (C and G)",
+      "passed": true,
+      "detail": {
+        "num_sponsoring": 6
+      }
+    },
+    {
+      "name": "C keeps its USDC trustline, now sponsored by nobody, and its account is no longer sponsored",
+      "passed": true,
+      "detail": {
+        "accountSponsor": null,
+        "trustline": {
+          "balance": "0.0000000",
+          "limit": "922337203685.4775807",
+          "buying_liabilities": "0.0000000",
+          "selling_liabilities": "0.0000000",
+          "last_modified_ledger": 4674327,
+          "is_authorized": true,
+          "is_authorized_to_maintain_liabilities": true,
+          "asset_type": "credit_alphanum4",
+          "asset_code": "USDC",
+          "asset_issuer": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+        },
+        "num_sponsored": 0
+      }
+    },
+    {
+      "name": "The ledger's outstanding liability matches Horizon's num_sponsoring exactly",
+      "passed": true,
+      "detail": {
+        "ledgerReserveUnits": 6,
+        "num_sponsoring": 6
+      }
+    },
+    {
+      "name": "Rows record how each reserve was released",
+      "passed": true,
+      "detail": [
+        {
+          "address": "GAZF37TDXHAH36O5GKMNGBWHOHTQLYIREROBACH76TKGO4ZJ6DJHJY2A",
+          "status": "confirmed",
+          "revokedAt": null,
+          "releasedBy": null,
+          "reclaimTxHash": null
+        },
+        {
+          "address": "GC3RVSMFNIW6OOX4EYYKFRPROJZFONBAPVCPEOHLTDFRR5BHOSU6MSQW",
+          "status": "confirmed",
+          "revokedAt": null,
+          "releasedBy": null,
+          "reclaimTxHash": null
+        },
+        {
+          "address": "GCLOKDV2UDIS2GCQBCPUGVDJ6SS53ZAAWYV6OJWYN6HN2Q44AVKMFK7U",
+          "status": "failed",
+          "revokedAt": null,
+          "releasedBy": null,
+          "reclaimTxHash": null
+        },
+        {
+          "address": "GBET7X73UJXB4XB6DLZ2CGPMA3YOUQALPWEXI7WI7OV7QOMGYGF6QLKV",
+          "status": "confirmed",
+          "revokedAt": "2026-09-14T14:13:42.545Z",
+          "releasedBy": "sponsor_revoke",
+          "reclaimTxHash": "d064b94722463b8a4d3e9cfa335ca57644e1857665c69e7d60d0721fd8779484"
+        },
+        {
+          "address": "GADPNOGWWADKV2NQSRJZFFQWX5YU2C7QRQU7LRHY7KZMWDDRDOBGKZHU",
+          "status": "confirmed",
+          "revokedAt": "2026-09-14T14:13:42.835Z",
+          "releasedBy": "owner",
+          "reclaimTxHash": null
+        },
+        {
+          "address": "GDFZVP3UELZXMBUM3RL4ZEZHYMFVWCNO5NXKRD4SRRCL5VWVOKWK2UM4",
+          "status": "confirmed",
+          "revokedAt": "2026-09-14T14:13:48.097Z",
+          "releasedBy": "sponsor_revoke",
+          "reclaimTxHash": "1f9cefbf66e7b5c9a203851e811213b5e4f9da223d1df052c59236e59c4c131c"
+        }
+      ]
+    },
+    {
+      "name": "The run is stored with its report and reclaimed stroops",
+      "passed": true,
+      "detail": {
+        "runId": "555a258f-12ce-4fe9-9448-04332ec75995",
+        "reclaimedStroops": "30000000"
+      }
+    },
+    {
+      "name": "Revoking C again is answered op_not_sponsor",
+      "passed": true,
+      "detail": {
+        "outcome": "not_sponsored",
+        "codes": [
+          "op_not_sponsor",
+          "op_not_sponsor"
+        ]
+      }
+    },
+    {
+      "name": "Revoking merged-away D is answered op_does_not_exist",
+      "passed": true,
+      "detail": {
+        "outcome": "not_sponsored",
+        "codes": [
+          "op_does_not_exist"
+        ]
+      }
+    },
+    {
+      "name": "A second execute run finds only A and B outstanding, and sends nothing",
+      "passed": true,
+      "detail": {
+        "totals": {
+          "sponsorships": 2,
+          "byDisposition": {
+            "owner_cannot_cover_reserve": 1,
+            "protected_linked_wallet": 1
+          },
+          "reclaimedStroops": "0",
+          "ownerReleasedStroops": "0",
+          "lockedReserveUnits": 6
+        },
+        "num_sponsoring": 6
+      }
+    },
+    {
+      "name": "Once B is unlinked, a dry run reports it eligible",
+      "passed": true,
+      "detail": {
+        "A": "owner_cannot_cover_reserve",
+        "B": "eligible",
+        "C": "not outstanding",
+        "D": "not outstanding",
+        "E": "not outstanding",
+        "G": "not outstanding"
+      }
+    }
+  ],
+  "reports": {
+    "dryRun": {
+      "mode": "dry-run",
+      "network": "testnet",
+      "sponsor": "GDO55DUYOTMDQPWUQLQL7DCIXBKVV5YXCUAHJRGNXA3UYUWDRRCSP3S3",
+      "runId": null,
+      "startedAt": "2026-09-14T14:11:18.406Z",
+      "finishedAt": "2026-09-14T14:11:21.008Z",
+      "baseReserveStroops": "5000000",
+      "totals": {
+        "sponsorships": 6,
+        "byDisposition": {
+          "sponsorship_pending": 1,
+          "owner_cannot_cover_reserve": 1,
+          "protected_linked_wallet": 1,
+          "eligible": 2,
+          "released_by_owner": 1
+        },
+        "reclaimedStroops": "0",
+        "ownerReleasedStroops": "15000000",
+        "lockedReserveUnits": 15
+      },
+      "sponsorships": [
+        {
+          "sponsorshipId": "7a0912c7-c63d-4ed5-9cc2-02091dc0fe6c",
+          "address": "GCLOKDV2UDIS2GCQBCPUGVDJ6SS53ZAAWYV6OJWYN6HN2Q44AVKMFK7U",
+          "kind": "account+trustline",
+          "disposition": "sponsorship_pending",
+          "entries": [],
+          "reserveUnits": 3,
+          "reclaimedStroops": "0",
+          "txHash": "7be2c5780a8343a1c78ee561f78f057079ea431f2b9acc46c15d252e729899dc"
+        },
+        {
+          "sponsorshipId": "b0d9e39c-2607-441b-98b7-1ec400b3d2f9",
+          "address": "GAZF37TDXHAH36O5GKMNGBWHOHTQLYIREROBACH76TKGO4ZJ6DJHJY2A",
+          "kind": "account+trustline",
+          "disposition": "owner_cannot_cover_reserve",
+          "entries": [
+            "trustline",
+            "account"
+          ],
+          "reserveUnits": 3,
+          "reclaimedStroops": "0"
+        },
+        {
+          "sponsorshipId": "370745a2-1ca9-42b8-b726-e118f4b2b230",
+          "address": "GC3RVSMFNIW6OOX4EYYKFRPROJZFONBAPVCPEOHLTDFRR5BHOSU6MSQW",
+          "kind": "account+trustline",
+          "disposition": "protected_linked_wallet",
+          "entries": [
+            "trustline",
+            "account"
+          ],
+          "reserveUnits": 3,
+          "reclaimedStroops": "0"
+        },
+        {
+          "sponsorshipId": "b0794c7b-331f-435e-be04-2a6de1ba07aa",
+          "address": "GBET7X73UJXB4XB6DLZ2CGPMA3YOUQALPWEXI7WI7OV7QOMGYGF6QLKV",
+          "kind": "account+trustline",
+          "disposition": "eligible",
+          "entries": [
+            "trustline",
+            "account"
+          ],
+          "reserveUnits": 3,
+          "reclaimedStroops": "0"
+        },
+        {
+          "sponsorshipId": "b07789a1-15b9-4e9d-8c75-b377d3d81bda",
+          "address": "GADPNOGWWADKV2NQSRJZFFQWX5YU2C7QRQU7LRHY7KZMWDDRDOBGKZHU",
+          "kind": "account+trustline",
+          "disposition": "released_by_owner",
+          "entries": [],
+          "reserveUnits": 3,
+          "reclaimedStroops": "0"
+        },
+        {
+          "sponsorshipId": "d3ae124e-2f67-4ba7-bb41-078bc76246b0",
+          "address": "GDFZVP3UELZXMBUM3RL4ZEZHYMFVWCNO5NXKRD4SRRCL5VWVOKWK2UM4",
+          "kind": "account+trustline",
+          "disposition": "eligible",
+          "entries": [
+            "trustline",
+            "account"
+          ],
+          "reserveUnits": 3,
+          "reclaimedStroops": "0"
+        }
+      ]
+    },
+    "execute": {
+      "mode": "execute",
+      "network": "testnet",
+      "sponsor": "GDO55DUYOTMDQPWUQLQL7DCIXBKVV5YXCUAHJRGNXA3UYUWDRRCSP3S3",
+      "runId": "555a258f-12ce-4fe9-9448-04332ec75995",
+      "startedAt": "2026-09-14T14:13:37.011Z",
+      "finishedAt": "2026-09-14T14:13:48.104Z",
+      "baseReserveStroops": "5000000",
+      "totals": {
+        "sponsorships": 6,
+        "byDisposition": {
+          "sponsorship_never_landed": 1,
+          "owner_cannot_cover_reserve": 1,
+          "protected_linked_wallet": 1,
+          "revoked": 2,
+          "released_by_owner": 1
+        },
+        "reclaimedStroops": "30000000",
+        "ownerReleasedStroops": "15000000",
+        "lockedReserveUnits": 6
+      },
+      "sponsorships": [
+        {
+          "sponsorshipId": "7a0912c7-c63d-4ed5-9cc2-02091dc0fe6c",
+          "address": "GCLOKDV2UDIS2GCQBCPUGVDJ6SS53ZAAWYV6OJWYN6HN2Q44AVKMFK7U",
+          "kind": "account+trustline",
+          "disposition": "sponsorship_never_landed",
+          "entries": [],
+          "reserveUnits": 0,
+          "reclaimedStroops": "0",
+          "txHash": "7be2c5780a8343a1c78ee561f78f057079ea431f2b9acc46c15d252e729899dc",
+          "detail": "transaction not_found"
+        },
+        {
+          "sponsorshipId": "b0d9e39c-2607-441b-98b7-1ec400b3d2f9",
+          "address": "GAZF37TDXHAH36O5GKMNGBWHOHTQLYIREROBACH76TKGO4ZJ6DJHJY2A",
+          "kind": "account+trustline",
+          "disposition": "owner_cannot_cover_reserve",
+          "entries": [
+            "trustline",
+            "account"
+          ],
+          "reserveUnits": 3,
+          "reclaimedStroops": "0"
+        },
+        {
+          "sponsorshipId": "370745a2-1ca9-42b8-b726-e118f4b2b230",
+          "address": "GC3RVSMFNIW6OOX4EYYKFRPROJZFONBAPVCPEOHLTDFRR5BHOSU6MSQW",
+          "kind": "account+trustline",
+          "disposition": "protected_linked_wallet",
+          "entries": [
+            "trustline",
+            "account"
+          ],
+          "reserveUnits": 3,
+          "reclaimedStroops": "0"
+        },
+        {
+          "sponsorshipId": "b0794c7b-331f-435e-be04-2a6de1ba07aa",
+          "address": "GBET7X73UJXB4XB6DLZ2CGPMA3YOUQALPWEXI7WI7OV7QOMGYGF6QLKV",
+          "kind": "account+trustline",
+          "disposition": "revoked",
+          "entries": [
+            "trustline",
+            "account"
+          ],
+          "reserveUnits": 3,
+          "reclaimedStroops": "15000000",
+          "txHash": "d064b94722463b8a4d3e9cfa335ca57644e1857665c69e7d60d0721fd8779484"
+        },
+        {
+          "sponsorshipId": "b07789a1-15b9-4e9d-8c75-b377d3d81bda",
+          "address": "GADPNOGWWADKV2NQSRJZFFQWX5YU2C7QRQU7LRHY7KZMWDDRDOBGKZHU",
+          "kind": "account+trustline",
+          "disposition": "released_by_owner",
+          "entries": [],
+          "reserveUnits": 3,
+          "reclaimedStroops": "0"
+        },
+        {
+          "sponsorshipId": "d3ae124e-2f67-4ba7-bb41-078bc76246b0",
+          "address": "GDFZVP3UELZXMBUM3RL4ZEZHYMFVWCNO5NXKRD4SRRCL5VWVOKWK2UM4",
+          "kind": "account+trustline",
+          "disposition": "revoked",
+          "entries": [
+            "trustline",
+            "account"
+          ],
+          "reserveUnits": 3,
+          "reclaimedStroops": "15000000",
+          "txHash": "1f9cefbf66e7b5c9a203851e811213b5e4f9da223d1df052c59236e59c4c131c"
+        }
+      ]
+    },
+    "secondExecute": {
+      "mode": "execute",
+      "network": "testnet",
+      "sponsor": "GDO55DUYOTMDQPWUQLQL7DCIXBKVV5YXCUAHJRGNXA3UYUWDRRCSP3S3",
+      "runId": "dbdea6aa-bfaf-4a46-89fe-a1fc889cdbed",
+      "startedAt": "2026-09-14T14:13:57.536Z",
+      "finishedAt": "2026-09-14T14:13:58.299Z",
+      "baseReserveStroops": "5000000",
+      "totals": {
+        "sponsorships": 2,
+        "byDisposition": {
+          "owner_cannot_cover_reserve": 1,
+          "protected_linked_wallet": 1
+        },
+        "reclaimedStroops": "0",
+        "ownerReleasedStroops": "0",
+        "lockedReserveUnits": 6
+      },
+      "sponsorships": [
+        {
+          "sponsorshipId": "b0d9e39c-2607-441b-98b7-1ec400b3d2f9",
+          "address": "GAZF37TDXHAH36O5GKMNGBWHOHTQLYIREROBACH76TKGO4ZJ6DJHJY2A",
+          "kind": "account+trustline",
+          "disposition": "owner_cannot_cover_reserve",
+          "entries": [
+            "trustline",
+            "account"
+          ],
+          "reserveUnits": 3,
+          "reclaimedStroops": "0"
+        },
+        {
+          "sponsorshipId": "370745a2-1ca9-42b8-b726-e118f4b2b230",
+          "address": "GC3RVSMFNIW6OOX4EYYKFRPROJZFONBAPVCPEOHLTDFRR5BHOSU6MSQW",
+          "kind": "account+trustline",
+          "disposition": "protected_linked_wallet",
+          "entries": [
+            "trustline",
+            "account"
+          ],
+          "reserveUnits": 3,
+          "reclaimedStroops": "0"
+        }
+      ]
+    }
+  },
+  "chainSemanticsProbe": {
+    "what": "Run before the implementation to decide the eligibility rules: a sponsor-only revokeSponsorship against a zero-XLM owner, a funded owner, an already-revoked entry, and entries the owner removed.",
+    "ranAt": "2026-09-14T13:51:37.539Z",
+    "steps": [
+      {
+        "sponsor": "GDFYNZAAQWVXOWAXG7FA5LWAMTJ4OUBKTFRFDEGUFALAXWF6UTCAHLYA",
+        "R1": "GAU3MNHPO4HFFS5LM4TL6VQPF7OC7IQCFOFHUIPCC7AEHLSALOWRT2GK",
+        "R2": "GCWQ7IUMCYXDJH6UZVUSOKMOY5DQWJBAFDSE65W7FQH6CYSVXF3M7GTZ"
+      },
+      {
+        "label": "R1 sponsored create+trust",
+        "ok": true,
+        "hash": "b6079bd9346386495a4fe9d61f42e8b0c78ab2defac727b2cf8f280508179724"
+      },
+      {
+        "label": "R1 after sponsorship",
+        "sponsor": "GDFYNZAAQWVXOWAXG7FA5LWAMTJ4OUBKTFRFDEGUFALAXWF6UTCAHLYA",
+        "num_sponsoring": 0,
+        "num_sponsored": 3,
+        "subentry_count": 1,
+        "balances": [
+          {
+            "asset_type": "credit_alphanum4",
+            "asset_code": "USDC",
+            "balance": "0.0000000",
+            "sponsor": "GDFYNZAAQWVXOWAXG7FA5LWAMTJ4OUBKTFRFDEGUFALAXWF6UTCAHLYA"
+          },
+          {
+            "asset_type": "native",
+            "balance": "0.0000000",
+            "sponsor": null
+          }
+        ]
+      },
+      {
+        "label": "S after R1 sponsorship",
+        "sponsor": null,
+        "num_sponsoring": 3,
+        "num_sponsored": 0,
+        "subentry_count": 0,
+        "balances": [
+          {
+            "asset_type": "native",
+            "balance": "9999.9999600",
+            "sponsor": null
+          }
+        ]
+      },
+      {
+        "label": "revoke R1 trustline sponsorship (owner has 0 XLM)",
+        "ok": false,
+        "status": 400,
+        "codes": {
+          "transaction": "tx_failed",
+          "operations": [
+            "op_low_reserve"
+          ]
+        }
+      },
+      {
+        "label": "revoke R1 account sponsorship (owner has 0 XLM)",
+        "ok": false,
+        "status": 400,
+        "codes": {
+          "transaction": "tx_failed",
+          "operations": [
+            "op_low_reserve"
+          ]
+        }
+      },
+      {
+        "label": "pay R1 5 XLM",
+        "ok": true,
+        "hash": "d4ad6b4d73e166b56ea13687f9a612bfb15dfd3b480484807bc381fe570e7ef2"
+      },
+      {
+        "label": "revoke R1 trustline + account sponsorship in one tx (owner has 5 XLM)",
+        "ok": true,
+        "hash": "6d8fb5b256ec48bf8616d0938643621aa19c04b60ed46765212f8c354eeb9e14"
+      },
+      {
+        "label": "R1 after revoke",
+        "sponsor": null,
+        "num_sponsoring": 0,
+        "num_sponsored": 0,
+        "subentry_count": 1,
+        "balances": [
+          {
+            "asset_type": "credit_alphanum4",
+            "asset_code": "USDC",
+            "balance": "0.0000000",
+            "sponsor": null
+          },
+          {
+            "asset_type": "native",
+            "balance": "5.0000000",
+            "sponsor": null
+          }
+        ]
+      },
+      {
+        "label": "S after R1 revoke",
+        "sponsor": null,
+        "num_sponsoring": 0,
+        "num_sponsored": 0,
+        "subentry_count": 0,
+        "balances": [
+          {
+            "asset_type": "native",
+            "balance": "9994.9999100",
+            "sponsor": null
+          }
+        ]
+      },
+      {
+        "label": "revoke R1 trustline sponsorship again (already revoked)",
+        "ok": false,
+        "status": 400,
+        "codes": {
+          "transaction": "tx_failed",
+          "operations": [
+            "op_not_sponsor"
+          ]
+        }
+      },
+      {
+        "label": "revoke R1 account sponsorship again (already revoked)",
+        "ok": false,
+        "status": 400,
+        "codes": {
+          "transaction": "tx_failed",
+          "operations": [
+            "op_not_sponsor"
+          ]
+        }
+      },
+      {
+        "label": "R2 sponsored create+trust",
+        "ok": true,
+        "hash": "66d60437046adc081757087b5b094de278af780f620042832bed962e135c2a14"
+      },
+      {
+        "label": "S after R2 sponsorship",
+        "sponsor": null,
+        "num_sponsoring": 3,
+        "num_sponsored": 0,
+        "subentry_count": 0,
+        "balances": [
+          {
+            "asset_type": "native",
+            "balance": "9994.9998500",
+            "sponsor": null
+          }
+        ]
+      },
+      {
+        "label": "R2 removes its trustline (S pays fee)",
+        "ok": true,
+        "hash": "221fbd6dc4cbe7b22472b12201a83bd19c4e65314b99bed0c5013a729e79885f"
+      },
+      {
+        "label": "R2 after trustline removal",
+        "sponsor": "GDFYNZAAQWVXOWAXG7FA5LWAMTJ4OUBKTFRFDEGUFALAXWF6UTCAHLYA",
+        "num_sponsoring": 0,
+        "num_sponsored": 2,
+        "subentry_count": 0,
+        "balances": [
+          {
+            "asset_type": "native",
+            "balance": "0.0000000",
+            "sponsor": null
+          }
+        ]
+      },
+      {
+        "label": "S after R2 trustline removal",
+        "sponsor": null,
+        "num_sponsoring": 2,
+        "num_sponsored": 0,
+        "subentry_count": 0,
+        "balances": [
+          {
+            "asset_type": "native",
+            "balance": "9994.9998400",
+            "sponsor": null
+          }
+        ]
+      },
+      {
+        "label": "revoke R2 trustline sponsorship (trustline gone)",
+        "ok": false,
+        "status": 400,
+        "codes": {
+          "transaction": "tx_failed",
+          "operations": [
+            "op_does_not_exist"
+          ]
+        }
+      },
+      {
+        "label": "R2 merges into S (S pays fee)",
+        "ok": true,
+        "hash": "6b8ceab94feba490f47faaf4eb3c6534515d9f0696e50c70f326a449fbd54b07"
+      },
+      {
+        "label": "R2 after merge",
+        "status": 404
+      },
+      {
+        "label": "S after R2 merge",
+        "sponsor": null,
+        "num_sponsoring": 0,
+        "num_sponsored": 0,
+        "subentry_count": 0,
+        "balances": [
+          {
+            "asset_type": "native",
+            "balance": "9994.9998200",
+            "sponsor": null
+          }
+        ]
+      },
+      {
+        "label": "revoke R2 account sponsorship (account gone)",
+        "ok": false,
+        "status": 400,
+        "codes": {
+          "transaction": "tx_failed",
+          "operations": [
+            "op_does_not_exist"
+          ]
+        }
+      }
+    ]
+  }
+}

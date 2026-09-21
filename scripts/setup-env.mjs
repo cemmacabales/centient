@@ -76,9 +76,6 @@ const looksPlaceholder = (v) => /change_me|your_|placeholder|get_api_key|_here|^
 // JWT secret — must be >= 32 chars (admin auth + middleware + labeler fallback).
 ensure("ADMIN_JWT_SECRET", hex(32), (v) => isMissing(v) || v.length < 32 || looksPlaceholder(v));
 
-// Hot wallet — must be 0x + 64 hex. Throwaway/unfunded is fine just to boot.
-ensure("PAYOUT_PRIVATE_KEY", `0x${hex(32)}`, (v) => isMissing(v) || !/^0x[0-9a-fA-F]{64}$/.test(v));
-
 // App URL — used in email links and redirects.
 ensure("NEXT_PUBLIC_APP_URL", "http://localhost:3000", (v) => isMissing(v) || !/^https?:\/\//.test(v));
 

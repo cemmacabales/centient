@@ -1,0 +1,37 @@
+{
+  "onboardingFixture": "GDXT3YO…ZZVJ",
+  "sponsorSequence": {
+    "atBuild": "19826848938590239",
+    "afterReclaimRun": "19826848938590241"
+  },
+  "step1": {
+    "what": "submit the envelope signed before the reclaim execute run",
+    "expect": "409 retry",
+    "got": {
+      "status": 409,
+      "body": {
+        "error": "retry"
+      },
+      "at": "2026-09-18T02:54:23.792Z"
+    }
+  },
+  "walletRetry": {
+    "rebuild": 200,
+    "resubmit": 200,
+    "body": {
+      "established": true
+    },
+    "xlm": "0.0000000",
+    "usdcTrustline": true
+  },
+  "rowsForAddress": [
+    {
+      "status": "failed",
+      "kind": "account+trustline"
+    },
+    {
+      "status": "confirmed",
+      "kind": "account+trustline"
+    }
+  ]
+}

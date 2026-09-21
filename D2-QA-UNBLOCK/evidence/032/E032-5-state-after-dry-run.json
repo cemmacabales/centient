@@ -1,0 +1,148 @@
+{
+ "snapshot": {
+  "sponsorSequence": "19826848938590239",
+  "sponsorNumSponsoring": 68,
+  "ledgerSponsorshipLiabilityUnits": 68,
+  "baseReserveStroops": 5000000,
+  "totalRows": 31,
+  "runsStored": 0,
+  "fixtureRows": [
+   {
+    "fixture": "P1-linked",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   },
+   {
+    "fixture": "P2-flagged-withdrawal",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   },
+   {
+    "fixture": "P3-unsettled-submission",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   },
+   {
+    "fixture": "P4-owed-balance",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   },
+   {
+    "fixture": "P5-usdc-on-trustline",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   },
+   {
+    "fixture": "O1-cannot-absorb",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   },
+   {
+    "fixture": "E1-eligible",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   },
+   {
+    "fixture": "E2-eligible",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   }
+  ]
+ },
+ "report": {
+  "mode": "dry-run",
+  "runId": null,
+  "totals": {
+   "sponsorships": 28,
+   "byDisposition": {
+    "protected_linked_wallet": 21,
+    "protected_payout_in_flight": 1,
+    "protected_unsettled_submission": 1,
+    "protected_owed_balance": 1,
+    "protected_holds_usdc": 1,
+    "owner_cannot_cover_reserve": 1,
+    "eligible": 2
+   },
+   "reclaimedStroops": "0",
+   "ownerReleasedStroops": "0",
+   "lockedReserveUnits": 68
+  },
+  "fixtures": [
+   {
+    "fixture": "P1-linked",
+    "disposition": "protected_linked_wallet",
+    "entries": [
+     "trustline",
+     "account"
+    ]
+   },
+   {
+    "fixture": "P2-flagged-withdrawal",
+    "disposition": "protected_payout_in_flight",
+    "entries": [
+     "trustline",
+     "account"
+    ]
+   },
+   {
+    "fixture": "P3-unsettled-submission",
+    "disposition": "protected_unsettled_submission",
+    "entries": [
+     "trustline",
+     "account"
+    ]
+   },
+   {
+    "fixture": "P4-owed-balance",
+    "disposition": "protected_owed_balance",
+    "entries": [
+     "trustline",
+     "account"
+    ]
+   },
+   {
+    "fixture": "P5-usdc-on-trustline",
+    "disposition": "protected_holds_usdc",
+    "entries": [
+     "trustline",
+     "account"
+    ]
+   },
+   {
+    "fixture": "O1-cannot-absorb",
+    "disposition": "owner_cannot_cover_reserve",
+    "entries": [
+     "trustline",
+     "account"
+    ]
+   },
+   {
+    "fixture": "E1-eligible",
+    "disposition": "eligible",
+    "entries": [
+     "trustline",
+     "account"
+    ]
+   },
+   {
+    "fixture": "E2-eligible",
+    "disposition": "eligible",
+    "entries": [
+     "trustline",
+     "account"
+    ]
+   }
+  ],
+  "nonFixtureDispositions": {
+   "protected_linked_wallet": 20
+  }
+ }
+}
