@@ -307,7 +307,7 @@ container, applies migrations, and seeds test data.
 |---|---|
 | `STELLAR_NETWORK` | `testnet` (default) or `public` (mainnet) |
 | `NEXT_PUBLIC_STELLAR_NETWORK` | The same value again, for the browser. Only `NEXT_PUBLIC_*` vars reach the client bundle, so without it the signing code in the browser assumes testnet |
-| `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | Optional. Enables the Freighter **mobile app**; leave unset to stay extension-only. Free from [dashboard.reown.com](https://dashboard.reown.com) |
+| `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | Optional. Enables the Freighter **mobile app**; leave unset to stay extension-only. Free from [dashboard.reown.com](https://dashboard.reown.com) — confirm it with `pnpm walletconnect:verify` |
 | `STELLAR_PLATFORM_ACCOUNT` | `G…` public key of the payout account. Required for wallet health and payout configuration — reading balances and planning refills needs no signing key |
 | `STELLAR_SPONSOR_SECRET` | `S…` seed that sponsors recipients' USDC trustlines. **Must not be a signer on the payout account** (F-01); it needs XLM for reserves and no payout authority |
 | `STELLAR_OPS_SIGNER_SECRET` | `S…` seed of the ops signer — signature #1 of the 2-of-3 payout. This is the *only* payout-account seed a deployment may hold |
@@ -409,6 +409,7 @@ on [stellar.expert](https://stellar.expert).
 | `pnpm payout` | Run the payout worker standalone (with `RUN_WORKERS=false`) |
 | `pnpm reconciler` | Run the receipt reconciler standalone |
 | `pnpm test` | Run the vitest suite |
+| `pnpm walletconnect:verify` | Check the Freighter-mobile project id against the live relay and registry |
 | `pnpm typecheck` | Type-check without emitting |
 | `pnpm db:migrate` | Run database migrations (dev) |
 | `pnpm db:deploy` | Deploy migrations (production) |

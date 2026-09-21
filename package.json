@@ -36,7 +36,8 @@
     "test:coverage": "vitest run --coverage",
     "qa:fixtures": "tsx scripts/qa-fixtures.ts",
     "qa:recipients:provision": "tsx scripts/qa-provision-recipients.ts",
-    "qa:recipients:sponsor": "tsx scripts/qa-sponsor-recipient.ts"
+    "qa:recipients:sponsor": "tsx scripts/qa-sponsor-recipient.ts",
+    "walletconnect:verify": "tsx scripts/walletconnect-verify.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.0.0",
