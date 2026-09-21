@@ -91,10 +91,21 @@ export function getWithdrawalThresholds(): WithdrawalThresholds {
 }
 
 // Submission payout statuses that represent an *accepted & rewarded* answer:
-// legacy per-question on-chain payouts ("sent"/"confirmed") plus the
-// accumulate-then-withdraw path ("accrued" — credited to the user's off-chain
-// balance). Use this wherever answers are counted toward a task's response
-// target or inter-annotator agreement. NOTE: this is deliberately NOT the same
-// set used for on-chain *spend* accounting (lib/payout-cap.ts), which must only
-// count funds actually moved on-chain and therefore excludes "accrued".
-export const REWARDED_STATUSES = ["sent", "confirmed", "accrued"] as const;
+// an instant payout still in flight ("pending", #37), a per-question on-chain
+// payout ("sent"/"confirmed"), and the legacy accumulate-then-withdraw path
+// ("accrued" — credited to the user's off-chain balance until #39). Use this
+// wherever answers are counted toward a task's response target; agreement
+// scoring and task resolution use SETTLED_STATUSES below. "pending" is here because an accepted answer is
+// written `pending` and paid out of band: leaving it out would let a task be
+// over-answered, and over-paid, while its payouts are in flight. NOTE: this is
+// deliberately NOT the same set used for on-chain *spend* accounting
+// (lib/payout-cap.ts), which must only count funds actually moved on-chain.
+export const REWARDED_STATUSES = ["pending", "sent", "confirmed", "accrued"] as const;
+
+// The subset of REWARDED_STATUSES whose payout has settled: paid on-chain, or
+// credited under the legacy balance. Use this for anything irreversible that an
+// answer feeds — agreement scoring and resolving a task — because a `pending`
+// payout can still fail, be refunded, and drop out of REWARDED_STATUSES, and a
+// resolved task is never recomputed (#37). `pending` reserves room under the
+// response target; only a settled answer decides the result.
+export const SETTLED_STATUSES = ["sent", "confirmed", "accrued"] as const;

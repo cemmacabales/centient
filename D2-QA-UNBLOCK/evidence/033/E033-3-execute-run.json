@@ -1,0 +1,220 @@
+{
+  "report": {
+    "mode": "execute",
+    "runId": "7214598a-d686-4f2e-935e-00fd93b0c133",
+    "totals": {
+      "sponsorships": 28,
+      "byDisposition": {
+        "protected_linked_wallet": 21,
+        "protected_payout_in_flight": 1,
+        "protected_unsettled_submission": 1,
+        "protected_owed_balance": 1,
+        "protected_holds_usdc": 1,
+        "owner_cannot_cover_reserve": 1,
+        "revoked": 2
+      },
+      "reclaimedStroops": "30000000",
+      "ownerReleasedStroops": "0",
+      "lockedReserveUnits": 62
+    },
+    "fixtures": [
+      {
+        "fixture": "P1-linked",
+        "disposition": "protected_linked_wallet",
+        "entries": [
+          "trustline",
+          "account"
+        ]
+      },
+      {
+        "fixture": "P2-flagged-withdrawal",
+        "disposition": "protected_payout_in_flight",
+        "entries": [
+          "trustline",
+          "account"
+        ]
+      },
+      {
+        "fixture": "P3-unsettled-submission",
+        "disposition": "protected_unsettled_submission",
+        "entries": [
+          "trustline",
+          "account"
+        ]
+      },
+      {
+        "fixture": "P4-owed-balance",
+        "disposition": "protected_owed_balance",
+        "entries": [
+          "trustline",
+          "account"
+        ]
+      },
+      {
+        "fixture": "P5-usdc-on-trustline",
+        "disposition": "protected_holds_usdc",
+        "entries": [
+          "trustline",
+          "account"
+        ]
+      },
+      {
+        "fixture": "O1-cannot-absorb",
+        "disposition": "owner_cannot_cover_reserve",
+        "entries": [
+          "trustline",
+          "account"
+        ]
+      },
+      {
+        "fixture": "E1-eligible",
+        "disposition": "revoked",
+        "entries": [
+          "trustline",
+          "account"
+        ],
+        "txHash": "d64ad05c335dcb69f2a1741c7518af90fbf679b39b8e64ac60d8c3aecc6659f1"
+      },
+      {
+        "fixture": "E2-eligible",
+        "disposition": "revoked",
+        "entries": [
+          "trustline",
+          "account"
+        ],
+        "txHash": "385ac9bc42ce2bb6100486dad230b5aa7ab0bbb52a3b3785698f01e8def63a80"
+      }
+    ],
+    "nonFixtureDispositions": {
+      "protected_linked_wallet": 20
+    }
+  },
+  "before": {
+    "sponsorSequence": "19826848938590239",
+    "sponsorNumSponsoring": 68,
+    "ledgerSponsorshipLiabilityUnits": 68,
+    "baseReserveStroops": 5000000,
+    "totalRows": 31,
+    "runsStored": 0,
+    "fixtureRows": [
+      {
+        "fixture": "P1-linked",
+        "status": "confirmed",
+        "revoked": false,
+        "releasedBy": null
+      },
+      {
+        "fixture": "P2-flagged-withdrawal",
+        "status": "confirmed",
+        "revoked": false,
+        "releasedBy": null
+      },
+      {
+        "fixture": "P3-unsettled-submission",
+        "status": "confirmed",
+        "revoked": false,
+        "releasedBy": null
+      },
+      {
+        "fixture": "P4-owed-balance",
+        "status": "confirmed",
+        "revoked": false,
+        "releasedBy": null
+      },
+      {
+        "fixture": "P5-usdc-on-trustline",
+        "status": "confirmed",
+        "revoked": false,
+        "releasedBy": null
+      },
+      {
+        "fixture": "O1-cannot-absorb",
+        "status": "confirmed",
+        "revoked": false,
+        "releasedBy": null
+      },
+      {
+        "fixture": "E1-eligible",
+        "status": "confirmed",
+        "revoked": false,
+        "releasedBy": null
+      },
+      {
+        "fixture": "E2-eligible",
+        "status": "confirmed",
+        "revoked": false,
+        "releasedBy": null
+      }
+    ]
+  },
+  "after": {
+    "sponsorSequence": "19826848938590242",
+    "sponsorNumSponsoring": 65,
+    "ledgerSponsorshipLiabilityUnits": 65,
+    "baseReserveStroops": 5000000,
+    "totalRows": 33,
+    "runsStored": 1,
+    "fixtureRows": [
+      {
+        "fixture": "P1-linked",
+        "status": "confirmed",
+        "revoked": false,
+        "releasedBy": null
+      },
+      {
+        "fixture": "P2-flagged-withdrawal",
+        "status": "confirmed",
+        "revoked": false,
+        "releasedBy": null
+      },
+      {
+        "fixture": "P3-unsettled-submission",
+        "status": "confirmed",
+        "revoked": false,
+        "releasedBy": null
+      },
+      {
+        "fixture": "P4-owed-balance",
+        "status": "confirmed",
+        "revoked": false,
+        "releasedBy": null
+      },
+      {
+        "fixture": "P5-usdc-on-trustline",
+        "status": "confirmed",
+        "revoked": false,
+        "releasedBy": null
+      },
+      {
+        "fixture": "O1-cannot-absorb",
+        "status": "confirmed",
+        "revoked": false,
+        "releasedBy": null
+      },
+      {
+        "fixture": "E1-eligible",
+        "status": "confirmed",
+        "revoked": true,
+        "releasedBy": "sponsor_revoke"
+      },
+      {
+        "fixture": "E2-eligible",
+        "status": "confirmed",
+        "revoked": true,
+        "releasedBy": "sponsor_revoke"
+      }
+    ]
+  },
+  "chain": {
+    "E1": {
+      "xlmBefore": "5.0000000",
+      "xlmAfter": "5.0000000",
+      "usdcTrustlineStillPresent": true
+    },
+    "E2": {
+      "xlmBefore": "5.0000000",
+      "xlmAfter": "5.0000000",
+      "usdcTrustlineStillPresent": true
+    }
+  }
+}

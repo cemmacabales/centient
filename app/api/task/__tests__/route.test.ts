@@ -261,7 +261,7 @@ describe("GET /api/task - response target filtering", () => {
     expect(body.task.submissionsRemaining).toBe(2);
   });
 
-  it("does not count non-sent submissions against target", async () => {
+  it("does not count skipped or failed submissions against target", async () => {
     mockRandom(0.5);
     const campaign = await createCampaign({ defaultResponseTarget: 2 });
     const task = await createTask({ campaignId: campaign.id, responseTarget: null });
@@ -272,7 +272,7 @@ describe("GET /api/task - response target filtering", () => {
     await prisma.submission.createMany({
       data: [
         { walletAddress: user1.walletAddress, userId: user1.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 0, payoutStatus: "skipped", isGoldCheck: false },
-        { walletAddress: user2.walletAddress, userId: user2.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 0, payoutStatus: "pending", isGoldCheck: false },
+        { walletAddress: user2.walletAddress, userId: user2.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 0, payoutStatus: "failed", isGoldCheck: false },
       ],
     });
 
@@ -281,6 +281,26 @@ describe("GET /api/task - response target filtering", () => {
     const body = await res.json();
     expect(body.task).not.toBeNull();
     expect(body.task.submissionsRemaining).toBe(2);
+  });
+
+  it("counts an in-flight pending payout against target (#37)", async () => {
+    // An accepted answer is written `pending` and paid out of band. Serving the
+    // task as if that answer did not exist would let submit then refuse it as
+    // full, or let it be answered past its target while payouts are in flight.
+    mockRandom(0.5);
+    const campaign = await createCampaign({ defaultResponseTarget: 2 });
+    const task = await createTask({ campaignId: campaign.id, responseTarget: null });
+    const user1 = await createUser();
+
+    await prisma.submission.create({
+      data: { walletAddress: user1.walletAddress, userId: user1.id, taskId: task.id, choice: "A", reason: VALID_REASON, payoutAmountUnits: 1, payoutStatus: "pending", isGoldCheck: false },
+    });
+
+    const res = await getTaskAsFreshUser();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.task).not.toBeNull();
+    expect(body.task.submissionsRemaining).toBe(1);
   });
 
   it("counts confirmed submissions against target", async () => {

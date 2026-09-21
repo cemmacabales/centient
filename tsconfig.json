@@ -37,6 +37,7 @@
   ],
   "exclude": [
     "node_modules",
-    "app/generated"
+    "app/generated",
+    "D2-QA-UNBLOCK"
   ]
 }

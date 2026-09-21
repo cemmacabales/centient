@@ -4,7 +4,8 @@ import { maybeSendCapAlert } from "./payout-cap";
 import { StellarPaymentError } from "./stellar/client";
 import { isValidStellarAddress } from "./stellar/signature";
 import { abandonAcceptedPayment, persistAcceptedPayment } from "./payout-broadcast";
-import { retryClaimIsLive } from "./payout-retry-claim";
+import { retryClaimIsLive, SUBMISSION_RETRY_BUDGET } from "./payout-retry-claim";
+import { refundSubmissionDebit } from "./payout-refund";
 
 // `needs_reconciliation` marks a payment that settled on-chain but could not be
 // recorded. It is terminal for retry purposes: a human must reconcile it against
@@ -91,6 +92,26 @@ async function claimForRetry(
 }
 
 /**
+ * Take the retry claim on a submission for a broadcast that is not a retry: the
+ * payout worker's first attempt at a `SUBMISSION_PAYOUT` job (#37).
+ *
+ * The worker and the retry cron can both reach a `pending` submission with no
+ * hash, and each has its own lease: the job's heartbeat and this row's
+ * `lastRetriedAt`. Neither reads the other's, so without this a worker holding a
+ * job and a cron treating the same row as stuck would each broadcast it — and
+ * the co-signer, which reads "pending, no hash" for both, would sign both. The
+ * worker taking the same claim, under the same per-wallet lock, is what makes
+ * the second of them stand down. Returns true when this caller now holds it.
+ */
+export async function claimSubmissionForBroadcast(
+  submissionId: string,
+  walletAddress: string,
+): Promise<boolean> {
+  const fresh = await prisma.$transaction((tx) => claimForRetry(tx, submissionId, walletAddress));
+  return fresh !== null;
+}
+
+/**
  * Keep a claimed retry's lease fresh for as long as its payout is in flight.
  *
  * `updateMany` with `payoutTxHash: null` rather than `update` by id, so the
@@ -104,7 +125,7 @@ async function claimForRetry(
  * the lease lapses under a live broadcast anyway. It narrows the window; it does
  * not fence the payout.
  */
-function heartbeatRetryClaim(submissionId: string): NodeJS.Timeout {
+export function heartbeatRetryClaim(submissionId: string): NodeJS.Timeout {
   return setInterval(() => {
     prisma.submission
       .updateMany({
@@ -218,20 +239,33 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
       // trustline; `op_no_destination` — recipient unfunded) can never succeed on
       // a blind retry. Surface the reason explicitly; the submission is marked
       // failed below and the cron retry job (ST-3b) must not auto-retry it.
-      if (err instanceof StellarPaymentError && !err.retryable) {
+      const nonRetryable = err instanceof StellarPaymentError && !err.retryable;
+      if (nonRetryable) {
         console.error(
           `[payout-service] submission ${submissionId} permanently failed (${err.code}): ${err.message}`,
         );
       }
 
+      // A non-retryable error ends the payout now; anything else ends it once the
+      // cron's budget is spent. Either way the row leaves the retry path here.
+      const retryCount = nonRetryable ? SUBMISSION_RETRY_BUDGET : fresh.retryCount + 1;
       await prisma.submission.update({
         where: { id: submissionId },
         data: {
           payoutStatus: "failed",
-          retryCount: fresh.retryCount + 1,
+          retryCount,
           lastRetriedAt: new Date(),
         },
       });
+
+      // #37: a campaign-backed row can reach this path after its worker job ends
+      // (a cap deferral, say). When the payout is over, return the campaign debit
+      // the way the worker does — except for `ambiguous_submit`, which may have
+      // settled and needs a human before anyone is refunded.
+      const ambiguous = err instanceof StellarPaymentError && err.code === "ambiguous_submit";
+      if (retryCount >= SUBMISSION_RETRY_BUDGET && !ambiguous) {
+        await refundSubmissionDebit(submissionId, amount, "refund: payout abandoned by the retry path");
+      }
 
       throw err;
     }

@@ -130,3 +130,11 @@ details > summary {
   font-feature-settings: "liga";
   -webkit-font-smoothing: antialiased;
 }
+
+/* #35: while the ranking submit bar is on screen, keep focused fields clear of
+   it. Browsers only scroll a focused element that is outside the scroll
+   region's padded box, so without this a field under the sticky bar stays
+   hidden behind it. */
+html:has([data-sticky-submit]) {
+  scroll-padding-bottom: 10rem;
+}

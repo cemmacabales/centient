@@ -307,7 +307,8 @@ describe("POST /api/submit - gold tasks", () => {
     const res = await submitAs(user.id, validPayload({ taskId: gold.id, choice: "A" }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.status).toBe("pending");
+    // #37: revealed only now, after the answer — a passed gold earns nothing.
+    expect(body).toMatchObject({ paid: false, reason: "quality_check_passed" });
 
     const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     expect(refreshed.goldAttempted).toBe(1);
@@ -344,7 +345,7 @@ describe("POST /api/submit - gold tasks", () => {
     for (const task of [gold1, gold2, gold3, gold4]) {
       const res = await submitAs(user.id, validPayload({ taskId: task.id, choice: "A" }));
       expect(res.status).toBe(200);
-      expect((await res.json()).status).toBe("pending");
+      expect((await res.json()).reason).toBe("quality_check_passed");
     }
 
     const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
@@ -462,7 +463,7 @@ describe("POST /api/submit - left-bias guard", () => {
 });
 
 describe("POST /api/submit - payout", () => {
-  it("returns status:pending and submissionId immediately, accrues without a PayoutJob", async () => {
+  it("returns status:pending and submissionId immediately, with one queued payout job", async () => {
     const user = await createUser();
     const task = await createTask();
 
@@ -476,10 +477,13 @@ describe("POST /api/submit - payout", () => {
       where: { userId: user.id, taskId: task.id },
     });
     expect(submission).not.toBeNull();
-    expect(submission?.payoutStatus).toBe("accrued");
+    expect(submission?.payoutStatus).toBe("pending");
     expect(submission?.payoutTxHash).toBeNull();
 
-    expect(await prisma.payoutJob.count()).toBe(0);
+    // #37: queued for the worker, never broadcast inside the request.
+    const jobs = await prisma.payoutJob.findMany();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({ type: "SUBMISSION_PAYOUT", submissionId: submission!.id, status: "queued", txHash: null });
   });
 
   it("does not call payReward directly (payout happens async)", async () => {
@@ -599,12 +603,12 @@ describe("POST /api/submit - response target cap", () => {
 
     const res = await submitAs(me.id, validPayload({ taskId: gold.id, choice: "A" }));
     expect(res.status).toBe(200);
-    expect((await res.json()).status).toBe("pending");
+    expect((await res.json()).reason).toBe("quality_check_passed");
   });
 });
 
 describe("POST /api/submit - daily payout cap", () => {
-  it("submit never triggers an on-chain payout (cap is irrelevant under accrual)", async () => {
+  it("submit never broadcasts: the cap is enforced by the worker's payReward", async () => {
     const user = await createUser();
     const task = await createTask();
 
@@ -617,7 +621,8 @@ describe("POST /api/submit - daily payout cap", () => {
       where: { userId: user.id, taskId: task.id },
     });
     expect(submission).not.toBeNull();
-    expect(submission?.payoutStatus).toBe("accrued");
+    expect(submission?.payoutStatus).toBe("pending");
+    expect(vi.mocked(payReward)).not.toHaveBeenCalled();
   });
 });
 
@@ -630,7 +635,7 @@ describe("POST /api/submit - campaign balance", () => {
     await submitAs(user.id, validPayload({ taskId: task.id, choice: "A" }));
 
     expect(checkAndDebit).toHaveBeenCalledOnce();
-    expect(checkAndDebit).toHaveBeenCalledWith(campaign.id, expect.any(BigInt), expect.any(String));
+    expect(checkAndDebit).toHaveBeenCalledWith(campaign.id, expect.any(BigInt), expect.any(String), expect.anything());
   });
 
   it("returns 402 and does not pay when the balance is insufficient", async () => {
@@ -673,8 +678,8 @@ describe("POST /api/submit - campaign balance", () => {
   });
 });
 
-describe("POST /api/submit - balance accrual", () => {
-  it("credits pendingBalanceUnits and writes a CREDIT_REWARD ledger row on an approved non-gold answer", async () => {
+describe("POST /api/submit - instant payout intent (#37)", () => {
+  it("credits no withdrawable balance: the reward is paid on-chain instead", async () => {
     const campaign = await createCampaign();
     const task = await createTask({ campaignId: campaign.id });
     const user = await createUser();
@@ -682,21 +687,12 @@ describe("POST /api/submit - balance accrual", () => {
     const res = await submitAs(user.id, validPayload({ taskId: task.id, choice: "A" }));
     expect(res.status).toBe(200);
 
-    const submission = await prisma.submission.findFirstOrThrow({
-      where: { userId: user.id, taskId: task.id },
-    });
     const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(refreshed.pendingBalanceUnits).toBeGreaterThan(0n);
-    expect(refreshed.pendingBalanceUnits).toBe(submission.payoutAmountUnits);
-
-    const ledger = await prisma.userBalanceLedger.findMany({ where: { userId: user.id } });
-    expect(ledger).toHaveLength(1);
-    expect(ledger[0].type).toBe("CREDIT_REWARD");
-    expect(ledger[0].amountUnits).toBe(submission.payoutAmountUnits);
-    expect(ledger[0].submissionId).toBe(submission.id);
+    expect(refreshed.pendingBalanceUnits).toBe(user.pendingBalanceUnits);
+    expect(await prisma.userBalanceLedger.count({ where: { userId: user.id } })).toBe(0);
   });
 
-  it("marks the accrued submission payoutStatus 'accrued'", async () => {
+  it("writes the accepted submission pending with its reward", async () => {
     const campaign = await createCampaign();
     const task = await createTask({ campaignId: campaign.id });
     const user = await createUser();
@@ -704,20 +700,25 @@ describe("POST /api/submit - balance accrual", () => {
     await submitAs(user.id, validPayload({ taskId: task.id, choice: "A" }));
 
     const submission = await prisma.submission.findFirstOrThrow({ where: { taskId: task.id } });
-    expect(submission.payoutStatus).toBe("accrued");
+    expect(submission.payoutStatus).toBe("pending");
+    expect(submission.payoutAmountUnits).toBeGreaterThan(0n);
+    expect(submission.walletAddress).toBe(user.walletAddress);
   });
 
-  it("does not enqueue a per-question PayoutJob for accrued earnings", async () => {
+  it("enqueues exactly one SUBMISSION_PAYOUT job for the accepted answer", async () => {
     const campaign = await createCampaign();
     const task = await createTask({ campaignId: campaign.id });
     const user = await createUser();
 
     await submitAs(user.id, validPayload({ taskId: task.id, choice: "A" }));
 
-    expect(await prisma.payoutJob.count()).toBe(0);
+    const submission = await prisma.submission.findFirstOrThrow({ where: { taskId: task.id } });
+    const jobs = await prisma.payoutJob.findMany();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({ type: "SUBMISSION_PAYOUT", submissionId: submission.id, status: "queued" });
   });
 
-  it("does not call payReward (no per-question on-chain transfer)", async () => {
+  it("does not call payReward (the worker broadcasts, not the request)", async () => {
     const campaign = await createCampaign();
     const task = await createTask({ campaignId: campaign.id });
     const user = await createUser();
@@ -727,18 +728,19 @@ describe("POST /api/submit - balance accrual", () => {
     expect(vi.mocked(payReward)).not.toHaveBeenCalled();
   });
 
-  it("credits a correct gold answer to balance without debiting a campaign", async () => {
+  it("records a correct gold answer unpaid: no debit, no job, no balance", async () => {
     const gold = await createGoldTask("A");
     const user = await createUser();
 
     const res = await submitAs(user.id, validPayload({ taskId: gold.id, choice: "A" }));
     expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ paid: false, reason: "quality_check_passed" });
 
+    const row = await prisma.submission.findUniqueOrThrow({ where: { id: body.submissionId } });
+    expect(row).toMatchObject({ isGoldCheck: true, goldPassed: true, payoutStatus: "skipped", payoutAmountUnits: 0n });
     const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(refreshed.pendingBalanceUnits).toBeGreaterThan(0n);
-    const ledger = await prisma.userBalanceLedger.findMany({ where: { userId: user.id } });
-    expect(ledger).toHaveLength(1);
-    expect(ledger[0].type).toBe("CREDIT_REWARD");
+    expect(refreshed.pendingBalanceUnits).toBe(user.pendingBalanceUnits);
     expect(checkAndDebit).not.toHaveBeenCalled();
     expect(await prisma.payoutJob.count()).toBe(0);
   });
@@ -751,7 +753,7 @@ describe("POST /api/submit - balance accrual", () => {
     await submitAs(user.id, validPayload({ taskId: task.id, choice: "A" }));
 
     expect(checkAndDebit).toHaveBeenCalledOnce();
-    expect(checkAndDebit).toHaveBeenCalledWith(campaign.id, expect.any(BigInt), expect.any(String));
+    expect(checkAndDebit).toHaveBeenCalledWith(campaign.id, expect.any(BigInt), expect.any(String), expect.anything());
   });
 
   it("does not credit balance when the customer campaign balance is insufficient", async () => {
@@ -799,31 +801,36 @@ describe("POST /api/submit - balance accrual", () => {
 // per-question PayoutJob enqueue was retired in P2a; these tests are the regression
 // guard that fails if it is ever reintroduced — an approved answer must never
 // create a PayoutJob, and certainly never a per-question SUBMISSION_PAYOUT job.
-describe("POST /api/submit - P5b regression: accrual is the only payout path", () => {
-  it("creates no PayoutJob of any type for an approved answer", async () => {
-    const campaign = await createCampaign();
-    const task = await createTask({ campaignId: campaign.id });
-    const user = await createUser();
-
-    const res = await submitAs(user.id, validPayload({ taskId: task.id, choice: "A" }));
-    expect(res.status).toBe(200);
-
-    expect(await prisma.payoutJob.count()).toBe(0);
-    expect(await prisma.payoutJob.count({ where: { type: "SUBMISSION_PAYOUT" } })).toBe(0);
-  });
-
-  it("never enqueues a SUBMISSION_PAYOUT job across many approved answers", async () => {
+describe("POST /api/submit - #37 regression: one payout job per accepted answer, none per rejection", () => {
+  // Inverts the P5b guard ("accrual is the only payout path"). Each accepted
+  // answer now carries exactly one SUBMISSION_PAYOUT job; a rejection carries
+  // none. The full rejection matrix lives in payout-intent-db.test.ts.
+  it("creates exactly one SUBMISSION_PAYOUT job per approved answer, and no WITHDRAWAL", async () => {
     const campaign = await createCampaign();
     const user = await createUser();
 
+    const ids: string[] = [];
     for (let i = 0; i < 5; i++) {
       const task = await createTask({ campaignId: campaign.id, prompt: `Test prompt ${i}?` });
       const res = await submitAs(user.id, validPayload({ taskId: task.id, choice: "A" }));
       expect(res.status).toBe(200);
+      ids.push((await res.json()).submissionId);
     }
 
-    expect(await prisma.payoutJob.count({ where: { type: "SUBMISSION_PAYOUT" } })).toBe(0);
+    const jobs = await prisma.payoutJob.findMany({ orderBy: { createdAt: "asc" } });
+    expect(jobs).toHaveLength(5);
+    expect(jobs.every((j) => j.type === "SUBMISSION_PAYOUT")).toBe(true);
+    expect(jobs.map((j) => j.submissionId).sort()).toEqual([...ids].sort());
     const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(refreshed.pendingBalanceUnits).toBeGreaterThan(0n);
+    expect(refreshed.pendingBalanceUnits).toBe(user.pendingBalanceUnits);
+  });
+
+  it("creates no PayoutJob for a rejected answer", async () => {
+    const task = await createTask();
+    const user = await createUser();
+
+    const res = await submitAs(user.id, validPayload({ taskId: task.id, choice: "A", reason: "asdf" }));
+    expect(res.status).toBe(400);
+    expect(await prisma.payoutJob.count()).toBe(0);
   });
 });

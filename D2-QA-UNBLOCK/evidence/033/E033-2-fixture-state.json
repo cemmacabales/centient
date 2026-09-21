@@ -1,0 +1,54 @@
+{
+  "note": "Every fixture onboarded through the deployed GET/POST /api/me/wallet/sponsor path (zero-XLM, account+trustline). All but P1 then unlinked.",
+  "protectionPlaced": {
+    "P1-linked": "wallet still bound to its user",
+    "P2-flagged-withdrawal": "flagged_withdrawals row, status PENDING, walletAddress = P2",
+    "P3-unsettled-submission": "submissions row, payoutStatus needs_reconciliation (no cron acts on it), amount 0",
+    "P4-owed-balance": "owner pendingBalanceUnits = 1",
+    "P5-usdc-on-trustline": "5 XLM funded; manageBuyOffer 1 USDC @ 0.01 XLM -> USDC buying liabilities on the trustline",
+    "O1-cannot-absorb": "0 XLM of its own",
+    "E1-eligible / E2-eligible": "5 XLM of their own, no protection"
+  },
+  "fixtures": [
+    {
+      "fixture": "P1-linked",
+      "address": "GCSZHLFZQSIZ2XR5HBVKCOWHJ5SCILKJH6F5K6LJWA7KUMLXGNW5Z44I",
+      "userId": "c94b6f9b-bb7e-47e6-a2ff-2b4b0f8789e1"
+    },
+    {
+      "fixture": "P2-flagged-withdrawal",
+      "address": "GDSAOMN5WDOAKYAGJO7DDUB2ULXNGFLBGWYBDIJIRYN7RMTIOSE7HQYB",
+      "userId": "4e2b0612-1819-455d-9a40-40bc769de3c8"
+    },
+    {
+      "fixture": "P3-unsettled-submission",
+      "address": "GCV4BQFC5JRSNTCJHQXTSLF7UKHR3TO5PTD5IQWY7ZV44QZFXE4QYPJ2",
+      "userId": "2ee5eb54-2994-422a-a8c2-4a8d7e36cdd6"
+    },
+    {
+      "fixture": "P4-owed-balance",
+      "address": "GAPV426TZ4COYPJHSBG454MCY3WK24MGTBFWBQ6B23VMZ44S27QU7MME",
+      "userId": "4ac3f999-34dd-48c6-a658-ed1154b6951b"
+    },
+    {
+      "fixture": "P5-usdc-on-trustline",
+      "address": "GCHKXBN47L5OTTHZOQCVQU3LF4CYZ5NAFNDFODBVR5FSKSNXQERMDUOP",
+      "userId": "3f941f76-e616-4cd8-8cb9-78b1664a9935"
+    },
+    {
+      "fixture": "O1-cannot-absorb",
+      "address": "GBF7BPPLJWKLWF2LL6GQME62TB733CUW6JSMKUUCXGRVGTSHSL5KM23J",
+      "userId": "7cd895f5-3d74-4290-9c02-9d3e121824e0"
+    },
+    {
+      "fixture": "E1-eligible",
+      "address": "GCGPXV5AZVYIMACUVX2IMRVCUYW44352BOU6DMZWQNTMNBBWMQMJZBIS",
+      "userId": "3cf9e6c5-b94a-4582-ba91-9eb39022856b"
+    },
+    {
+      "fixture": "E2-eligible",
+      "address": "GAIIW4FH6RYT2KTWMVMQASEPHVEWRN736LANMAXWMSEMKWQBW665DSUJ",
+      "userId": "0d973db7-8a0b-483a-9248-daa1b9b41ee6"
+    }
+  ]
+}

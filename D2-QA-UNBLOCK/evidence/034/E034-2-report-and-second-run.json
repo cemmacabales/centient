@@ -1,0 +1,46 @@
+{
+  "step1_storedReport": {
+    "runId": "7214598a-d686-4f2e-935e-00fd93b0c133",
+    "scan": {
+      "stellarAccountIds": [
+        "GDF6XPTBW64G3UM7RJ4FSVNXTGRTJGX2SDAHGGW5PHAJQPG6ZMLVXD5S",
+        "GDF6XPTBW64G3UM7RJ4FSVNXTGRTJGX2SDAHGGW5PHAJQPG6ZMLVXD5S"
+      ],
+      "stellarSecretSeeds": 0,
+      "userIdsFound": 0,
+      "columns": [
+        "id",
+        "network",
+        "sponsor",
+        "startedAt",
+        "finishedAt",
+        "reclaimedStroops",
+        "report"
+      ],
+      "note": "The only account id stored is the platform sponsor's public key (the run's `sponsor` column, by design). No contributor wallet address, no user id, no seed."
+    },
+    "expect": "0 account ids, 0 seeds, 0 user ids",
+    "sample": "{\"id\":\"7214598a-d686-4f2e-935e-00fd93b0c133\",\"network\":\"testnet\",\"sponsor\":\"GDF6XPTBW64G3UM7RJ4FSVNXTGRTJGX2SDAHGGW5PHAJQPG6ZMLVXD5S\",\"startedAt\":\"2026-09-17T18:54:00.929Z\",\"finishedAt\":\"2026-09-17T18:54:23.367Z\",\"reclaimedStroops\":\"30000000\",\"report\":{\"mode\":\"execute\",\"runId\":\"7214598a-d686-4f2e-935e-00fd93b0c133\",\"totals\":{\"sponsorships\":28,\"byDisposition\":{\"revoked\":2,\"protected_holds_usdc\":1,\"protected_owed_balance\":1,\"protected_linked_wallet\":21,\"owner_cannot_cover_reserve\":1,\"protected_payout_in_flight\":1,\"protected_unsettled_submission\":1},\"reclaimedStroops\":\"30000000\",\"lockedReserveUnits\":62,\"ownerReleasedStroops\":\"0\"},\"network\":\"testnet\",\"sponsor\":\"GDF6XPTBW64G3UM7RJ4FSVNXTGRTJGX2SDAHGGW5PHAJQPG6ZMLVXD5S\",\"startedAt\":\"2026-09-18T02:54:00.929Z\",\"finishedAt\":\"2026-09-18T02:54:23.367Z\",\"sponsorships\":[{\"kind\":\"trustline\",\"entries\":[\"trustline\"],\"disposition\":\"protected_linked_wallet\",\"reserveUnits\":1,\"sponsorshipId\":\"88d966d9-a004-4d1a-ad23-93d442bb26ef\",\"reclaimedStroops\":\"0\"},{\"kind\":\"trustline\",\"entries\":[\"trustline\"],\"disposition\":\"protected_linked_wallet\",\"reserveUnits\":1,\"sponsorshipId\":\"4ccddb74-4b9f-43e1-b85e-676358dc456a\",\"reclaimedStroops\":\"0\"},{\"kind\":\"trustline\",\"entries\":[\"trustline\"],\"disposition\":\"protected_linked_wallet\",\"reserveUnits\":1,\"sponsorshipId\":\"a97446e6-c5b4-41ef-ba61-326c0506d2eb\",\"reclaimedStroops\":\"0\"},{\"kind\":\"trustline\",\"entries\":[\"trustline\"],\"disposition\":\"protected_linked_wallet\",\"reserveUnits\":1,\"sponsorshipId\":\"232897ce-9680-4c5f-9d0f"
+  },
+  "step2_secondExecute": {
+    "expect": "sends nothing",
+    "sponsorSequence": {
+      "before": "19826848938590242",
+      "after": "19826848938590242"
+    },
+    "reclaimedStroops": "0",
+    "fixtureDispositions": [
+      "P1-linked: protected_linked_wallet",
+      "P2-flagged-withdrawal: protected_payout_in_flight",
+      "P3-unsettled-submission: protected_unsettled_submission",
+      "P4-owed-balance: protected_owed_balance",
+      "P5-usdc-on-trustline: protected_holds_usdc",
+      "O1-cannot-absorb: owner_cannot_cover_reserve"
+    ]
+  },
+  "step3_liability": {
+    "sponsorNumSponsoring": 65,
+    "ledgerSponsorshipLiabilityUnits": 65,
+    "equal": true
+  }
+}

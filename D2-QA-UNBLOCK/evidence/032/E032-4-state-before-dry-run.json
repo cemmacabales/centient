@@ -1,0 +1,60 @@
+{
+ "snapshot": {
+  "sponsorSequence": "19826848938590239",
+  "sponsorNumSponsoring": 68,
+  "ledgerSponsorshipLiabilityUnits": 68,
+  "baseReserveStroops": 5000000,
+  "totalRows": 31,
+  "runsStored": 0,
+  "fixtureRows": [
+   {
+    "fixture": "P1-linked",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   },
+   {
+    "fixture": "P2-flagged-withdrawal",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   },
+   {
+    "fixture": "P3-unsettled-submission",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   },
+   {
+    "fixture": "P4-owed-balance",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   },
+   {
+    "fixture": "P5-usdc-on-trustline",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   },
+   {
+    "fixture": "O1-cannot-absorb",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   },
+   {
+    "fixture": "E1-eligible",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   },
+   {
+    "fixture": "E2-eligible",
+    "status": "confirmed",
+    "revoked": false,
+    "releasedBy": null
+   }
+  ]
+ }
+}

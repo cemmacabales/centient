@@ -81,7 +81,9 @@ describe("assertLedgerAgrees", () => {
   });
 
   it("refuses a submission already in a terminal payout state", () => {
-    for (const status of ["sent", "confirmed", "skipped", "needs_reconciliation"]) {
+    // #37: `skipped` is every rejected answer, `accrued` the legacy balance credit,
+    // `abandoned` a refunded failure — none may reach a signature.
+    for (const status of ["sent", "confirmed", "skipped", "accrued", "abandoned", "needs_reconciliation"]) {
       expect(() => assertLedgerAgrees(submissionRow({ status }), request())).toThrow(
         /status/i,
       );

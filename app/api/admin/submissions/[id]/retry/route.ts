@@ -3,6 +3,7 @@ import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 import { reprocessPayoutWithNonceSafety } from "@/lib/payout-service";
 import { RETRY_CLAIM_LEASE_MS, retryClaimIsLive } from "@/lib/payout-retry-claim";
+import { hasRefundedSubmission } from "@/lib/campaign-balance";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +55,14 @@ export async function POST(
       return { kind: "claim_held" as const, lastRetriedAt: row.lastRetriedAt as Date };
     }
 
+    // #37: a payer that gave up on this payout returned its campaign debit. A
+    // retry now would pay it from platform funds while the campaign keeps the
+    // refund — and a second give-up would refund it again. Refuse; an operator
+    // who wants it paid re-funds it first.
+    if (await hasRefundedSubmission(tx, id)) {
+      return { kind: "refunded" as const };
+    }
+
     const originals = {
       retryCount: row.retryCount,
       status: row.payoutStatus,
@@ -79,6 +88,16 @@ export async function POST(
     return NextResponse.json(
       { error: `cannot retry submission with status "${claim.status}"` },
       { status: 400 },
+    );
+  }
+  if (claim.kind === "refunded") {
+    return NextResponse.json(
+      {
+        error: "payout_refunded",
+        detail:
+          "this submission's campaign debit was refunded when its payout was given up; retrying would pay it with no funding behind it",
+      },
+      { status: 409 },
     );
   }
   if (claim.kind === "claim_held") {

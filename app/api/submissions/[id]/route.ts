@@ -2,8 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 import { unitsToUsdcDisplay } from "@/lib/stellar/config";
-import { getLabelerUser } from "@/lib/labeler-auth";
+import { getLabelerSession } from "@/lib/labeler-auth";
 
+/**
+ * Read one of the signed-in contributor's submissions and its payout status:
+ * `pending` (queued, not yet broadcast), `sent` (accepted by Horizon, hash
+ * stored), `confirmed` (seen on the ledger by the reconciler), or a failure
+ * state (#37).
+ *
+ * The session is the only authority. The row is matched on its `userId`, never
+ * on a wallet parameter: the old `?walletAddress=0x…` check rejected every
+ * Stellar `G…` address, and lowercasing a StrKey to compare it is wrong anyway.
+ * Someone else's submission answers 404, exactly like a missing one, so an id
+ * says nothing about whether it exists.
+ */
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -14,33 +26,13 @@ export async function GET(
     return NextResponse.json({ error: "invalid_id" }, { status: 400 });
   }
 
-  // Primary authorization: the labeler session (JWT sub = userId) is the authority
-  // for who may read this submission. Without it, anyone who knows a submission id
-  // plus a (public, on-chain) wallet address could read its payout status (IDOR).
-  // Submissions remain wallet-keyed, so resolve the session to its linked wallet.
-  const sessionUser = await getLabelerUser(req);
-  if (!sessionUser) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-  const sessionWallet = sessionUser.walletAddress;
-  if (!sessionWallet) {
+  const userId = await getLabelerSession(req);
+  if (!userId) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  // Secondary consistency check: the wallet the client is polling for must match
-  // its own session. EIP-55 checksummed addresses are accepted (case-insensitive).
-  const { searchParams } = new URL(req.url);
-  const walletAddressParam = searchParams.get("walletAddress");
-  if (
-    typeof walletAddressParam !== "string" ||
-    !/^0x[a-fA-F0-9]{40}$/.test(walletAddressParam) ||
-    walletAddressParam.toLowerCase() !== sessionWallet.toLowerCase()
-  ) {
-    return NextResponse.json({ error: "invalid_wallet_param" }, { status: 400 });
-  }
-
-  const submission = await prisma.submission.findUnique({
-    where: { id },
+  const submission = await prisma.submission.findFirst({
+    where: { id, userId },
     select: {
       id: true,
       payoutStatus: true,
@@ -54,12 +46,6 @@ export async function GET(
 
   if (!submission) {
     return NextResponse.json({ error: "not_found" }, { status: 404 });
-  }
-
-  // A submission with no walletAddress (email-only answerer, ST-5d) can never match
-  // a wallet-bearing session, so it is forbidden through this wallet-keyed poll.
-  if (submission.walletAddress?.toLowerCase() !== sessionWallet.toLowerCase()) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
   return NextResponse.json({

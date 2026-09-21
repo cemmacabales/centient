@@ -1,0 +1,237 @@
+{
+  "purpose": "If x-real-ip were client-controlled, request 21 (a different claimed IP) would get its own bucket and answer 200.",
+  "result": "429 — the client header is ignored; the proxy supplies x-real-ip for every request",
+  "requests": [
+    {
+      "label": "A:claimed-ip-1",
+      "n": 1,
+      "addr": "GDO4DW3EPHCBU6BK7KLYPDGWXB3S624UHTF2BRPLUO4U7N23AUYVRJ2R",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:53.132Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 2,
+      "addr": "GDO4DW3EPHCBU6BK7KLYPDGWXB3S624UHTF2BRPLUO4U7N23AUYVRJ2R",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:54.594Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 3,
+      "addr": "GDO4DW3EPHCBU6BK7KLYPDGWXB3S624UHTF2BRPLUO4U7N23AUYVRJ2R",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:54.741Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 4,
+      "addr": "GDO4DW3EPHCBU6BK7KLYPDGWXB3S624UHTF2BRPLUO4U7N23AUYVRJ2R",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:54.812Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 5,
+      "addr": "GCMGAK6BOW2VESDTOA2W3ETLWCTULMLKGX6FOLCOJFTYI4BYF3DM3UA2",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:54.951Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 6,
+      "addr": "GCMGAK6BOW2VESDTOA2W3ETLWCTULMLKGX6FOLCOJFTYI4BYF3DM3UA2",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:55.013Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 7,
+      "addr": "GCMGAK6BOW2VESDTOA2W3ETLWCTULMLKGX6FOLCOJFTYI4BYF3DM3UA2",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:55.089Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 8,
+      "addr": "GCMGAK6BOW2VESDTOA2W3ETLWCTULMLKGX6FOLCOJFTYI4BYF3DM3UA2",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:55.162Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 9,
+      "addr": "GDYJOBLZVYHGA2P5ST5O6MQCAOMTFW4E2UX2ERGPJHCTGLON7BPZCUOP",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:55.239Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 10,
+      "addr": "GDYJOBLZVYHGA2P5ST5O6MQCAOMTFW4E2UX2ERGPJHCTGLON7BPZCUOP",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:55.304Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 11,
+      "addr": "GDYJOBLZVYHGA2P5ST5O6MQCAOMTFW4E2UX2ERGPJHCTGLON7BPZCUOP",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:55.371Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 12,
+      "addr": "GDYJOBLZVYHGA2P5ST5O6MQCAOMTFW4E2UX2ERGPJHCTGLON7BPZCUOP",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:55.474Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 13,
+      "addr": "GAVAAWJYUPJNI3PENRQ7MB5AUDMWEHMG7TYSIJD5VHYFB233QYDLKOAA",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:55.546Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 14,
+      "addr": "GAVAAWJYUPJNI3PENRQ7MB5AUDMWEHMG7TYSIJD5VHYFB233QYDLKOAA",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:55.609Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 15,
+      "addr": "GAVAAWJYUPJNI3PENRQ7MB5AUDMWEHMG7TYSIJD5VHYFB233QYDLKOAA",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:55.680Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 16,
+      "addr": "GAVAAWJYUPJNI3PENRQ7MB5AUDMWEHMG7TYSIJD5VHYFB233QYDLKOAA",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:55.750Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 17,
+      "addr": "GDXUFU6Z6AWUPMOEJ7HQEVPKV3NBB5LO7BEZ3TPWA573RRV7SWXNRBAE",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:55.827Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 18,
+      "addr": "GDXUFU6Z6AWUPMOEJ7HQEVPKV3NBB5LO7BEZ3TPWA573RRV7SWXNRBAE",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:55.888Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 19,
+      "addr": "GDXUFU6Z6AWUPMOEJ7HQEVPKV3NBB5LO7BEZ3TPWA573RRV7SWXNRBAE",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:55.998Z"
+    },
+    {
+      "label": "A:claimed-ip-1",
+      "n": 20,
+      "addr": "GDXUFU6Z6AWUPMOEJ7HQEVPKV3NBB5LO7BEZ3TPWA573RRV7SWXNRBAE",
+      "xRealIpSent": "198.51.100.10",
+      "status": 200,
+      "body": {
+        "nonce": "<32-hex>"
+      },
+      "at": "2026-09-18T02:40:56.075Z"
+    },
+    {
+      "label": "A:claimed-ip-2",
+      "n": 1,
+      "addr": "GDVTM5PD6SBIXJ5VNNK5VQTDVTKQPAUVIQNX6TEWAT6A4QBO72CSSZGC",
+      "xRealIpSent": "198.51.100.20",
+      "status": 429,
+      "body": {
+        "error": "rate_limited"
+      },
+      "at": "2026-09-18T02:40:56.172Z"
+    }
+  ]
+}

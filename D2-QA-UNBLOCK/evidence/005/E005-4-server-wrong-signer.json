@@ -1,0 +1,16 @@
+{
+  "A": "GBVX2TS…OM7Y",
+  "reportedSigner": "GCTTFGS…YNFH",
+  "wrongSigner": {
+    "status": 401,
+    "body": {
+      "error": "wrong_signer"
+    },
+    "sessionCookie": false
+  },
+  "realSignerAfterwards": {
+    "status": 200,
+    "sessionIssued": true,
+    "note": "challenge stayed live after the refusal (#109)"
+  }
+}

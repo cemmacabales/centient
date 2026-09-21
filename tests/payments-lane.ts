@@ -42,6 +42,8 @@ export const PAYMENTS_LANE_TEST_GLOBS = [
   "app/api/health/wallet/__tests__/*.test.ts",
   "app/api/admin/flagged-withdrawals/**/__tests__/*.test.ts",
   "app/api/admin/submissions/**/__tests__/*.test.ts",
+  // #36: no rejected submission creates payout intent. #37 pays from this path.
+  "app/api/submit/__tests__/payout-intent-db.test.ts",
 ] as const;
 
 /**

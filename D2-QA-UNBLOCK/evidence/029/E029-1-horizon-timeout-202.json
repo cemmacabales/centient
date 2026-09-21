@@ -1,0 +1,127 @@
+{
+  "F1": "GCLVMZ2\u20267RP3",
+  "harness": "deployed route code in-process, Horizon submit faulted to 504 timeout",
+  "steps": [
+    {
+      "step": "1: submit while Horizon times out",
+      "expect": "202 pending",
+      "got": {
+        "status": 202,
+        "body": {
+          "established": false,
+          "pending": true
+        },
+        "at": "2026-09-18T02:45:55.082Z"
+      },
+      "row": {
+        "status": "pending",
+        "expiresAtUtc": "2026-09-18T02:48:50.000Z",
+        "confirmedAt": null
+      },
+      "f1OnChain": "404"
+    },
+    {
+      "step": "2: poll until envelope expiry",
+      "envelopeExpiresAtUtc": "2026-09-18T02:48:50.000Z",
+      "pollsDuringWindow": 5
+    },
+    {
+      "step": "after expiry, Horizon answering again: resubmit the expired envelope",
+      "got": {
+        "status": 502,
+        "body": {
+          "error": "submit_failed"
+        },
+        "at": "2026-09-18T02:49:32.259Z"
+      },
+      "row": {
+        "status": "failed",
+        "expiresAtUtc": "2026-09-18T02:48:50.000Z",
+        "confirmedAt": null
+      },
+      "f1OnChain": "404 (no partial account)"
+    }
+  ],
+  "polls": [
+    {
+      "at": "2026-09-18T02:46:27.591Z",
+      "resubmitSameEnvelope": "202 {\"established\":false,\"pending\":true}",
+      "buildAnother": "409 {\"error\":\"submission_pending\"}",
+      "row": "pending",
+      "f1OnChain": "404 (no partial account)"
+    },
+    {
+      "at": "2026-09-18T02:47:06.655Z",
+      "resubmitSameEnvelope": "202 {\"established\":false,\"pending\":true}",
+      "buildAnother": "409 {\"error\":\"submission_pending\"}",
+      "row": "pending",
+      "f1OnChain": "404 (no partial account)"
+    },
+    {
+      "at": "2026-09-18T02:47:50.537Z",
+      "resubmitSameEnvelope": "202 {\"established\":false,\"pending\":true}",
+      "buildAnother": "409 {\"error\":\"submission_pending\"}",
+      "row": "pending",
+      "f1OnChain": "404 (no partial account)"
+    },
+    {
+      "at": "2026-09-18T02:48:33.951Z",
+      "resubmitSameEnvelope": "202 {\"established\":false,\"pending\":true}",
+      "buildAnother": "409 {\"error\":\"submission_pending\"}",
+      "row": "pending",
+      "f1OnChain": "404 (no partial account)"
+    },
+    {
+      "at": "2026-09-18T02:49:17.722Z",
+      "resubmitSameEnvelope": "202 {\"established\":false,\"pending\":true}",
+      "buildAnother": "200 {\"needed\":true,\"xdr\":\"<offered>\"}",
+      "row": "pending",
+      "f1OnChain": "404 (no partial account)"
+    }
+  ],
+  "proxyLog": [
+    {
+      "at": "2026-09-18T02:45:54.848Z",
+      "method": "POST",
+      "url": "/transactions",
+      "answered": "504 timeout (injected)"
+    },
+    {
+      "at": "2026-09-18T02:46:27.360Z",
+      "method": "POST",
+      "url": "/transactions",
+      "answered": "504 timeout (injected)"
+    },
+    {
+      "at": "2026-09-18T02:47:06.397Z",
+      "method": "POST",
+      "url": "/transactions",
+      "answered": "504 timeout (injected)"
+    },
+    {
+      "at": "2026-09-18T02:47:50.280Z",
+      "method": "POST",
+      "url": "/transactions",
+      "answered": "504 timeout (injected)"
+    },
+    {
+      "at": "2026-09-18T02:48:33.698Z",
+      "method": "POST",
+      "url": "/transactions",
+      "answered": "504 timeout (injected)"
+    },
+    {
+      "at": "2026-09-18T02:49:17.444Z",
+      "method": "POST",
+      "url": "/transactions",
+      "answered": "504 timeout (injected)"
+    },
+    {
+      "at": "2026-09-18T02:49:30.147Z",
+      "method": "POST",
+      "url": "/transactions",
+      "answered": "400 (forwarded)"
+    }
+  ],
+  "note": "row.expiresAtUtc corrected: node-pg read the timestamp-without-time-zone column as Manila local time (+8h); values above are the stored UTC."
+}

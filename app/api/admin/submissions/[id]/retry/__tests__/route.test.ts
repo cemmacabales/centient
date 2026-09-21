@@ -29,6 +29,9 @@ vi.mock("@/lib/prisma", () => ({
         submission: {
           update: mockTxUpdate,
         },
+        // No refund on record: the refunded case is covered for real in
+        // refunded-db.test.ts.
+        balanceLedger: { findFirst: vi.fn(async () => null) },
       };
       return fn(tx);
     }),

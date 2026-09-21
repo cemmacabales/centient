@@ -1,0 +1,63 @@
+{
+  "sponsor": "GDF6XPTBW64G3UM7RJ4FSVNXTGRTJGX2SDAHGGW5PHAJQPG6ZMLVXD5S",
+  "F1": "GBDMWXN…6TCN",
+  "steps": [
+    {
+      "step": "setup",
+      "sponsorBefore": {
+        "balance": "9999.9991300",
+        "subentry_count": 0,
+        "num_sponsoring": 41,
+        "base_reserve_xlm": 0.5,
+        "spendable_xlm": "9978.4991300",
+        "needed_for_account_plus_trustline_xlm": "1.5000000 + fee"
+      }
+    },
+    {
+      "step": "F5 in place: spendable XLM parked in holder GBED4V7…6CWK",
+      "tx": "35acf648dca97dfe2c1d8184b24ee837dc0a0e1253de580eb125f551ba753f1d",
+      "sponsorDuring": {
+        "balance": "22.6999900",
+        "subentry_count": 0,
+        "num_sponsoring": 41,
+        "base_reserve_xlm": 0.5,
+        "spendable_xlm": "1.1999900",
+        "needed_for_account_plus_trustline_xlm": "1.5000000 + fee"
+      }
+    },
+    {
+      "step": "1: GET /api/me/wallet/sponsor for F1 while the sponsor is short",
+      "expect": "503 sponsorship_unavailable before any XDR; no signature requested; no intent row",
+      "got": {
+        "status": 503,
+        "body": {
+          "error": "sponsorship_unavailable"
+        },
+        "at": "2026-09-18T02:43:53.725Z"
+      },
+      "xdrOffered": false,
+      "intentRowsForF1": 0,
+      "f1OnChain": "404 (no partial account)"
+    },
+    {
+      "step": "restore: holder merged back into sponsor",
+      "tx": "b96a9d4dc6068d50514d49ece12c5147f37cf63b830be98608836e4d4a3087ba",
+      "sponsorAfter": {
+        "balance": "9999.9991100",
+        "subentry_count": 0,
+        "num_sponsoring": 41,
+        "base_reserve_xlm": 0.5,
+        "spendable_xlm": "9978.4991100",
+        "needed_for_account_plus_trustline_xlm": "1.5000000 + fee"
+      }
+    },
+    {
+      "step": "recovery check (not part of the TC): GET after restore",
+      "got": {
+        "status": 200,
+        "kind": "account+trustline",
+        "xdrOffered": true
+      }
+    }
+  ]
+}

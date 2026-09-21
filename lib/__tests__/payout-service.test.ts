@@ -48,6 +48,10 @@ const mockTx = {
   $executeRaw: mockTxExecuteRaw,
 };
 
+// The campaign refund on a finished payout has its own DB suite
+// (payout-retry-refund-db); here it would need a task lookup the mock lacks.
+vi.mock("@/lib/payout-refund", () => ({ refundSubmissionDebit: vi.fn(async () => {}) }));
+
 vi.mock("@/lib/payout", () => ({
   payReward: mockPayReward,
   PayoutCapError: class extends Error {},
