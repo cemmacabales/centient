@@ -1,0 +1,11 @@
+$schema: https://api.gitbook.com/gitbook-docs.yaml
+site:
+  title: Centient Instawards
+  structure:
+    - type: space
+      key: space-instawards
+      title: Centient Instawards
+      path: instawards
+      default: true
+      content:
+        directory: ./instawards
