@@ -24,6 +24,7 @@ const {
   mockTxExecuteRaw,
   mockTxFindUnique,
   mockPayoutJobUpsert,
+  mockSubmissionUpdateMany,
 } = vi.hoisted(() => ({
   mockPayReward: vi.fn(),
   mockFindUnique: vi.fn(),
@@ -33,6 +34,7 @@ const {
   mockTxExecuteRaw: vi.fn(),
   mockTxFindUnique: vi.fn(),
   mockPayoutJobUpsert: vi.fn(),
+  mockSubmissionUpdateMany: vi.fn(),
 }));
 
 // Transaction context — used for the advisory-lock re-check and accepted-payment
@@ -41,12 +43,35 @@ const mockTx = {
   submission: {
     findUnique: mockTxFindUnique,
     update: mockSubmissionUpdate,
+    // F3: the move to `sent` is a conditional update, so a replayed persist
+    // callback can tell "I just made this transition" from "it was already made".
+    updateMany: mockSubmissionUpdateMany,
   },
   payoutJob: {
     upsert: mockPayoutJobUpsert,
   },
+  // #40: the credit lands in the same write as `sent`.
+  user: { update: mockUserUpdate },
   $executeRaw: mockTxExecuteRaw,
 };
+
+// The campaign refund on a finished payout has its own DB suite
+// (payout-retry-refund-db); here it would need a task lookup the mock lacks.
+// #38's envelope settlement runs against a real database in
+// payout-attempt-settlement-db.test.ts; here there is never an open attempt.
+vi.mock("@/lib/payout-attempts", () => ({
+  settleOpenAttempt: vi.fn(async () => ({ kind: "clear" })),
+  confirmAttempt: vi.fn(() => Promise.resolve({ count: 0 })),
+  submissionAttemptJournal: vi.fn(() => undefined),
+}));
+
+vi.mock("@/lib/payout-refund", () => ({ refundSubmissionDebit: vi.fn(async () => {}) }));
+
+// F2: every retry claimant refuses a submission whose campaign debit was
+// returned. The refund ledger itself is covered in payout-retry-refund-db.
+vi.mock("@/lib/campaign-balance", () => ({
+  hasRefundedSubmission: vi.fn(async () => false),
+}));
 
 vi.mock("@/lib/payout", () => ({
   payReward: mockPayReward,
@@ -72,6 +97,8 @@ beforeEach(() => {
   mockUserUpdate.mockResolvedValue({});
   mockTxExecuteRaw.mockResolvedValue(undefined);
   mockPayoutJobUpsert.mockResolvedValue({});
+  // One row matched: this caller won the `sent` transition and so credits.
+  mockSubmissionUpdateMany.mockResolvedValue({ count: 1 });
   mockPayReward.mockReset();
 });
 
@@ -182,6 +209,7 @@ describe("reprocessPayoutWithNonceSafety", () => {
   it("reprocesses failed submission successfully and credits user", async () => {
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-4",
+      userId: "user-4",
       walletAddress: G_B,
       payoutStatus: "failed",
       payoutAmountUnits: 500n,
@@ -198,11 +226,6 @@ describe("reprocessPayoutWithNonceSafety", () => {
 
     mockPayReward.mockResolvedValueOnce(TX_1);
 
-    mockUserFindUnique.mockResolvedValueOnce({
-      submissionCount: 5,
-      totalEarnedUnits: 1000n,
-    });
-
     await reprocessPayoutWithNonceSafety("sub-4");
 
     expect(mockTxExecuteRaw).toHaveBeenCalled();
@@ -212,9 +235,9 @@ describe("reprocessPayoutWithNonceSafety", () => {
       kind: "submission",
       id: "sub-4",
     });
-    expect(mockSubmissionUpdate).toHaveBeenCalledWith(
+    expect(mockSubmissionUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "sub-4" },
+        where: { id: "sub-4", payoutTxHash: null },
         data: expect.objectContaining({
           payoutStatus: "sent",
           payoutTxHash: TX_1,
@@ -238,17 +261,16 @@ describe("reprocessPayoutWithNonceSafety", () => {
         status: "done",
       }),
     });
-    expect(mockUserUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { walletAddress: G_B },
-        data: { submissionCount: 6, totalEarnedUnits: 1500n },
-      }),
-    );
+    expect(mockUserUpdate).toHaveBeenCalledWith({
+      where: { id: "user-4" },
+      data: { submissionCount: { increment: 1 }, totalEarnedUnits: { increment: 500n } },
+    });
   });
 
   it("updates user totals for pending submissions on success", async () => {
     mockFindUnique.mockResolvedValueOnce({
       id: "sub-5",
+      userId: "user-5",
       walletAddress: G_C,
       payoutStatus: "pending",
       payoutAmountUnits: 700n,
@@ -265,19 +287,12 @@ describe("reprocessPayoutWithNonceSafety", () => {
 
     mockPayReward.mockResolvedValueOnce(TX_2);
 
-    mockUserFindUnique.mockResolvedValueOnce({
-      submissionCount: 10,
-      totalEarnedUnits: 5000n,
-    });
-
     await reprocessPayoutWithNonceSafety("sub-5");
 
-    expect(mockUserUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { walletAddress: G_C },
-        data: { submissionCount: 11, totalEarnedUnits: 5700n },
-      }),
-    );
+    expect(mockUserUpdate).toHaveBeenCalledWith({
+      where: { id: "user-5" },
+      data: { submissionCount: { increment: 1 }, totalEarnedUnits: { increment: 700n } },
+    });
   });
 
   it("does not re-broadcast when a txHash is already persisted", async () => {

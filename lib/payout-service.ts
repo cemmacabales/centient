@@ -3,8 +3,11 @@ import { payReward, PayoutCapError } from "./payout";
 import { maybeSendCapAlert } from "./payout-cap";
 import { StellarPaymentError } from "./stellar/client";
 import { isValidStellarAddress } from "./stellar/signature";
-import { abandonAcceptedPayment, persistAcceptedPayment } from "./payout-broadcast";
-import { retryClaimIsLive } from "./payout-retry-claim";
+import { persistAcceptedPayment } from "./payout-broadcast";
+import { retryClaimIsLive, SUBMISSION_RETRY_BUDGET } from "./payout-retry-claim";
+import { refundSubmissionDebit } from "./payout-refund";
+import { confirmAttempt, settleOpenAttempt } from "./payout-attempts";
+import { hasRefundedSubmission } from "./campaign-balance";
 
 // `needs_reconciliation` marks a payment that settled on-chain but could not be
 // recorded. It is terminal for retry purposes: a human must reconcile it against
@@ -72,6 +75,18 @@ async function claimForRetry(
   // here prevents re-broadcast even if a prior error left the status as "failed".
   if (fresh.payoutTxHash) return null;
   if (retryClaimIsLive(fresh.lastRetriedAt)) return null;
+  // #37, F2: a payer that gave up on this payout returned its campaign debit.
+  // Paying it now would pay with no funding behind it, and a second give-up
+  // would refund it again. The admin retry route refuses a refunded row before
+  // it claims; this is the same rule where every claimant passes, so the retry
+  // cron cannot reach one either — including a row an admin retry refunded on
+  // its way to failing.
+  if (await hasRefundedSubmission(tx, submissionId)) {
+    console.warn(
+      `[payout-service] submission ${submissionId} was refunded — refusing to claim it for a retry`,
+    );
+    return null;
+  }
 
   // Taken before the lock is released, so the next claimant reads it and stands
   // down. The success and failure paths overwrite it, which is correct: each is
@@ -91,6 +106,26 @@ async function claimForRetry(
 }
 
 /**
+ * Take the retry claim on a submission for a broadcast that is not a retry: the
+ * payout worker's first attempt at a `SUBMISSION_PAYOUT` job (#37).
+ *
+ * The worker and the retry cron can both reach a `pending` submission with no
+ * hash, and each has its own lease: the job's heartbeat and this row's
+ * `lastRetriedAt`. Neither reads the other's, so without this a worker holding a
+ * job and a cron treating the same row as stuck would each broadcast it — and
+ * the co-signer, which reads "pending, no hash" for both, would sign both. The
+ * worker taking the same claim, under the same per-wallet lock, is what makes
+ * the second of them stand down. Returns true when this caller now holds it.
+ */
+export async function claimSubmissionForBroadcast(
+  submissionId: string,
+  walletAddress: string,
+): Promise<boolean> {
+  const fresh = await prisma.$transaction((tx) => claimForRetry(tx, submissionId, walletAddress));
+  return fresh !== null;
+}
+
+/**
  * Keep a claimed retry's lease fresh for as long as its payout is in flight.
  *
  * `updateMany` with `payoutTxHash: null` rather than `update` by id, so the
@@ -104,7 +139,7 @@ async function claimForRetry(
  * the lease lapses under a live broadcast anyway. It narrows the window; it does
  * not fence the payout.
  */
-function heartbeatRetryClaim(submissionId: string): NodeJS.Timeout {
+export function heartbeatRetryClaim(submissionId: string): NodeJS.Timeout {
   return setInterval(() => {
     prisma.submission
       .updateMany({
@@ -113,30 +148,6 @@ function heartbeatRetryClaim(submissionId: string): NodeJS.Timeout {
       })
       .catch(() => {});
   }, RETRY_CLAIM_HEARTBEAT_MS);
-}
-
-/**
- * Credit the user's running totals exactly once, on the first successful send.
- * Runs as a best-effort follow-up: a failure here can leave totals uncredited
- * but can never trigger a re-send (the submission is already "sent").
- */
-/** Credit a paid reward to the user's running totals. */
-async function creditUserTotals(walletAddress: string, amount: bigint): Promise<void> {
-  // claimForRetry already ensures payoutTxHash is null and status is pending/failed,
-  // so no first-send guard is needed here.
-  const user = await prisma.user.findUnique({
-    where: { walletAddress },
-    select: { submissionCount: true, totalEarnedUnits: true },
-  });
-  if (!user) return;
-
-  await prisma.user.update({
-    where: { walletAddress },
-    data: {
-      submissionCount: user.submissionCount + 1,
-      totalEarnedUnits: user.totalEarnedUnits + amount,
-    },
-  });
 }
 
 /**
@@ -196,8 +207,23 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
     // txHash is now a Stellar hash (plain string) — the full payout-service port to
     // `payUsdc`/`G…` destinations is ST-3d (#298); this widens the type to keep the
     // build green in the meantime.
+    //
+    // #38: first settle any envelope an earlier payer left open — a process that
+    // died after Horizon accepted it, or a submit whose outcome never came back.
+    // If it applied, record it and send nothing. If it may still apply, send
+    // nothing now and spend no retry; the row stays claimable for a later pass.
+    const settled = await settleOpenAttempt(submissionId);
+    if (settled.kind === "wait") {
+      throw new StellarPaymentError(
+        `[payout-service] submission ${submissionId} has an unsettled payout envelope (${settled.reason}); not before ${settled.until.toISOString()}`,
+        "attempt_unsettled",
+        true,
+      );
+    }
     let txHash: string;
-    try {
+    if (settled.kind === "paid") {
+      txHash = settled.hash;
+    } else try {
       txHash = await payReward(walletAddress, amount, {
         kind: "submission",
         id: submissionId,
@@ -218,20 +244,33 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
       // trustline; `op_no_destination` — recipient unfunded) can never succeed on
       // a blind retry. Surface the reason explicitly; the submission is marked
       // failed below and the cron retry job (ST-3b) must not auto-retry it.
-      if (err instanceof StellarPaymentError && !err.retryable) {
+      const nonRetryable = err instanceof StellarPaymentError && !err.retryable;
+      if (nonRetryable) {
         console.error(
           `[payout-service] submission ${submissionId} permanently failed (${err.code}): ${err.message}`,
         );
       }
 
+      // A non-retryable error ends the payout now; anything else ends it once the
+      // cron's budget is spent. Either way the row leaves the retry path here.
+      const retryCount = nonRetryable ? SUBMISSION_RETRY_BUDGET : fresh.retryCount + 1;
       await prisma.submission.update({
         where: { id: submissionId },
         data: {
           payoutStatus: "failed",
-          retryCount: fresh.retryCount + 1,
+          retryCount,
           lastRetriedAt: new Date(),
         },
       });
+
+      // #37: a campaign-backed row can reach this path after its worker job ends
+      // (a cap deferral, say). When the payout is over, return the campaign debit
+      // the way the worker does — except for `ambiguous_submit`, which may have
+      // settled and needs a human before anyone is refunded.
+      const ambiguous = err instanceof StellarPaymentError && err.code === "ambiguous_submit";
+      if (retryCount >= SUBMISSION_RETRY_BUDGET && !ambiguous) {
+        await refundSubmissionDebit(submissionId, amount, "refund: payout abandoned by the retry path");
+      }
 
       throw err;
     }
@@ -252,10 +291,44 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
         },
       });
 
+    // `persistAcceptedPayment` retries this whole callback on any error, and a
+    // commit whose response was lost is an error it cannot tell from one that
+    // rolled back (F3). So the callback has to be safe to run twice: the move to
+    // `sent` under this hash is the one-time transition, and the credit is
+    // gated on winning it. Rewriting the same tuple is harmless; adding to
+    // lifetime totals a second time is not.
     const persisted = await persistAcceptedPayment(accepted, () => prisma.$transaction(async (tx) => {
-        await tx.submission.update({
-          where: { id: submissionId },
+        const { count } = await tx.submission.updateMany({
+          where: { id: submissionId, payoutTxHash: null },
           data: { payoutStatus: "sent", payoutTxHash: txHash, lastRetriedAt: broadcastAt },
+        });
+        if (count === 0) {
+          // Someone already recorded a hash here. If it is this one, an earlier
+          // run of this callback committed and its credit stands — finish
+          // without repeating it. Any other hash is not ours to settle.
+          const row = await tx.submission.findUnique({
+            where: { id: submissionId },
+            select: { payoutTxHash: true },
+          });
+          if (row?.payoutTxHash !== txHash) {
+            throw new Error(
+              `[payout-service] submission ${submissionId} carries hash ${row?.payoutTxHash ?? "none"}, not the broadcast ${txHash}`,
+            );
+          }
+          console.warn(
+            `[payout-service] submission ${submissionId} was already recorded as ${txHash} — not crediting it twice`,
+          );
+          return;
+        }
+        // In the same write as the hash, so the attempt never reads settled
+        // while the submission still reads payable.
+        await confirmAttempt(txHash, tx);
+        // Credited in the same write too, so `sent` always means credited: the
+        // reconciler undoes this credit when a `sent` payout turns out to have
+        // failed on-chain (#40), and must never undo one that never landed.
+        await tx.user.update({
+          where: { id: submission.userId },
+          data: { submissionCount: { increment: 1 }, totalEarnedUnits: { increment: amount } },
         });
         await tx.payoutJob.upsert({
           where: { submissionId },
@@ -284,14 +357,6 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
     // it inside `payReward` would sum a total that excludes this payout and could
     // skip the threshold crossing it just caused.
     maybeSendCapAlert().catch(() => {});
-
-    try {
-      await creditUserTotals(walletAddress, amount);
-    } catch {
-      // The payment and its hash are recorded; only the totals failed. The stored
-      // hash already blocks re-broadcast, so this just needs a human.
-      await abandonAcceptedPayment(accepted, quarantine);
-    }
   } finally {
     clearInterval(heartbeat);
   }

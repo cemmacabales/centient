@@ -85,10 +85,13 @@ between linking and payout.
   Check the payout account's recent transactions for the destination and amount. If
   it settled, record the hash and mark the job done rather than reissuing; only
   re-run once you have confirmed nothing landed.
-- Once a hash exists, the **reconciler** owns the outcome: it polls Horizon and moves
-  `sent → confirmed` (or `failed`). A `not_found` (404) is treated as *still pending*
-  (Horizon read-lag before ledger inclusion), so the payout stays `sent` and is not
-  re-submitted.
+- Once a hash exists, the **reconciler** owns the outcome (#40; see
+  [payout-reconciliation.md](payout-reconciliation.md)). It moves `sent →
+  confirmed` only when the envelope Horizon returns paid what the submission owed,
+  holds a mismatch as `needs_reconciliation`, and hands an included-and-failed
+  envelope back to the retry path. A `not_found` (404) is *still pending*
+  (Horizon read-lag before ledger inclusion), and a Horizon read error changes
+  nothing, so the payout stays `sent` and is never re-submitted on either.
 - The worker heartbeats the in-flight job well within the stale-claim window so a
   second worker can't reclaim and double-pay a slow-but-live payout.
 

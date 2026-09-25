@@ -6,6 +6,7 @@ import { resetIdentity, track } from "@/lib/analytics";
 import { truncateAddress } from "@/lib/wallet";
 import { unitsToUsdcDisplay } from "@/lib/stellar/config";
 import { isValidStellarAddress } from "@/lib/stellar/signature";
+import { disconnect as disconnectWallet } from "@/lib/stellar/wallet";
 
 // Withdrawal statuses that are still in flight — while any withdrawal is in one of
 // these, the account sheet polls so the chip advances live. Terminal states
@@ -72,9 +73,9 @@ interface Withdrawal {
   error: string | null;
 }
 
+/** GET /api/me/withdraw: the legacy balance left from before instant payout (#39). */
 interface WithdrawalData {
   pendingBalanceUnits: string;
-  thresholdUnits: string;
   /** #30: the account's bound wallet — the only address a withdrawal is paid to. */
   destinationAddress: string | null;
   canWithdraw: boolean;
@@ -94,6 +95,104 @@ function PayoutChip({ status }: { status: string }) {
     <span className={`rounded-full px-2 py-0.5 font-label text-[10px] font-bold uppercase tracking-wider ${cls}`}>
       {status}
     </span>
+  );
+}
+
+interface LegacyBalanceCardProps {
+  data: WithdrawalData;
+  rewardSymbol: string;
+  confirming: boolean;
+  withdrawing: boolean;
+  onWithdraw: () => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+/**
+ * #39: the one withdrawal left. Answers are paid to the wallet as they are
+ * accepted, so nothing accrues; this card exists only for a balance earned
+ * before that, and renders nothing once it has been withdrawn. No minimum
+ * applies — most legacy balances are below the old one (ADR-0007).
+ */
+export function LegacyBalanceCard({
+  data,
+  rewardSymbol,
+  confirming,
+  withdrawing,
+  onWithdraw,
+  onConfirm,
+  onCancel,
+}: LegacyBalanceCardProps) {
+  let owed: bigint;
+  try {
+    owed = BigInt(data.pendingBalanceUnits);
+  } catch {
+    owed = 0n;
+  }
+  if (owed <= 0n) return null;
+
+  const destination = data.destinationAddress;
+  const amount = formatTokenBalance(data.pendingBalanceUnits);
+
+  return (
+    <div className="mb-6 flex flex-col items-center gap-1 rounded-2xl bg-surface-container-low p-4">
+      <span className="text-xs font-label font-bold uppercase tracking-widest text-outline">
+        Earlier balance
+      </span>
+      <div className="flex items-baseline gap-1">
+        <span className="font-headline text-2xl font-extrabold tracking-tighter text-on-surface">
+          {amount}
+        </span>
+        <span className="font-headline text-base font-bold text-secondary">{rewardSymbol}</span>
+      </div>
+      <p className="text-center font-body text-[11px] text-on-surface-variant">
+        Answers now pay straight to your wallet. This is left over from before — withdraw it any time.
+      </p>
+      <p className="mt-1 font-body text-[11px] text-on-surface-variant">
+        {destination
+          ? `Paid to your wallet ${truncateAddress(destination)}`
+          : "Connect your Stellar wallet to withdraw."}
+      </p>
+      {confirming && destination ? (
+        <div className="mt-3 w-full rounded-xl bg-surface-container-lowest p-3 text-center">
+          <p className="font-body text-xs text-on-surface">
+            Send{" "}
+            <strong>
+              {amount} {rewardSymbol}
+            </strong>{" "}
+            to your wallet
+          </p>
+          <p className="mt-1 break-all font-mono text-[11px] text-on-surface-variant">{destination}</p>
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={withdrawing}
+              className="flex-1 rounded-xl bg-surface-container-high px-4 py-2 font-label text-sm font-semibold text-on-surface-variant transition-colors hover:bg-surface-container-highest disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onConfirm}
+              disabled={withdrawing}
+              className="flex-1 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 disabled:opacity-50"
+            >
+              {withdrawing ? "Sending..." : "Confirm & send"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={onWithdraw}
+          disabled={!data.canWithdraw || withdrawing || !destination}
+          className="mt-3 rounded-xl bg-primary px-6 py-2 font-label text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-50"
+        >
+          Withdraw
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -120,7 +219,6 @@ export default function AccountSheet({
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState(false);
   const [withdrawalData, setWithdrawalData] = useState<WithdrawalData | null>(null);
-  const [loadingWithdrawal, setLoadingWithdrawal] = useState(false);
   const [withdrawing, setWithdrawing] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
@@ -146,12 +244,10 @@ export default function AccountSheet({
 
   useEffect(() => {
     if (!open) return;
-    setLoadingWithdrawal(true);
     fetch("/api/me/withdraw")
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((data) => setWithdrawalData(data))
-      .catch(() => setWithdrawalData(null))
-      .finally(() => setLoadingWithdrawal(false));
+      .catch(() => setWithdrawalData(null));
   }, [open]);
 
   // Live-poll while a withdrawal is still moving through the payout pipeline so the
@@ -198,6 +294,12 @@ export default function AccountSheet({
       // be dropped here for the same reason — the next person on this browser
       // starts anonymous.
       resetIdentity();
+      // Same reasoning, for the wallet. A WalletConnect pairing is stored by
+      // the relay SDK and outlives the session cookie, so without this the next
+      // person to tap "Connect Freighter" on this phone is handed the previous
+      // contributor's still-live session and signed straight back in as them.
+      // Best-effort: a logout must not fail because a relay did.
+      await disconnectWallet().catch(() => {});
       onLoggedOut();
     } catch {
       showToast("Log out failed. Please try again.", "error");
@@ -321,70 +423,17 @@ export default function AccountSheet({
           </span>
         </div>
 
-        <div className="mb-6 flex flex-col items-center gap-1">
-          <span className="text-xs font-label font-bold uppercase tracking-widest text-outline">
-            Pending balance
-          </span>
-          <div className="flex items-baseline gap-1">
-            <span className="font-headline text-4xl font-extrabold tracking-tighter text-on-surface">
-              {loadingWithdrawal ? "..." : withdrawalData ? formatTokenBalance(withdrawalData.pendingBalanceUnits) : "—"}
-            </span>
-            <span className="font-headline text-xl font-bold text-secondary">
-              {rewardSymbol}
-            </span>
-          </div>
-          <span className="font-body text-xs text-on-surface-variant">
-            Min withdrawal: {loadingWithdrawal ? "..." : withdrawalData ? formatTokenBalance(withdrawalData.thresholdUnits) : "—"} {rewardSymbol}
-          </span>
-          {withdrawalData && (
-            <p className="mt-2 font-body text-[11px] text-on-surface-variant">
-              {destination
-                ? `Paid to your wallet ${truncateAddress(destination)}`
-                : "Connect your Stellar wallet to withdraw."}
-            </p>
-          )}
-          {confirming && destination ? (
-            <div className="mt-3 w-full rounded-xl bg-surface-container-low p-3 text-center">
-              <p className="font-body text-xs text-on-surface">
-                Send{" "}
-                <strong>
-                  {withdrawalData ? formatTokenBalance(withdrawalData.pendingBalanceUnits) : "—"} {rewardSymbol}
-                </strong>{" "}
-                to your wallet
-              </p>
-              <p className="mt-1 break-all font-mono text-[11px] text-on-surface-variant">
-                {destination}
-              </p>
-              <div className="mt-3 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setConfirming(false)}
-                  disabled={withdrawing}
-                  className="flex-1 rounded-xl bg-surface-container-high px-4 py-2 font-label text-sm font-semibold text-on-surface-variant transition-colors hover:bg-surface-container-highest disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={submitWithdraw}
-                  disabled={withdrawing}
-                  className="flex-1 rounded-xl bg-primary px-4 py-2 font-label text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 disabled:opacity-50"
-                >
-                  {withdrawing ? "Sending..." : "Confirm & send"}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={handleWithdraw}
-              disabled={loadingWithdrawal || !withdrawalData?.canWithdraw || withdrawing || !destination}
-              className="mt-3 rounded-xl bg-primary px-6 py-2 font-label text-sm font-semibold text-on-primary transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-50"
-            >
-              Withdraw
-            </button>
-          )}
-        </div>
+        {withdrawalData && (
+          <LegacyBalanceCard
+            data={withdrawalData}
+            rewardSymbol={rewardSymbol}
+            confirming={confirming}
+            withdrawing={withdrawing}
+            onWithdraw={handleWithdraw}
+            onConfirm={submitWithdraw}
+            onCancel={() => setConfirming(false)}
+          />
+        )}
 
         {withdrawalData && withdrawalData.withdrawals.length > 0 && (
           <div className="mb-6">

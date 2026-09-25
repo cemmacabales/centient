@@ -1,19 +1,19 @@
 # Open risks and follow-ups
 
-What is not finished, what is accepted as a known limit, and what must happen before mainnet. Each item is a way the program could miss a target or the rail could fail. **They are listed here so they can be managed, not as caveats.**
+What is not finished and what is accepted as a known limit. Each item is a way the program could miss a target or the rail could fail. **They are listed here so they can be managed, not as caveats.**
 
-*Last reviewed 18 September 2026.*
+*Last reviewed 18 September 2026. R-3, R-4, R-6 and the mobile limit were updated on 24 September, after the D3 gate.*
 
 ## Blocking a future deliverable
 
 | # | Item | Blocks | Needed by | Action |
 | --- | --- | --- | --- | --- |
-| R-1 | **The co-signer shares a Railway account with the app** (ADR-0001). `same-workspace` refuses to sign on mainnet | #50, #51 (D4 mainnet) | Tue 29 Sep | Provision a separate account for the co-signer (control plane, members, CI, database credentials), then set its isolation level. No service code changes |
-| R-2 | **Mainnet approval** naming the exact destination and amount | #51 | Tue 29 Sep, end of day | Get the approval in writing on #51. Without it, the release week cannot close |
-| R-3 | **25 unique wallets.** 9 have been paid so far. Real contributors must be recruited | #49 (D4 volume proof) | Recruit in Week 3 | Build a tester cohort with the tester guide. Decide D-4 (mobile), because every desktop contributor needs the Freighter extension |
-| R-4 | **Existing custodial balances.** Email accounts held balances on 15 September | #39 (D3) | Mon 21 Sep | Decide and test how that value leaves the system before withdrawal is retired |
-| R-5 | **Mainnet key custody.** The first testnet account was lost because its secrets were not kept | #51 | Before `set-options` | Generate mainnet keys straight into a secrets store. Record all three first. Apply the F-01 threshold check to every service |
-| R-6 | **Phones can't sign in.** SOW §3.1 promises "anyone with a phone and a Stellar wallet". Freighter-only sign-in needs the desktop extension, and WalletConnect v2 (Freighter Mobile) is not built | §3.1 key outcome, and #35's "mobile-first" | Decide D-4 before Mon 21 Sep | Either scope WalletConnect v2 into Week 3, or record the gap against §3.1 explicitly in the D3 evidence |
+| R-1 | **The co-signer shares a Railway account with the app** (ADR-0001) | — | — | **Closed by D-7.** The sprint is testnet only, so account isolation no longer gates a deliverable. `same-workspace` still refuses to sign on mainnet |
+| R-2 | ~~Mainnet approval~~ | — | — | **Closed by D-7:** testnet only, no mainnet payout |
+| R-3 | **25 unique wallets.** Not yet counted as onboarded wallets. The payout account has paid 35 distinct addresses, but that total includes proof accounts, withdrawal destinations and QA testers. Real contributors must be recruited | #49 (D4 volume proof) | Week 4 evidence run | Build a tester cohort with the tester guide. Phones can now sign in (D-4), so a contributor no longer needs the desktop extension |
+| R-4 | **Existing custodial balances.** Email accounts held balances on 15 September | #39 (D3) | Mon 21 Sep | **Decided 21 Sep ([ADR-0007](https://github.com/artisam-centient/centient/blob/develop/docs/adr/0007-retire-accumulate-then-withdraw.md)).** Legacy balances stay withdrawable, with no minimum, until they reach zero. Nothing new accrues. **Closed:** #39 shipped in PR #131 and passed QA in #41 |
+| R-5 | ~~Mainnet key custody~~ | — | — | **Closed by D-7:** testnet only. Testnet keys stay in Railway service variables |
+| R-6 | **Phones can't sign in.** SOW §3.1 promises "anyone with a phone and a Stellar wallet" | §3.1 key outcome, and #35's "mobile-first" | — | **Resolved on iOS.** D-4 (22 Sep) scoped Freighter Mobile over WalletConnect v2 into Week 3, and it passed QA in #41. Android is untested and accepted as a residual (#137) |
 
 ## Process risks
 
@@ -28,9 +28,9 @@ What is not finished, what is accepted as a known limit, and what must happen be
 
 | Item | Accepted because | Revisit when |
 | --- | --- | --- |
-| **Simulated co-signer isolation** (server, not account) | Testnet, zero value at risk | Mainnet (R-1) |
+| **Simulated co-signer isolation** (server, not account) | Testnet only (D-7), zero value at risk | — |
 | **Seeded QA credentials** (ADR-0002) | Internal testnet QA only | Before the public release (#48). See ADR-0002's exit criteria |
-| **Freighter only; no mobile wallet** (ADR-0003, D-4) | One wallet meets every acceptance item | D-4, before #35 |
+| **Freighter only; phone sign-in tested on iOS only** (ADR-0003 and its amendment, D-4) | One wallet meets every acceptance item; the phone gate was ruled iOS-only | If an Android contributor reports a problem |
 | **No wallet rotation** (D-3) | Out of D2 | After the sprint |
 | **Logout does not revoke the 7-day session token** | Pre-existing; not in D2 scope | When instant payouts make a session more valuable (Week 3) |
 | **Most sponsored reserves cannot be reclaimed** while the owner holds no XLM | This is how the chain behaves, and reclaiming would break payouts | Ongoing. The liability is tracked and capped per contributor |

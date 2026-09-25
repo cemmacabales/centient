@@ -34,14 +34,14 @@ export const PAYMENTS_LANE_TEST_GLOBS = [
   // The HTTP and cron edges that start a payout or read its health.
   "app/api/me/withdraw/__tests__/*.test.ts",
   "app/api/me/wallet/sponsor/__tests__/*.test.ts",
-  "app/api/me/balance/__tests__/*.test.ts",
   "app/api/cron/payout-retry/__tests__/*.test.ts",
-  "app/api/cron/payout-reconcile/__tests__/*.test.ts",
   "app/api/cron/reserve-refill/__tests__/*.test.ts",
   "app/api/cron/wallet-health/__tests__/*.test.ts",
   "app/api/health/wallet/__tests__/*.test.ts",
   "app/api/admin/flagged-withdrawals/**/__tests__/*.test.ts",
   "app/api/admin/submissions/**/__tests__/*.test.ts",
+  // #36: no rejected submission creates payout intent. #37 pays from this path.
+  "app/api/submit/__tests__/payout-intent-db.test.ts",
 ] as const;
 
 /**

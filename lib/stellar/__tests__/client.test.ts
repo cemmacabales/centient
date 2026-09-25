@@ -20,6 +20,7 @@ vi.mock("../config", async (importOriginal) => {
 import { server } from "../config";
 import {
   getTxStatus,
+  lookupTx,
   StellarPaymentError,
   buildSponsoredTrustlineTx,
   prepareSponsoredTrustline,
@@ -124,6 +125,40 @@ describe("getTxStatus", () => {
       }) as never,
     );
     await expect(getTxStatus("h")).rejects.toMatchObject({ response: { status: 500 } });
+  });
+});
+
+describe("lookupTx", () => {
+  it.each([
+    [true, "confirmed"],
+    [false, "failed"],
+  ] as const)("returns an included transaction's envelope with its outcome (successful=%s)", async (successful, status) => {
+    mockedServer.mockReturnValue(
+      makeServer({ call: async () => ({ successful, envelope_xdr: "AAAA-envelope" }) }) as never,
+    );
+    expect(await lookupTx("h")).toEqual({ status, envelopeXdr: "AAAA-envelope" });
+  });
+
+  it("maps a 404 to not_found, with no envelope", async () => {
+    mockedServer.mockReturnValue(
+      makeServer({
+        call: async () => {
+          throw { response: { status: 404 } };
+        },
+      }) as never,
+    );
+    expect(await lookupTx("h")).toEqual({ status: "not_found" });
+  });
+
+  it("rethrows a read that is not a 404, including a 400 on a malformed hash", async () => {
+    mockedServer.mockReturnValue(
+      makeServer({
+        call: async () => {
+          throw { response: { status: 400 } };
+        },
+      }) as never,
+    );
+    await expect(lookupTx("qa-fixture-0")).rejects.toMatchObject({ response: { status: 400 } });
   });
 });
 

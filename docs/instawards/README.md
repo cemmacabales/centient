@@ -8,9 +8,9 @@ Weekly milestone reports for the Stellar Development Foundation Instawards progr
 | **Builder** | Carl Macabales ([@cemmacabales](https://github.com/cemmacabales)) |
 | **Chapter** | Philippines. Chapter Lead: Nelson Lumbres |
 | **Sprint** | 7 September – 6 October 2026 (30 days). Four weekly deliverables, with delivery completing Saturday 3 October |
-| **Live app** | [centient.work](https://centient.work), served from the `staging` branch on Stellar **testnet** |
-| **Source** | [github.com/cemmacabales/centient](https://github.com/cemmacabales/centient), the public repository named in SOW §3.7. It mirrors the development repository at identical commit SHAs |
-| **Network** | Testnet. One minimal mainnet smoke payout is planned for Week 4, and only after a separate, explicit approval that names the destination and amount |
+| **Live app** | [beta.centient.work](https://beta.centient.work), served from the `staging` branch on Stellar **testnet** |
+| **Source** | [github.com/artisam-centient/centient](https://github.com/artisam-centient/centient), the public repository. It mirrors the development repository at identical commit SHAs |
+| **Network** | **Testnet only.** Nothing in this sprint touches mainnet (D-7) |
 | **Budget** | $5,000, all development labor (SOW §4.2) |
 
 ## Evidence checklist (SOW §6.2)
@@ -20,9 +20,9 @@ Where each deliverable's §6.1 evidence stands today. Each row links to its deli
 | Deliverable | Evidence | Status | Comments |
 | --- | --- | --- | --- |
 | [D1](deliverables/d1.md) | GitHub repo + testnet tx hash | ✅ **Present** | A two-signature, fee-bumped USDC payout on stellar.expert; payout account at threshold 2/2/2; payments lane green in CI. QA passed 28/28 |
-| [D2](deliverables/d2.md) | GitHub repo + screen recording | 🟡 **Partial** | Code, testnet sponsorship and identity tests are all present. The connect → signed challenge → session recording is still to come from QA gate #31 |
-| [D3](deliverables/d3.md) | Public URL + demo video + tx hashes | ⬜ Week 3 | The public URL is already live. Instant per-task payouts, the end-to-end CI lane and the demo come in Weeks 3–4 |
-| [D4](deliverables/d4.md) | Reconciler output + mainnet tx hash | ⬜ Week 4 | Mainnet requires the co-signer to move to a separate account first. See [Open risks](reference/risks.md) |
+| [D2](deliverables/d2.md) | GitHub repo + screen recording | ✅ **Present** | Code, testnet sponsorship and identity tests are all present, and QA passed at `8f660cc`. The connect → signed challenge → session recording and proof are in the [D2 evidence folder](https://drive.google.com/drive/folders/1JS5hYQ-G4g-n92Hzf9RTNRBKWsUuvbFd?usp=drive_link) |
+| [D3](deliverables/d3.md) | Public URL + demo video + tx hashes | 🟡 **Partial** | The public URL is live, and instant per-answer payouts are on stellar.expert. QA passed at `1fde77d`. The demo video comes in Week 4 |
+| [D4](deliverables/d4.md) | Reconciler output + mainnet tx hash | ⬜ Week 4 | The reconciler output comes from the Week 4 volume run. The mainnet transaction is out of scope: the sprint is testnet only (D-7) |
 
 ## What Centient is
 
@@ -53,10 +53,10 @@ The labeling product already ran before the sprint. The sprint changes **how mon
 
 | | Deliverable | Week | Status |
 | --- | --- | --- | --- |
-| [D1](deliverables/d1.md) | **Instant USDC reward rail.** Multisig payout account, independent co-signer, daily cap at both signers, hot/cold reserve | 1 | ✅ Complete. QA passed 28/28 at [`263be4c`](https://github.com/cemmacabales/centient/commit/263be4cd5ab06103d965044c6a8bd3c40678f308) |
-| [D2](deliverables/d2.md) | **Wallet-native onboarding.** Freighter sign-in by signed challenge, plus sponsored account and trustline for zero-XLM wallets | 2 | 🧪 7/8. All implementation merged; the QA gate is running |
-| [D3](deliverables/d3.md) | **End-to-end contributor loop.** Connect, rank, validate, co-sign, pay, reconcile, with no custodial balance | 3 | Not started |
-| [D4](deliverables/d4.md) | **Reconciliation and public release.** Failure tests, 100 payouts across 25 wallets, demo, mainnet smoke payout | 4 | Not started |
+| [D1](deliverables/d1.md) | **Instant USDC reward rail.** Multisig payout account, independent co-signer, daily cap at both signers, hot/cold reserve | 1 | ✅ Complete. QA passed 28/28 at [`263be4c`](https://github.com/artisam-centient/centient/commit/263be4cd5ab06103d965044c6a8bd3c40678f308) |
+| [D2](deliverables/d2.md) | **Wallet-native onboarding.** Freighter sign-in by signed challenge, plus sponsored account and trustline for zero-XLM wallets | 2 | ✅ Complete. QA passed at [`8f660cc`](https://github.com/artisam-centient/centient/commit/8f660cc632f1c868a41618434a1c169dc0edabcc), 38 of 40 executed, 2 accepted as residual |
+| [D3](deliverables/d3.md) | **End-to-end contributor loop.** Connect, rank, validate, co-sign, pay, reconcile, with no custodial balance | 3 | ✅ Complete. QA passed at [`1fde77d`](https://github.com/artisam-centient/centient/commit/1fde77d539ca040bb12c07df0c82dad5c8cf3a58) |
+| [D4](deliverables/d4.md) | **Reconciliation and public release.** Failure tests, 100 payouts across 25 wallets, demo. Testnet only | 4 | Not started |
 
 ## How to read this book
 
@@ -66,7 +66,7 @@ The labeling product already ran before the sprint. The sprint changes **how mon
 
 **To verify something yourself,** open the linked page. Commit links go to the public mirror on GitHub, and transaction and account links go to stellar.expert. Neither needs an account. The [evidence index](reference/evidence.md) lists every account and transaction from the sprint in one place.
 
-**For the parts that are not finished,** see [Open risks and follow-ups](reference/risks.md). It lists what is still unresolved, what was accepted as a known limit, and what must happen before mainnet.
+**For the parts that are not finished,** see [Open risks and follow-ups](reference/risks.md). It lists what is still unresolved and what was accepted as a known limit.
 
 {% hint style="info" %}
 **About issue and PR numbers.** Numbers such as #8 or PR #75 appear as plain text throughout. They refer to the private development repository (`webnxt-2030/Centient`) and let the builder trace any line back to its ticket. Everything a reviewer needs is public: commits on the mirror, the live app, and on-chain transactions.

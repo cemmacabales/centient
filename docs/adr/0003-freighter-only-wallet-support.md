@@ -1,6 +1,6 @@
 # ADR-0003: Support Freighter only; descope Albedo from Deliverable 2
 
-- **Status:** Accepted — 2026-09-14
+- **Status:** Accepted — 2026-09-14, **amended 2026-09-22** (see *Amendment: Freighter Mobile over WalletConnect*)
 - **Scope:** Deliverable 2 (wallet-native contributor onboarding) and everything built on it in Deliverables 3–4.
 - **Relates to:** [#21](https://github.com/webnxt-2030/Centient/issues/21) (Epic 2), [#24](https://github.com/webnxt-2030/Centient/issues/24) (wallet signing spike), [#26](https://github.com/webnxt-2030/Centient/issues/26) (wallet-connect session), [#28](https://github.com/webnxt-2030/Centient/issues/28) (sponsored trustline + fee bump), [#31](https://github.com/webnxt-2030/Centient/issues/31) (Epic 2 QA), SOW §3.1, §4.1, §5.1, §6.
 
@@ -94,3 +94,42 @@ actually closes the mobile gap. Rejected for Week 2 because it is new
 integration work with its own session model, and nothing in the SOW's
 acceptance criteria requires it. It is the natural follow-up if mobile becomes
 a requirement.
+
+## Amendment: Freighter Mobile over WalletConnect (2026-09-22)
+
+The mobile gap this record accepted is closed. The owner ruling on D-4 (see below) makes
+the mobile path Deliverable 3 scope.
+
+**What shipped.** [PR #134](https://github.com/webnxt-2030/Centient/pull/134) added
+Freighter Mobile over WalletConnect v2 (`lib/stellar/wallet-connect.ts`,
+`components/FreighterPairing.tsx`). `lib/stellar/wallet.ts` now covers two transports: the
+extension wherever it answers, otherwise WalletConnect when
+`NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` is set. [PR #135](https://github.com/webnxt-2030/Centient/pull/135)
+added the WalletConnect relay, registry and pulse to `connect-src`. Both are live on `web`
+at staging `a4c8989`.
+
+**Still Freighter only.** This adds a second *transport* for the same wallet, not a second
+wallet. The decision above, and its Albedo reopen criteria, are unchanged. The second
+reopen criterion ("mobile onboarding is required before Freighter WalletConnect support is
+built") can no longer trigger.
+
+**D-4 ruling.** The 2026-09-15 D-4 decision was due "before #35" and lapsed when #35 closed
+on 2026-09-21 without it. It is decided now: **mobile through Freighter WalletConnect is in
+scope for Deliverable 3, and is verified in the Epic 3 QA gate (#41)** against the acceptance
+criteria in #137.
+
+**Consequences.**
+
+- **Desktop users without the extension no longer see "install the Freighter browser
+  extension".** They get a "Scan with Freighter" QR modal instead. This is intended: a
+  desktop user can pair their phone.
+- **QA runs on production.** `web` builds the `staging` branch to centient.work, and there is
+  no separate staging origin. This is acceptable because the deployment is testnet-only.
+- **Network must match.** Freighter Mobile refuses a request whose CAIP chain differs from
+  the wallet's network. The browser reads `NEXT_PUBLIC_STELLAR_NETWORK`, falling back to
+  `STELLAR_NETWORK` and then `testnet`. Set the public variable explicitly before any mainnet
+  build.
+- **Known gap:** `connect()` has no timeout, and the pairing dialog has no cancel. A pairing
+  the user abandons leaves the dialog open until the page is reloaded. Tracked in #138.
+- **Rollback** is unsetting the project id and rebuilding `web`. There is no revert PR, no
+  migration and no persisted state.

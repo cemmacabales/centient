@@ -5,6 +5,7 @@ import { getTxStatus, StellarPaymentError } from "./stellar/client";
 import { resolvePayoutCoSigner } from "./stellar/payout-cosigner";
 import type { PayoutReference } from "./stellar/payout-envelope";
 import { submitMultisigPayout } from "./stellar/payout-submitter";
+import { submissionAttemptJournal } from "./payout-attempts";
 import { checkPayoutCap, maybeSendCapAlert, PayoutCapError } from "./payout-cap";
 
 export { PayoutCapError };
@@ -66,7 +67,12 @@ export async function payReward(
   try {
     ({ hash } = await submitMultisigPayout(
       { destination: to, amountUnits: amount, reference },
-      { coSigner },
+      {
+        coSigner,
+        // #38: every submission payout records its envelope before submit, so no
+        // caller can forget to. Withdrawals are retired by #39 and not journalled.
+        ...(reference.kind === "submission" ? { attempts: submissionAttemptJournal(reference.id) } : {}),
+      },
     ));
   } catch (err) {
     capturePayoutTransaction({

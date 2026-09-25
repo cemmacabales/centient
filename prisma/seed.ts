@@ -1089,24 +1089,24 @@ async function main() {
     console.log("Centient customer already exists — leaving untouched");
   }
 
-  // Demo labeler — a ready-to-withdraw account for local demos/QA. Logs in via
-  // email/password at /api/auth/login (isVerified required). The balance is set
-  // comfortably above MIN_WITHDRAWAL_UNITS (default 10_000_000 = 1 USDC at 7
-  // decimals) and the eligibility stats clear the anti-fraud gates, so the
-  // Withdraw button is enabled immediately. Re-seeding resets the balance so the
-  // account is withdrawable again after a demo withdrawal spends it down.
+  // Demo labeler — an established account for local demos/QA. Logs in via
+  // email/password at /api/auth/login (isVerified required); the eligibility
+  // stats clear the anti-fraud gates.
+  //
+  // #39 (ADR-0007): no balance is seeded. Answers are paid on-chain as they are
+  // accepted, and a seeded "ready to withdraw" balance would recreate, on every
+  // deploy, the custodial liability the retirement removed. Earnings and any
+  // balance an existing demo account still holds are left as they are on
+  // re-seed: a leftover balance is a legacy one, withdrawn like any other.
   const demoEmail = "demo@centient.work";
   const demoPassword = process.env.DEMO_LABELER_PASSWORD ?? "Demo!123";
   const demoPasswordHash = await bcrypt.hash(demoPassword, 12);
-  const demoBalanceUnits = 50_000_000n; // 5 USDC (7 decimals)
   // Backdate creation so WITHDRAWAL_MIN_ACCOUNT_AGE_HOURS (if set) is satisfied.
   const demoCreatedAt = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const demoStats = {
     isVerified: true,
     verifiedAt: demoCreatedAt,
     onboardingCompleted: true,
-    totalEarnedUnits: demoBalanceUnits,
-    pendingBalanceUnits: demoBalanceUnits,
     submissionCount: 120,
     goldCorrect: 45,
     goldAttempted: 50,
@@ -1124,10 +1124,7 @@ async function main() {
       ...demoStats,
     },
   });
-  console.log(
-    `Seeded demo labeler '${demoEmail}' (password '${demoPassword}') with ` +
-      `${demoBalanceUnits} units (5 USDC) ready to withdraw [id=${demoUser.id}]`,
-  );
+  console.log(`Seeded demo labeler '${demoEmail}' (password '${demoPassword}') [id=${demoUser.id}]`);
 }
 
 main()

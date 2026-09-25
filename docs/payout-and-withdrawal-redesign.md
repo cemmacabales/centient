@@ -1,13 +1,19 @@
 # Payout model — current state & no-wallet-until-withdrawal redesign
 
-Status: **Implemented & cut over (Phase 5, #268).** The accrue-then-withdraw model
-is live; the per-question on-chain payout path is **retired** for new earnings.
-Sections 1–5 below are kept as the original design record; **§6 documents the live
-model and the ops runbook** and is the source of truth for operations.
+Status: **Superseded (2026-09-21).** Accrue-then-withdraw is **retired**. Since #37
+every accepted answer is paid on-chain, instantly, through the 2-of-3 multisig rail
+([ADR-0005](adr/0005-submit-enqueues-worker-pays.md),
+[ADR-0006](adr/0006-journal-payout-envelopes.md)). Since #39 nothing accrues, and
+withdrawal survives only for balances earned before that, with no minimum, until
+they reach zero ([ADR-0007](adr/0007-retire-accumulate-then-withdraw.md)).
 
-> **⚠️ Retired:** Section 1 describes the **legacy** per-question model. New earnings
-> no longer enqueue a per-submission `PayoutJob` — approved answers accrue to an
-> off-chain balance and are paid as a single lump sum at withdrawal. See §6.
+This whole document is now a design record, kept for history. §6 describes the
+model as it ran from Phase 5 (#268) until #37. It is no longer the source of truth
+for operations.
+
+> Previously: *Implemented & cut over (Phase 5, #268).* The accrue-then-withdraw
+> model replaced the per-question payout of §1. Instant payout has since replaced it
+> in turn.
 
 ## 1. How payout worked (legacy — retired)
 

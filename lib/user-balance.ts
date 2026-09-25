@@ -11,13 +11,10 @@ export class InsufficientUserBalanceError extends Error {
   }
 }
 
-export class BelowMinimumWithdrawalError extends Error {
-  constructor(
-    public readonly balanceUnits: bigint,
-    public readonly minimumUnits: bigint,
-  ) {
-    super(`Withdrawal below minimum: balance ${balanceUnits}, minimum ${minimumUnits}`);
-    this.name = "BelowMinimumWithdrawalError";
+export class NoBalanceToWithdrawError extends Error {
+  constructor(public readonly balanceUnits: bigint) {
+    super(`Nothing to withdraw: balance ${balanceUnits}`);
+    this.name = "NoBalanceToWithdrawError";
   }
 }
 
@@ -32,39 +29,6 @@ export interface WithdrawalResult {
   payoutJobId: string;
   amountUnits: bigint;
   newBalanceUnits: bigint;
-}
-
-export async function creditReward(
-  userId: string,
-  amountUnits: bigint,
-  submissionId?: string,
-  note?: string,
-): Promise<bigint> {
-  const result = await prisma.$transaction(async (tx) => {
-    await tx.user.update({
-      where: { id: userId },
-      data: { pendingBalanceUnits: { increment: amountUnits } },
-    });
-
-    const updated = await tx.user.findUnique({
-      where: { id: userId },
-      select: { pendingBalanceUnits: true },
-    });
-
-    await tx.userBalanceLedger.create({
-      data: {
-        userId,
-        type: "CREDIT_REWARD",
-        amountUnits,
-        submissionId: submissionId ?? null,
-        note: note ?? null,
-      },
-    });
-
-    return updated!.pendingBalanceUnits;
-  });
-
-  return result;
 }
 
 export async function debitForWithdrawal(
@@ -112,6 +76,26 @@ export async function debitForWithdrawal(
   return result;
 }
 
+/**
+ * Restore a withdrawal's debit to the user's withdrawable balance.
+ *
+ * At most once per payout job (F1). The reversal is the one write in the
+ * withdrawal rail that *creates* withdrawable balance, so a second one for the
+ * same job is money the platform never debited, and a later withdrawal pays it
+ * out for real. Two things could produce that second one: two reconcilers
+ * reaching the same job's terminal path, and a caller replaying after a commit
+ * whose response was lost.
+ *
+ * Both are closed the same way. The user row is locked `FOR UPDATE` first, which
+ * serializes every reversal for this user, and under that lock a `REVERSAL`
+ * ledger row already carrying this `payoutJobId` means the restoration has
+ * happened — so this returns the balance unchanged instead of adding to it. The
+ * lock is what makes the check sound: without it both callers would read "no
+ * row" before either wrote one.
+ *
+ * A reversal with no `payoutJobId` cannot be keyed and is applied as asked; no
+ * caller in the withdrawal rail omits it.
+ */
 export async function refundReversal(
   userId: string,
   amountUnits: bigint,
@@ -119,6 +103,25 @@ export async function refundReversal(
   note?: string,
 ): Promise<bigint> {
   const result = await prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<{ pendingBalanceUnits: bigint }[]>`
+      SELECT "pendingBalanceUnits" FROM "users"
+      WHERE "id" = ${userId}
+      FOR UPDATE
+    `;
+
+    if (payoutJobId) {
+      const already = await tx.userBalanceLedger.findFirst({
+        where: { userId, type: "REVERSAL", submissionId: payoutJobId },
+        select: { id: true },
+      });
+      if (already) {
+        console.warn(
+          `[user-balance] withdrawal ${payoutJobId} was already reversed — not restoring it a second time`,
+        );
+        return locked[0]?.pendingBalanceUnits ?? 0n;
+      }
+    }
+
     await tx.user.update({
       where: { id: userId },
       data: { pendingBalanceUnits: { increment: amountUnits } },
@@ -146,11 +149,15 @@ export async function refundReversal(
 }
 
 /**
- * Atomically converts a user's full accumulated balance into a single queued
- * lump-sum `PayoutJob` (the "one payout" of the withdrawal flow).
+ * Atomically converts a user's full legacy balance into a single queued lump-sum
+ * `PayoutJob` (the "one payout" of the withdrawal flow).
+ *
+ * #39: nothing accrues any more, so every balance this sees predates instant
+ * payout, and it is withdrawn whatever its size — the old minimum would have
+ * stranded most of them (ADR-0007).
  *
  * The whole thing runs in one transaction: the user row is locked `FOR UPDATE`,
- * the balance is checked against `minimumUnits`, decremented, a `WITHDRAWAL` ledger
+ * the balance is checked to be non-zero, decremented, a `WITHDRAWAL` ledger
  * row is written, and the `PayoutJob` is created. Because it is one transaction,
  * a failure at any step (including the one-in-flight unique index) rolls back the
  * decrement, so funds can never be debited without a job to pay them out.
@@ -160,13 +167,12 @@ export async function refundReversal(
  * guarantees at most one queued/processing withdrawal per user — together these
  * make double-spend impossible.
  *
- * @throws {BelowMinimumWithdrawalError} balance is below `minimumUnits` (or zero).
+ * @throws {NoBalanceToWithdrawError} the balance is zero.
  * @throws {WithdrawalInFlightError} the user already has a withdrawal in flight.
  */
 export async function enqueueWithdrawal(
   userId: string,
   destinationAddress: string,
-  minimumUnits: bigint,
 ): Promise<WithdrawalResult> {
   try {
     return await prisma.$transaction(async (tx) => {
@@ -178,8 +184,8 @@ export async function enqueueWithdrawal(
 
       const balance = locked[0]?.pendingBalanceUnits ?? 0n;
 
-      if (balance <= 0n || balance < minimumUnits) {
-        throw new BelowMinimumWithdrawalError(balance, minimumUnits);
+      if (balance <= 0n) {
+        throw new NoBalanceToWithdrawError(balance);
       }
 
       // Withdraw the entire accumulated balance as one lump sum.

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
@@ -14,15 +15,11 @@ import {
   RETEST_GOLD_COUNT,
   RETEST_PASS_THRESHOLD,
 } from "@/lib/admin-data";
-import {
-  checkAndDebit,
-  creditBalance,
-  totalDebitUnits,
-  InsufficientBalanceError,
-} from "@/lib/campaign-balance";
-import { creditReward } from "@/lib/user-balance";
+import { checkAndDebit, InsufficientBalanceError } from "@/lib/campaign-balance";
+import { isAnyIdentifierBanned } from "@/lib/ban-identity";
 import { getLabelerSession } from "@/lib/labeler-auth";
 import { isValidStellarAddress } from "@/lib/stellar/signature";
+import { accountHasUsdcTrustline } from "@/lib/stellar/client";
 import { REWARDED_STATUSES } from "@/lib/constants";
 
 function errorResponse(code: string, status: number, context: Record<string, unknown> = {}) {
@@ -34,6 +31,22 @@ function errorResponse(code: string, status: number, context: Record<string, unk
   return NextResponse.json({ error: code }, { status });
 }
 
+/**
+ * Record one answer from the signed-in contributor and, if it is accepted,
+ * create its payout intent.
+ *
+ * Every guard runs before any write that could be paid: spam, repetition, rate
+ * limit, a bound Stellar wallet, bans, a duplicate answer, the task and its
+ * response target, retest, gold checks, and left/right bias. A rejected answer
+ * is recorded `skipped` with no amount, or not at all.
+ *
+ * An accepted answer is written `pending` with its reward, together with its
+ * campaign debit (when the task has a campaign) and one `SUBMISSION_PAYOUT` job,
+ * in a single transaction: all three exist or none do (#37). The payout worker
+ * broadcasts it through the co-signer out of band, so the response says
+ * `pending`, never paid. A passed gold check earns nothing and says so only
+ * after the answer, so nothing before it tells a gold task apart.
+ */
 export async function POST(req: NextRequest) {
   // ST-5d: identity is the session (userId), not a `0x` wallet in the body. #30:
   // the account must hold a bound wallet to answer; it is checked after the user
@@ -73,8 +86,10 @@ export async function POST(req: NextRequest) {
     return errorResponse("repetitive_reason", 400, { userId, taskId });
   }
 
-  // Rate limit keyed on the userId (opaque bucket key), so wallet-less answerers
-  // are still throttled.
+  // Rate limit keyed on the userId. Since #30 only an account with a bound
+  // Stellar wallet can answer, and a bound wallet never moves between accounts,
+  // so this bucket is per-address too (#36). It stays on the userId because the
+  // session carries it: the throttle runs before, and guards, the user read.
   if (await checkWalletRateLimit(userId)) {
     return errorResponse("rate_limited", 429, { userId });
   }
@@ -92,6 +107,16 @@ export async function POST(req: NextRequest) {
       return errorResponse("wallet_required", 409, { userId });
     }
     const walletAddress = user.walletAddress;
+
+    // #36: an identity banned on any of its identifiers earns nothing, checked
+    // before any write. The admin flagged-withdrawal ban writes these rows with
+    // no `bannedUntil`, which the cooldown checks below do not read as a ban.
+    // Same 403 `banned` the client already shows; which identifier matched is
+    // logged by type only, never its value.
+    const identityBan = await isAnyIdentifierBanned(user.email, walletAddress, userId);
+    if (identityBan) {
+      return errorResponse("banned", 403, { userId, identifierType: identityBan.bannedIdentifierType });
+    }
 
     if (isPermanentlyBanned(user.isBanned, user.bannedUntil, user.banCount)) {
       return errorResponse("banned", 403, { userId, permanent: true });
@@ -181,7 +206,7 @@ export async function POST(req: NextRequest) {
               where: { id: userId },
               data: { isBanned: false, bannedAt: null, bannedReason: null, bannedUntil: null },
             });
-            console.warn("[submit] retest_passed", { userId, accuracy, passed, total: retestGoldSubs.length });
+            console.warn("[submit] retest_passed", { userId });
           } else {
             const refreshed = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
             const next = computeCooldownBan(refreshed.banCount, refreshed.lastBanAt);
@@ -196,11 +221,17 @@ export async function POST(req: NextRequest) {
                 lastBanAt: new Date(),
               },
             });
-            console.warn("[submit] retest_failed", { userId, accuracy, passed, total: retestGoldSubs.length, escalatedTo: next.banCount });
+            console.warn("[submit] retest_failed", { userId, escalatedTo: next.banCount });
           }
         }
 
-        return NextResponse.json({ paid: false, reason: "quality_check_failed" });
+        // Answer for this question, not the retest as a whole: a correct answer
+        // said "failed" (found in #37, QA OQ-10), which is untrue even though it
+        // was recorded as passed and counts toward lifting the ban.
+        return NextResponse.json({
+          paid: false,
+          reason: correct ? "quality_check_passed" : "quality_check_failed",
+        });
       }
 
       if (!correct) {
@@ -249,8 +280,6 @@ export async function POST(req: NextRequest) {
           });
           console.warn("[submit] banned_user", {
             userId,
-            goldAttempted: refreshed.goldAttempted,
-            goldCorrect: refreshed.goldCorrect,
             banCount: cooldown.banCount,
             reason: cooldown.reason,
           });
@@ -293,89 +322,116 @@ export async function POST(req: NextRequest) {
           where: { id: userId },
           data: { lastSubmissionAt: new Date() },
         });
-        return errorResponse("left_bias_detected", 400, {
-          userId,
-          taskId,
-          sameSide,
-          recent: recent.length,
-        });
+        // #36: no `sameSide`/`recent` — they say how close the account is to the line.
+        return errorResponse("left_bias_detected", 400, { userId, taskId });
       }
+    }
+
+    const answer = {
+      walletAddress,
+      userId,
+      taskId,
+      choice,
+      reason: reason.trim(),
+      isGoldCheck: task.isGold,
+    };
+
+    // A passed gold check earns nothing now that a reward moves money on-chain
+    // (#37): no campaign funds it. The task was served like any other, so this is
+    // the first the contributor learns it was a quality check.
+    if (task.isGold) {
+      const gold = await prisma.$transaction(async (tx) => {
+        const row = await tx.submission.create({
+          data: { ...answer, goldPassed: true, payoutAmountUnits: 0n, payoutStatus: "skipped" },
+          select: { id: true },
+        });
+        await tx.user.update({ where: { id: userId }, data: { lastSubmissionAt: new Date() } });
+        return row;
+      });
+      return NextResponse.json({ paid: false, reason: "quality_check_passed", submissionId: gold.id });
     }
 
     const amount = resolveRewardUnits(task.rewardUnits, task.campaign?.rewardUnits ?? null);
-    const submission = await prisma.submission.create({
-      data: {
-        walletAddress,
-        userId,
-        taskId,
-        choice,
-        reason: reason.trim(),
-        isGoldCheck: task.isGold,
-        goldPassed: task.isGold ? true : null,
-        payoutAmountUnits: amount,
-        payoutStatus: "accrued",
-      },
-    });
+    const campaignId = task.campaignId;
 
-    // Prepaid campaign balance: debit reward + platform fee before paying the labeler.
-    // Insufficient balance blocks the payout (402); the submission is recorded as skipped.
-    if (!task.isGold && task.campaignId) {
-      try {
-        await checkAndDebit(task.campaignId, amount, submission.id);
-      } catch (err) {
-        if (err instanceof InsufficientBalanceError) {
-          await prisma.submission.update({
-            where: { id: submission.id },
-            data: { payoutStatus: "skipped" },
-          });
-          return errorResponse("campaign_balance_insufficient", 402, {
-            userId,
-            taskId,
-            campaignId: task.campaignId,
-            balanceUnits: String(err.balanceUnits),
-            requiredUnits: String(err.requiredUnits),
-          });
-        }
-        throw err;
-      }
-    }
-
-    // Accumulate-then-withdraw (P2a): instead of a per-question on-chain payout,
-    // credit the approved reward to the user's off-chain balance + ledger. The
-    // customer was already debited above (unchanged); the labeler connects a
-    // wallet only at withdrawal (Phase 3). No PayoutJob is enqueued.
+    // The wallet must be able to hold USDC before this answer is accepted.
+    //
+    // An accepted answer is paid on-chain at once (#37), and the address alone
+    // does not say it can receive the payment: a valid `G…` with no USDC
+    // trustline fails the payout non-retryably with `op_no_trust`. Accepting it
+    // anyway is the trap Codex found on this PR — the row consumes
+    // `@@unique([userId, taskId])`, the worker treats `op_no_trust` as permanent
+    // and refunds the campaign, and the contributor can then neither resubmit
+    // the answer nor ever be paid for it, even after finishing payout setup.
+    //
+    // So the check goes before the write, and its answer is the same
+    // `payout_setup_required` the withdraw route already returns, sending the
+    // contributor to the sponsored-trustline flow with the task still unanswered.
+    // A Horizon that cannot be read refuses too, as a retryable 503 with nothing
+    // written. Letting the answer through on an unknown would re-open the same
+    // trap for exactly the wallet that has no trustline, and during a Horizon
+    // outage the payout could not be broadcast anyway.
+    let hasTrustline: boolean;
     try {
-      await creditReward(userId, amount, submission.id);
+      hasTrustline = await accountHasUsdcTrustline(walletAddress);
     } catch (err) {
-      Sentry.captureException(err, {
-        extra: { context: "accrue_user_balance", submissionId: submission.id },
-      });
-      // Refund the campaign balance if we debited but couldn't credit the user.
-      if (!task.isGold && task.campaignId) {
-        await creditBalance(
-          task.campaignId,
-          totalDebitUnits(amount),
-          `refund: balance accrual failed for submission ${submission.id}`,
-          "REFUND",
-        ).catch(() => {});
-      }
-      const accrualError = err instanceof Error ? err.message : String(err);
-      await prisma.submission.update({
-        where: { id: submission.id },
-        data: { payoutStatus: "failed", payoutError: accrualError.slice(0, 500) },
-      });
-      return errorResponse("accrual_failed", 500, { submissionId: submission.id });
+      Sentry.captureException(err, { extra: { context: "submit-trustline", userId, taskId } });
+      return errorResponse("payout_check_unavailable", 503, { userId, taskId });
+    }
+    if (!hasTrustline) {
+      return errorResponse("payout_setup_required", 409, { userId, taskId });
     }
 
-    // The response shape is unchanged for client coexistence: the wallet-first
-    // client still renders the success screen on `status: "pending"`. The
-    // per-submission payout poll is removed in P2b (#260) in favour of a balance
-    // view; until then the poll simply times out harmlessly.
+    // The payout intent is durable in one transaction (#36, #37): the campaign
+    // debit (reward + platform fee), the `pending` row carrying the reward, and
+    // its SUBMISSION_PAYOUT job. None exists without the others. A campaign-less
+    // task is platform-funded and has no debit. Insufficient balance rolls all
+    // three back (402) and the answer is recorded as skipped with no amount.
+    //
+    // The worker, not this request, broadcasts: it re-reads destination and amount
+    // from this row, and so does the co-signer before it signs.
+    let submission: { id: string };
+    try {
+      submission = await prisma.$transaction(async (tx) => {
+        const id = randomUUID();
+        if (campaignId) await checkAndDebit(campaignId, amount, id, tx);
+        const row = await tx.submission.create({
+          data: { id, ...answer, payoutAmountUnits: amount, payoutStatus: "pending" },
+          select: { id: true },
+        });
+        await tx.payoutJob.create({ data: { type: "SUBMISSION_PAYOUT", submissionId: id } });
+        return row;
+      });
+    } catch (err) {
+      if (err instanceof InsufficientBalanceError) {
+        await prisma.submission.create({
+          data: { ...answer, payoutAmountUnits: 0n, payoutStatus: "skipped" },
+        });
+        return errorResponse("campaign_balance_insufficient", 402, {
+          userId,
+          taskId,
+          campaignId,
+          balanceUnits: String(err.balanceUnits),
+          requiredUnits: String(err.requiredUnits),
+        });
+      }
+      throw err;
+    }
+
+    // `pending` is the truth: the payout is queued, not broadcast. The account
+    // sheet shows it move to sent and confirmed.
     return NextResponse.json({
       status: "pending",
       submissionId: submission.id,
     });
   } catch (err) {
+    // #38: a repeated request converges. Two concurrent submits for one task can
+    // both pass the `existing` check above; the second then hits
+    // `@@unique([userId, taskId])`, its transaction rolls back (no debit, no row,
+    // no job), and it gets the same answer a sequential duplicate does.
+    if ((err as { code?: string } | null)?.code === "P2002") {
+      return errorResponse("already_submitted", 409, { userId, taskId });
+    }
     console.error("[submit] UNHANDLED ERROR:", err);
     Sentry.captureException(err, {
       extra: { userId, taskId },

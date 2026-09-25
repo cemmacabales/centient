@@ -4,8 +4,10 @@
 
 **Deliverable:** [D2 — Wallet-native onboarding](../deliverables/d2.md) · **Evidence:** [D2 transactions and evidence files](../reference/evidence.md#deliverable-2-evidence)
 
-{% hint style="info" %}
-Written on Friday 18 September, the second day of the QA window. All implementation is merged, and QA gate #31 is running against [`8f660cc`](https://github.com/cemmacabales/centient/commit/8f660cc632f1c868a41618434a1c169dc0edabcc). This page is updated when QA records its verdict.
+{% hint style="success" %}
+**Verdict, 21 September:** QA gate #31 recorded `QA PASSED` at [`8f660cc`](https://github.com/artisam-centient/centient/commit/8f660cc632f1c868a41618434a1c169dc0edabcc). 38 of 40 cases were executed; the other 2 were never run in a browser and are accepted as a residual. It was promoted to `main` the same day by PR #121. → [D2 QA verdict](../deliverables/d2.md#qa-verdict)
+
+The rest of this page was written on Friday 18 September, during the QA window.
 {% endhint %}
 
 ## Summary
@@ -32,30 +34,30 @@ All seven implementation issues merged on **Monday and Tuesday**, and the develo
 
 | Date | Change | Issue | PR | Commit |
 | --- | --- | --- | --- | --- |
-| 09-14 | ADR-0002: seeded testnet QA credentials accepted | — | #97 | [`00cb858`](https://github.com/cemmacabales/centient/commit/00cb8583ec5f6476982e2deab5674cc5e24b0005) |
-| 09-14 | Freighter-only wallet signing spike: Albedo descoped, testnet proof harness | #24 | #98 | [`34d5094`](https://github.com/cemmacabales/centient/commit/34d5094f4ab15fc851112ec839f7f38797e43046) |
-| 09-14 | Signed-challenge sign-in with expiry and replay protection | #25 | #99 | [`b13d7b0`](https://github.com/cemmacabales/centient/commit/b13d7b0710f02d24787b3b83400e84753754dd8a) |
-| 09-14 | Freighter wallet-connect and passwordless contributor sign-in | #26 | #100 | [`5a92716`](https://github.com/cemmacabales/centient/commit/5a92716839a121b277e9702f7f6bbc0d8d4aa762) |
-| 09-14 | Sponsored account creation for brand-new zero-XLM addresses | #27 | #101 | [`3e791a0`](https://github.com/cemmacabales/centient/commit/3e791a0ba16ef22821d4a5cec7b1695eb4684b97) |
-| 09-14 | Sponsored USDC trustline and fee bump for zero-XLM contributors | #28 | #103 | [`fca1191`](https://github.com/cemmacabales/centient/commit/fca1191549e762df069ad0f22278bf31f4bb69d8) |
-| 09-14 | CI: cancel superseded runs, scope the contributor check | — | #102 | [`97dbb3c`](https://github.com/cemmacabales/centient/commit/97dbb3c6915a2a19fef419e23be04d3887c90ba8) |
-| 09-14 | Track and safely reclaim eligible sponsored reserves | #29 | #104 | [`b83a358`](https://github.com/cemmacabales/centient/commit/b83a358eee56701f7ec67a495941ec78e9b41ca4) |
-| 09-15 | First-connect onboarding: wallet identity is the payout destination | #30 | #107 | [`9de7591`](https://github.com/cemmacabales/centient/commit/9de759185bb8882d48eed04ce4d64f4e85120a2f) |
-| 09-15 | Redact addresses from a stored reclaim report's error details | #29 | #106 | [`99e3e47`](https://github.com/cemmacabales/centient/commit/99e3e470ba8b33d9afe7bcebfd15ae8e82ca789c) |
-| 09-15 | PostHog through a same-origin `/ingest` proxy, key flows instrumented *(outside D2)* | — | #108 | [`81667c8`](https://github.com/cemmacabales/centient/commit/81667c8f9c394be9e2f0827b649226364a585a42) |
-| 09-15 | Review findings: a refused proof no longer consumes the challenge; rate limits; recoverable payout setup | — | #109 | [`5d7a2bc`](https://github.com/cemmacabales/centient/commit/5d7a2bccf56a45e489cb4269cf84bace2156ca0a) |
-| 09-15 | Promote to `staging`: Deliverable 2 onboarding | — | #105 | [`7ff7dee`](https://github.com/cemmacabales/centient/commit/7ff7dee28f532e5cb9d63199368d42b67bc73d37) |
-| 09-16 | Landing page: split hero with the owl up front *(post-cut)* | — | #112 | [`77ddbad`](https://github.com/cemmacabales/centient/commit/77ddbadb597df7f5d85ff51c72bd27d9187fde72) |
-| 09-16 | Remove the last Celo artifacts *(post-cut)* | — | #111 | [`6dfea3b`](https://github.com/cemmacabales/centient/commit/6dfea3b98f7351da28854b2b200b445429abf4cc) |
-| 09-16 | Track failed withdrawals and wallet-connect failures *(post-cut)* | — | #110 | [`ec4b4e1`](https://github.com/cemmacabales/centient/commit/ec4b4e13f116d1c5adbcb8dd741b1c8c57581fa9) |
-| 09-16 | Name the configured reward token in the wallet note *(post-cut)* | — | #114 | [`de07bdd`](https://github.com/cemmacabales/centient/commit/de07bdde719cee2ee0438517899ee3fa18aed44f) |
-| 09-16 | Promote to `staging` | — | #113 | [`e3db582`](https://github.com/cemmacabales/centient/commit/e3db582cf84d1c3a0d88ca7e5cd16161982958ec) |
-| 09-16 | The landing owl cycles through its poses *(post-cut)* | — | #115 | [`242de94`](https://github.com/cemmacabales/centient/commit/242de946b19e0fdc102c8a6145026e9bc9be9407) |
-| 09-16 | Promote to `staging` | — | #116 | [`7564b5c`](https://github.com/cemmacabales/centient/commit/7564b5c644b6236604ab78e2c6392e3202989fce) |
-| 09-16 | Logging out returns to the landing page with no reload *(post-cut)* | — | #117 | [`184cd77`](https://github.com/cemmacabales/centient/commit/184cd77544229ad9b9788700e14d884f7dcbe16f) |
-| 09-16 | Promote to `staging` | — | #118 | [`b52eb13`](https://github.com/cemmacabales/centient/commit/b52eb1372b8b5105afe5613f19b074bb2de19618) |
-| 09-17 | Every on-chain payout recorded in PostHog *(post-cut)* | — | #119 | [`aac52cc`](https://github.com/cemmacabales/centient/commit/aac52ccf6533b69e70876390c817be06bf8d0f40) |
-| 09-17 | **Promote to `staging`: the build under test** | — | #120 | [`8f660cc`](https://github.com/cemmacabales/centient/commit/8f660cc632f1c868a41618434a1c169dc0edabcc) |
+| 09-14 | ADR-0002: seeded testnet QA credentials accepted | — | #97 | [`00cb858`](https://github.com/artisam-centient/centient/commit/00cb8583ec5f6476982e2deab5674cc5e24b0005) |
+| 09-14 | Freighter-only wallet signing spike: Albedo descoped, testnet proof harness | #24 | #98 | [`34d5094`](https://github.com/artisam-centient/centient/commit/34d5094f4ab15fc851112ec839f7f38797e43046) |
+| 09-14 | Signed-challenge sign-in with expiry and replay protection | #25 | #99 | [`b13d7b0`](https://github.com/artisam-centient/centient/commit/b13d7b0710f02d24787b3b83400e84753754dd8a) |
+| 09-14 | Freighter wallet-connect and passwordless contributor sign-in | #26 | #100 | [`5a92716`](https://github.com/artisam-centient/centient/commit/5a92716839a121b277e9702f7f6bbc0d8d4aa762) |
+| 09-14 | Sponsored account creation for brand-new zero-XLM addresses | #27 | #101 | [`3e791a0`](https://github.com/artisam-centient/centient/commit/3e791a0ba16ef22821d4a5cec7b1695eb4684b97) |
+| 09-14 | Sponsored USDC trustline and fee bump for zero-XLM contributors | #28 | #103 | [`fca1191`](https://github.com/artisam-centient/centient/commit/fca1191549e762df069ad0f22278bf31f4bb69d8) |
+| 09-14 | CI: cancel superseded runs, scope the contributor check | — | #102 | [`97dbb3c`](https://github.com/artisam-centient/centient/commit/97dbb3c6915a2a19fef419e23be04d3887c90ba8) |
+| 09-14 | Track and safely reclaim eligible sponsored reserves | #29 | #104 | [`b83a358`](https://github.com/artisam-centient/centient/commit/b83a358eee56701f7ec67a495941ec78e9b41ca4) |
+| 09-15 | First-connect onboarding: wallet identity is the payout destination | #30 | #107 | [`9de7591`](https://github.com/artisam-centient/centient/commit/9de759185bb8882d48eed04ce4d64f4e85120a2f) |
+| 09-15 | Redact addresses from a stored reclaim report's error details | #29 | #106 | [`99e3e47`](https://github.com/artisam-centient/centient/commit/99e3e470ba8b33d9afe7bcebfd15ae8e82ca789c) |
+| 09-15 | PostHog through a same-origin `/ingest` proxy, key flows instrumented *(outside D2)* | — | #108 | [`81667c8`](https://github.com/artisam-centient/centient/commit/81667c8f9c394be9e2f0827b649226364a585a42) |
+| 09-15 | Review findings: a refused proof no longer consumes the challenge; rate limits; recoverable payout setup | — | #109 | [`5d7a2bc`](https://github.com/artisam-centient/centient/commit/5d7a2bccf56a45e489cb4269cf84bace2156ca0a) |
+| 09-15 | Promote to `staging`: Deliverable 2 onboarding | — | #105 | [`7ff7dee`](https://github.com/artisam-centient/centient/commit/7ff7dee28f532e5cb9d63199368d42b67bc73d37) |
+| 09-16 | Landing page: split hero with the owl up front *(post-cut)* | — | #112 | [`77ddbad`](https://github.com/artisam-centient/centient/commit/77ddbadb597df7f5d85ff51c72bd27d9187fde72) |
+| 09-16 | Remove the last Celo artifacts *(post-cut)* | — | #111 | [`6dfea3b`](https://github.com/artisam-centient/centient/commit/6dfea3b98f7351da28854b2b200b445429abf4cc) |
+| 09-16 | Track failed withdrawals and wallet-connect failures *(post-cut)* | — | #110 | [`ec4b4e1`](https://github.com/artisam-centient/centient/commit/ec4b4e13f116d1c5adbcb8dd741b1c8c57581fa9) |
+| 09-16 | Name the configured reward token in the wallet note *(post-cut)* | — | #114 | [`de07bdd`](https://github.com/artisam-centient/centient/commit/de07bdde719cee2ee0438517899ee3fa18aed44f) |
+| 09-16 | Promote to `staging` | — | #113 | [`e3db582`](https://github.com/artisam-centient/centient/commit/e3db582cf84d1c3a0d88ca7e5cd16161982958ec) |
+| 09-16 | The landing owl cycles through its poses *(post-cut)* | — | #115 | [`242de94`](https://github.com/artisam-centient/centient/commit/242de946b19e0fdc102c8a6145026e9bc9be9407) |
+| 09-16 | Promote to `staging` | — | #116 | [`7564b5c`](https://github.com/artisam-centient/centient/commit/7564b5c644b6236604ab78e2c6392e3202989fce) |
+| 09-16 | Logging out returns to the landing page with no reload *(post-cut)* | — | #117 | [`184cd77`](https://github.com/artisam-centient/centient/commit/184cd77544229ad9b9788700e14d884f7dcbe16f) |
+| 09-16 | Promote to `staging` | — | #118 | [`b52eb13`](https://github.com/artisam-centient/centient/commit/b52eb1372b8b5105afe5613f19b074bb2de19618) |
+| 09-17 | Every on-chain payout recorded in PostHog *(post-cut)* | — | #119 | [`aac52cc`](https://github.com/artisam-centient/centient/commit/aac52ccf6533b69e70876390c817be06bf8d0f40) |
+| 09-17 | **Promote to `staging`: the build under test** | — | #120 | [`8f660cc`](https://github.com/artisam-centient/centient/commit/8f660cc632f1c868a41618434a1c169dc0edabcc) |
 
 ## Decisions
 
@@ -78,7 +80,7 @@ All seven implementation issues merged on **Monday and Tuesday**, and the develo
 
 ## Evidence added
 
-* Freighter spike: connect, SEP-53 challenge, 7/7 signature checks, replay refused (`401`), sponsorship signed from the extension → [`2026-09-14-freighter-wallet-signing-evidence.json`](https://github.com/cemmacabales/centient/blob/develop/docs/superpowers/specs/2026-09-14-freighter-wallet-signing-evidence.json)
+* Freighter spike: connect, SEP-53 challenge, 7/7 signature checks, replay refused (`401`), sponsorship signed from the extension → [`2026-09-14-freighter-wallet-signing-evidence.json`](https://github.com/artisam-centient/centient/blob/develop/docs/superpowers/specs/2026-09-14-freighter-wallet-signing-evidence.json)
 * Sponsored account creation for a never-funded address: [`b1ef0d3a…`](https://stellar.expert/explorer/testnet/tx/b1ef0d3aa2d3f74f7b86c3cbff840205718e76164b70e3774b5263a3051a435b)
 * Sponsored trustline + fee bump, with six forged-envelope refusals: [`776cdee0…`](https://stellar.expert/explorer/testnet/tx/776cdee005e9e46ec990d877f87a024751700e1d5bac5dc83663919a033e4c54)
 * Reserve reclaim: 19/19 checks, two revocations on testnet, a second run that sends nothing
@@ -88,15 +90,15 @@ All of it is on the [D2 page](../deliverables/d2.md).
 
 ## Still to do this week
 
-* [ ] Run QA gate #31 against `8f660cc632f1c868a41618434a1c169dc0edabcc`, and record `QA PASSED <sha>` or the failures
+* [x] Run QA gate #31 against `8f660cc632f1c868a41618434a1c169dc0edabcc`, and record `QA PASSED <sha>` or the failures. Passed 21 September, three days late: the tester never received the settled test plan, which PR #125 later landed
 * [ ] Restate `docs/qa/deliverable-1-qa-readiness.md`, which still names `6bc1180`
-* [ ] Screen recording: connect → signed challenge → session issued (the §6.1 evidence item)
+* [x] Screen recording: connect → signed challenge → session issued (the §6.1 evidence item). In the [D2 evidence folder](https://drive.google.com/drive/folders/1JS5hYQ-G4g-n92Hzf9RTNRBKWsUuvbFd?usp=drive_link)
 * [ ] Resolve the open CodeRabbit threads on #112 (fixed by #114) and #119 (test isolation, a one-line fix)
-* [ ] Promote the QA-passed SHA, then hold the SDF review on Saturday
+* [x] Promote the QA-passed SHA (PR #121, 21 September)
 
 ## Carried into Week 3
 
-* **Mobile gap.** Freighter Mobile is reachable only over WalletConnect v2, which no Epic 2 issue builds. D-4 decides it before #35. The 25-wallet target in Week 4 may depend on it.
+* **Mobile gap.** Freighter Mobile is reachable only over WalletConnect v2, which no Epic 2 issue builds. D-4 decides it before #35. The 25-wallet target in Week 4 may depend on it. *Decided 22 September: built in Week 3 and QA'd on iOS. → [D3](../deliverables/d3.md)*
 * **Session revocation.** Logging out does not revoke the 7-day JWT.
 * **Fee-bump `tx_bad_seq`.** A read from #28 is still unfiled.
 

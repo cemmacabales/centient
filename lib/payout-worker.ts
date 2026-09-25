@@ -4,16 +4,19 @@ import prisma from "./prisma";
 import { payReward, PayoutCapError } from "./payout";
 import { maybeSendCapAlert } from "./payout-cap";
 import { StellarPaymentError, describeStellarError } from "./stellar/client";
-import { creditBalance, totalDebitUnits } from "./campaign-balance";
 import { checkAndAlert } from "./stellar/balance";
 import { computeIAA } from "./quality";
-import { REWARDED_STATUSES } from "./constants";
+import { SETTLED_STATUSES } from "./constants";
 import { refundReversal } from "./user-balance";
 import {
   abandonAcceptedPayment,
   persistAcceptedPayment,
   type AcceptedPayment,
 } from "./payout-broadcast";
+import { claimSubmissionForBroadcast, heartbeatRetryClaim } from "./payout-service";
+import { SUBMISSION_RETRY_BUDGET } from "./payout-retry-claim";
+import { refundCampaignBalance } from "./payout-refund";
+import { confirmAttempt, settleOpenAttempt } from "./payout-attempts";
 
 const STALE_PROCESSING_MS = 60_000;
 // Refresh the in-flight job's heartbeat well within STALE_PROCESSING_MS so a slow
@@ -125,6 +128,8 @@ export async function claimNextJob(): Promise<{
       WHERE "type" IN ('SUBMISSION_PAYOUT', 'WITHDRAWAL')
         AND ("status" = 'queued'
              OR ("status" = 'processing' AND "workerHeartbeatAt" < ${staleBefore}))
+        -- #38: a job waiting on an unsettled envelope is not due yet.
+        AND ("notBefore" IS NULL OR "notBefore" <= NOW())
       ORDER BY "createdAt" ASC
       LIMIT 1
       FOR UPDATE SKIP LOCKED
@@ -134,26 +139,6 @@ export async function claimNextJob(): Promise<{
 
   if (claimed.length === 0) return null;
   return claimed[0];
-}
-
-/**
- * Credit an abandoned submission payout back to its campaign balance. Gold tasks
- * and campaign-less tasks draw from no campaign budget, so they are a no-op.
- * Best-effort: a failure here must not mask the payout error that triggered it.
- */
-async function refundCampaignBalance(
-  task: { isGold: boolean; campaignId: string | null },
-  submissionId: string,
-  amountUnits: bigint,
-  reason: string,
-): Promise<void> {
-  if (task.isGold || !task.campaignId) return;
-  await creditBalance(
-    task.campaignId,
-    totalDebitUnits(amountUnits),
-    `${reason} for submission ${submissionId}`,
-    "REFUND",
-  ).catch(() => {});
 }
 
 /**
@@ -376,9 +361,9 @@ async function processSubmissionPayout(
   const amount = submission.payoutAmountUnits;
 
   // A submission with no linked wallet (email-only answerer, ST-5d) has no on-chain
-  // destination. New earnings accrue off-chain and are never enqueued here, so this
-  // legacy per-submission path only meets a wallet-less row defensively — fail it
-  // rather than attempt an unpayable transfer.
+  // destination. Submit refuses to accept an answer without a bound wallet (#30),
+  // so this path only meets a wallet-less row defensively — fail it rather than
+  // attempt an unpayable transfer.
   if (!walletAddress) {
     await prisma.$transaction([
       prisma.submission.update({
@@ -393,6 +378,33 @@ async function processSubmissionPayout(
     return;
   }
 
+  // #37: take the submission's retry claim before broadcasting, so the retry
+  // cron (or an admin retry) that reaches this row stands down. A row someone
+  // else holds, or has already paid, is left to them: the retry path upserts
+  // this job to `done` when it settles, and owns the row if it does not.
+  if (!(await claimSubmissionForBroadcast(submissionId, walletAddress))) {
+    await prisma.payoutJob.update({
+      where: { id: jobId },
+      data: {
+        status: "failed",
+        completedAt: new Date(),
+        lastError: "submission claimed by another payer; left to the retry path",
+      },
+    });
+    console.warn(`[payout-worker] submission job ${jobId} stood down: submission ${submissionId} is claimed or paid`);
+    return;
+  }
+  const claimHeartbeat = heartbeatRetryClaim(submissionId);
+  // Hands the claim back once this attempt has ended without a broadcast, so the
+  // worker's own requeued attempt, or the retry cron, can take it again. Scoped to
+  // a row with no hash: a broadcast row is never re-claimable.
+  const releaseClaim = async () => {
+    clearInterval(claimHeartbeat);
+    await prisma.submission
+      .updateMany({ where: { id: submissionId, payoutTxHash: null }, data: { lastRetriedAt: null } })
+      .catch(() => {});
+  };
+
   const heartbeat = setInterval(() => {
     prisma.payoutJob
       .update({ where: { id: jobId }, data: { workerHeartbeatAt: new Date() } })
@@ -401,10 +413,25 @@ async function processSubmissionPayout(
 
   let accepted: AcceptedPayment | undefined;
   try {
-    const txHash = await payReward(walletAddress, amount, {
-      kind: "submission",
-      id: submissionId,
-    });
+    // #38: an envelope left open by an earlier attempt — this worker killed by a
+    // redeploy after Horizon accepted it, say — is settled by its hash before
+    // anything new is built. If it applied, it is recorded and nothing is sent.
+    // If it may still apply, the job waits until `notBefore` without spending a
+    // retry, and hands the submission's claim back.
+    const settled = await settleOpenAttempt(submissionId);
+    if (settled.kind === "wait") {
+      await releaseClaim();
+      await prisma.payoutJob.update({
+        where: { id: jobId },
+        data: { status: "queued", workerHeartbeatAt: null, notBefore: settled.until, lastError: settled.reason },
+      });
+      console.warn(`[payout-worker] submission job ${jobId} waiting on an unsettled envelope: ${settled.reason}`);
+      return;
+    }
+    const txHash =
+      settled.kind === "paid"
+        ? settled.hash
+        : await payReward(walletAddress, amount, { kind: "submission", id: submissionId });
     const broadcastAt = new Date();
     accepted = { reference: `payout_job:${jobId}`, txHash, amountUnits: amount, broadcastAt };
 
@@ -432,19 +459,59 @@ async function processSubmissionPayout(
           },
         }),
       ]);
+    // `persistAcceptedPayment` retries this whole callback on any error, and a
+    // commit whose response was lost is an error it cannot tell from one that
+    // rolled back (F3). The move to `sent` under this hash is the one-time
+    // transition; the credit is gated on winning it, so a replay rewrites the
+    // same tuple and adds nothing to lifetime totals.
     const persisted = await persistAcceptedPayment(
       accepted,
       () =>
-        prisma.$transaction([
-          prisma.payoutJob.update({
+        prisma.$transaction(async (tx) => {
+          await tx.payoutJob.update({
             where: { id: jobId },
             data: { txHash, amountUnits: amount, broadcastAt, workerHeartbeatAt: broadcastAt },
-          }),
-          prisma.submission.update({
-            where: { id: submissionId },
+          });
+          const { count } = await tx.submission.updateMany({
+            where: { id: submissionId, payoutTxHash: null },
             data: { payoutStatus: "sent", payoutTxHash: txHash },
-          }),
-        ]),
+          });
+          if (count === 0) {
+            // A hash is already recorded. If it is this one, an earlier run of
+            // this callback committed and its credit stands. Any other hash
+            // belongs to a payer that is not this job.
+            const row = await tx.submission.findUnique({
+              where: { id: submissionId },
+              select: { payoutTxHash: true },
+            });
+            if (row?.payoutTxHash !== txHash) {
+              throw new Error(
+                `[payout-worker] submission ${submissionId} carries hash ${row?.payoutTxHash ?? "none"}, not the broadcast ${txHash}`,
+              );
+            }
+            console.warn(
+              `[payout-worker] submission ${submissionId} was already recorded as ${txHash} — not crediting it twice`,
+            );
+            return;
+          }
+          // Confirmed in the same write as the hash (#38).
+          await confirmAttempt(txHash, tx);
+          // Credited in the same write too, so `sent` always means credited:
+          // the reconciler undoes this credit when a `sent` payout turns out to
+          // have failed on-chain (#40), and must never undo one that never
+          // landed. Identity is the FK `userId` (ST-5d), not the wallet. The
+          // reward was paid on-chain, so it is earned, never withdrawable:
+          // crediting `pendingBalanceUnits` (and a `CREDIT_REWARD` ledger row)
+          // would let the same reward be withdrawn a second time (#37).
+          await tx.user.update({
+            where: { id: submission.userId },
+            data: {
+              submissionCount: { increment: 1 },
+              totalEarnedUnits: { increment: amount },
+              lastSubmissionAt: new Date(),
+            },
+          });
+        }),
       quarantine,
     );
     if (!persisted) return;
@@ -453,37 +520,15 @@ async function processSubmissionPayout(
     // `payReward` so the ledger the alert sums already carries this payout.
     maybeSendCapAlert().catch(() => {});
 
-    await prisma.$transaction(async (tx) => {
-      // Identity is the FK `userId` (ST-5d), not the wallet — the wallet is just the
-      // on-chain destination validated above.
-      await tx.user.update({
-        where: { id: submission.userId },
-        data: {
-          submissionCount: { increment: 1 },
-          totalEarnedUnits: { increment: amount },
-          pendingBalanceUnits: { increment: amount },
-          lastSubmissionAt: new Date(),
-        },
-      });
-
-      await tx.userBalanceLedger.create({
-        data: {
-          userId: submission.userId,
-          type: "CREDIT_REWARD",
-          amountUnits: amount,
-          submissionId: submissionId,
-          note: `Reward for submission ${submissionId}`,
-        },
-      });
-    });
-
     const task = submission.task;
     if (!task.isGold && task.responseTarget != null && !task.resolvedAt) {
       const paidCount = await prisma.submission.count({
         where: {
           taskId: submission.taskId,
           isGoldCheck: false,
-          payoutStatus: { in: [...REWARDED_STATUSES] },
+          // Settled answers only: an in-flight one may still be refunded, and a
+          // resolved task is never recomputed (#37).
+          payoutStatus: { in: [...SETTLED_STATUSES] },
         },
       });
       if (paidCount >= task.responseTarget) {
@@ -514,6 +559,8 @@ async function processSubmissionPayout(
       await abandonAcceptedPayment(accepted, quarantinePayoutJob(jobId));
       return;
     }
+    // Nothing was broadcast, so this attempt's claim on the row ends here.
+    await releaseClaim();
     // F-04b: same reasoning as the withdrawal path — keep Horizon's result codes.
     const message = describeStellarError(err);
 
@@ -552,9 +599,11 @@ async function processSubmissionPayout(
         ? `needs manual reconciliation (${err.code})`
         : `non-retryable (${err.code})`;
       await prisma.$transaction([
+        // The cron's budget, not the worker's: this row is refunded below (or
+        // needs a human), and a row the cron still reads as retryable is paid again.
         prisma.submission.update({
           where: { id: submissionId },
-          data: { payoutStatus: "failed", payoutError: label, retryCount: MAX_RETRIES },
+          data: { payoutStatus: "failed", payoutError: label, retryCount: SUBMISSION_RETRY_BUDGET },
         }),
         prisma.payoutJob.update({
           where: { id: jobId },
@@ -582,7 +631,13 @@ async function processSubmissionPayout(
           // F-04b: this branch used to set only the status, leaving payoutError
           // NULL — so the retry-exhausted failures an operator most needs to read
           // were the ones carrying no explanation at all.
-          data: { payoutStatus: "failed", payoutError: `retries exhausted: ${message}` },
+          // #37: and exhaust the retry cron's budget. This row is refunded below, and
+          // the cron would otherwise offer it again and pay it with no funding.
+          data: {
+            payoutStatus: "failed",
+            payoutError: `retries exhausted: ${message}`,
+            retryCount: SUBMISSION_RETRY_BUDGET,
+          },
         }),
         prisma.payoutJob.update({
           where: { id: jobId },
@@ -601,6 +656,7 @@ async function processSubmissionPayout(
     }
   } finally {
     clearInterval(heartbeat);
+    clearInterval(claimHeartbeat);
   }
 }
 

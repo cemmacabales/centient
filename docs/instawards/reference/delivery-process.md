@@ -40,7 +40,7 @@ A Saturday fix is not a shortcut. It re-enters development → CI → review →
 
 ```
 feature/issue-N  →  develop  →  staging  →  main
-                    (integration)  (centient.work)  (released deliverables)
+                    (integration)  (beta.centient.work)  (released deliverables)
 ```
 
 ## Epic gates
@@ -48,12 +48,12 @@ feature/issue-N  →  develop  →  staging  →  main
 | Epic | Gate issue | QA window | Status |
 | --- | --- | --- | --- |
 | 1 | #80 (readiness #13) | 10–11 Sep | ✅ `QA:PASSED` 28/28 at `263be4c` |
-| 2 | #31 | 17–18 Sep | 🧪 Running at `8f660cc` |
-| 3 | #41 | 24–25 Sep | — |
+| 2 | #31 | 17–18 Sep | ✅ `QA PASSED` at `8f660cc` on 21 Sep, 38/40 executed, 2 accepted as residual |
+| 3 | #41 | 24–25 Sep | ✅ `QA PASSED` at `1fde77d` on 24 Sep, 65 of 68 cases passed |
 | 4 | #53 | 1–2 Oct | — |
 
 ## Red lines
 
-* Never submit a mainnet transaction without a current approval naming the exact destination and amount.
+* Testnet only (D-7). Never submit a mainnet transaction.
 * Never retry an ambiguous payout. Reconcile it, because a blind retry is how a double payment happens.
 * Never mix up testnet and mainnet in a report. Redact keys, seeds and raw logs.

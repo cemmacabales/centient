@@ -21,7 +21,7 @@ import {
   type Transaction,
 } from "@stellar/stellar-sdk";
 import { Mutex } from "async-mutex";
-import { StellarPaymentError, getTxStatus, resultCodes } from "./client";
+import { StellarPaymentError, getTxStatus, latestLedgerCloseMs, resultCodes } from "./client";
 import { server, usdcAsset } from "./config";
 import { buildMultisigFeeBump } from "./multisig-payout";
 import { assertPayoutAmountUnits, assertPayoutDestination } from "./payout-amount";
@@ -70,6 +70,39 @@ export interface PayoutRequest {
 }
 
 /**
+ * Where a payout's signed envelopes are recorded (#38). Kept as an interface so
+ * this module stays free of the database: the caller supplies the store.
+ *
+ * `open` runs after the envelope is fully signed and **before** it is submitted.
+ * If it throws, nothing is submitted. `void` runs once an envelope provably
+ * cannot apply: a definite rejection, an inclusion that failed, or an absence
+ * proven past its time bounds. An envelope whose fate is unknown is left open,
+ * for the next payer to settle by its hash rather than by building another.
+ * Confirming an envelope that applied is the caller's, in the same write that
+ * records the payment.
+ */
+export interface PayoutAttemptJournal {
+  open(envelope: { hash: string; expiresAt: Date }): Promise<void>;
+  void(hash: string, outcome: string): Promise<void>;
+}
+
+/** Void an attempt without letting a bookkeeping failure replace the payout's own error. */
+async function voidQuietly(journal: PayoutAttemptJournal | undefined, hash: string, outcome: string) {
+  if (!journal) return;
+  await journal.void(hash, outcome).catch((err) => {
+    // Left open, the attempt is settled later by its hash, which is safe; it only
+    // delays the next envelope for this payout.
+    console.error(`[payout-submitter] could not void attempt ${hash} (${outcome}):`, err);
+  });
+}
+
+/** Horizon's result codes as one short label, for an attempt's recorded outcome. */
+function describeResultCodes(err: unknown): string {
+  const codes = resultCodes(err);
+  return [codes.transaction, ...(codes.operations ?? [])].filter(Boolean).join(", ") || "unknown";
+}
+
+/**
  * Did Horizon give a definite verdict? A rejection carrying result codes means the
  * transaction was evaluated and never applied, so rebuilding is safe. Anything
  * without them — a timeout, a dropped socket, a 5xx after acceptance — leaves the
@@ -89,29 +122,6 @@ function envelopeExpiryMs(feeBump: FeeBumpTransaction): number | null {
   const maxTime = feeBump.innerTransaction.timeBounds?.maxTime;
   if (!maxTime || maxTime === "0") return null;
   return Number(maxTime) * 1000;
-}
-
-/**
- * Close time of the most recent ledger Horizon has ingested, in Unix
- * milliseconds, or null when that reading is unavailable.
- *
- * This is the only clock that can retire an envelope. Stellar evaluates
- * `maxTime` against ledger close time, not against this host's wall clock, so a
- * host running even slightly ahead of the network would otherwise declare a
- * still-includable envelope dead and license a rebuild that settles twice.
- * Horizon being unreachable is not evidence about the network's clock, so that
- * case reads as "unknown" rather than as an expiry.
- */
-async function latestLedgerCloseMs(): Promise<number | null> {
-  try {
-    const page = await server().ledgers().order("desc").limit(1).call();
-    const closedAt = page.records[0]?.closed_at;
-    if (!closedAt) return null;
-    const closeMs = Date.parse(closedAt);
-    return Number.isNaN(closeMs) ? null : closeMs;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -135,6 +145,7 @@ async function resolveAmbiguousSubmit(
   request: PayoutRequest,
   pollIntervalMs: number,
   resolveGraceMs: number,
+  journal?: PayoutAttemptJournal,
 ): Promise<{ hash: string }> {
   const expiresAt = envelopeExpiryMs(feeBump);
   const who = `${request.reference.kind} ${request.reference.id}`;
@@ -150,6 +161,7 @@ async function resolveAmbiguousSubmit(
     const status = await getTxStatus(envelopeHash).catch(() => "unknown" as const);
     if (status === "confirmed") return { hash: envelopeHash };
     if (status === "failed") {
+      await voidQuietly(journal, envelopeHash, "included and failed");
       throw new StellarPaymentError(
         `submitMultisigPayout: ${who} — transaction ${envelopeHash} was included and failed`,
         "tx_failed",
@@ -179,6 +191,7 @@ async function resolveAmbiguousSubmit(
     // absent, it was never included and never can be.
     if (status === "not_found") {
       if (expiredLedgerCloseMs !== null) {
+        await voidQuietly(journal, envelopeHash, "expired unincluded");
         throw new StellarPaymentError(
           `submitMultisigPayout: ${who} — ${envelopeHash} was still absent after ledger close ${new Date(expiredLedgerCloseMs).toISOString()}, past its time bounds; safe to rebuild`,
           "ambiguous_submit",
@@ -254,6 +267,7 @@ async function buildCoSignSubmit(
   timeoutSeconds: number | undefined,
   pollIntervalMs: number,
   resolveGraceMs: number,
+  journal?: PayoutAttemptJournal,
 ): Promise<{ hash: string }> {
   const srv = server();
   const account = await srv.loadAccount(config.payoutAccount);
@@ -310,17 +324,38 @@ async function buildCoSignSubmit(
   // Known before submission, which is what makes an unknown outcome recoverable:
   // the transaction can be identified afterwards without rebuilding it.
   const envelopeHash = feeBump.hash().toString("hex");
+
+  // #38: recorded before it can land, so a process that dies after Horizon
+  // accepts it — but before the caller stores the hash — leaves the next payer
+  // an envelope to look up instead of a payout to build again. An envelope with
+  // no time bounds could never be proven dead, so it is never journalled.
+  if (journal) {
+    const expiresAt = envelopeExpiryMs(feeBump);
+    if (expiresAt === null) {
+      throw new StellarPaymentError(
+        `submitMultisigPayout: ${request.reference.kind} ${request.reference.id} — refusing to submit an envelope with no time bounds`,
+        "unbounded_envelope",
+        false,
+      );
+    }
+    await journal.open({ hash: envelopeHash, expiresAt: new Date(expiresAt) });
+  }
+
   try {
     const res = await srv.submitTransaction(feeBump);
     return { hash: res.hash };
   } catch (err) {
-    if (isDefiniteRejection(err)) throw err;
+    if (isDefiniteRejection(err)) {
+      await voidQuietly(journal, envelopeHash, `rejected: ${describeResultCodes(err)}`);
+      throw err;
+    }
     return resolveAmbiguousSubmit(
       envelopeHash,
       feeBump,
       request,
       pollIntervalMs,
       resolveGraceMs,
+      journal,
     );
   }
 }
@@ -364,6 +399,7 @@ export async function submitMultisigPayout(
     timeoutSeconds,
     ambiguousPollIntervalMs = DEFAULT_AMBIGUOUS_POLL_INTERVAL_MS,
     ambiguousResolveGraceMs = DEFAULT_AMBIGUOUS_RESOLVE_GRACE_MS,
+    attempts,
   }: {
     coSigner: PayoutCoSigner;
     config?: PayoutSignerConfig;
@@ -371,6 +407,8 @@ export async function submitMultisigPayout(
     timeoutSeconds?: number;
     ambiguousPollIntervalMs?: number;
     ambiguousResolveGraceMs?: number;
+    /** Records each signed envelope before submit (#38). */
+    attempts?: PayoutAttemptJournal;
   },
 ): Promise<{ hash: string }> {
   // Validate before taking the lock or touching Horizon: an unpayable request
@@ -390,6 +428,7 @@ export async function submitMultisigPayout(
         timeoutSeconds,
         ambiguousPollIntervalMs,
         ambiguousResolveGraceMs,
+        attempts,
       );
     } catch (err) {
       const codes = resultCodes(err);
@@ -419,6 +458,7 @@ export async function submitMultisigPayout(
             timeoutSeconds,
             ambiguousPollIntervalMs,
             ambiguousResolveGraceMs,
+            attempts,
           );
         } catch (retryErr) {
           if (resultCodes(retryErr).transaction === "tx_bad_seq") {

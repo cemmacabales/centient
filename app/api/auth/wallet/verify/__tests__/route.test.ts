@@ -254,3 +254,40 @@ describe("POST /api/auth/wallet/verify — rejections", () => {
     expect(await prisma.walletNonce.count({ where: { nonce: challenge.nonce } })).toBe(1);
   });
 });
+
+// #36: a banned identity is refused at the door, not only at submit. The admin
+// flagged-withdrawal ban writes EMAIL, WALLET and USER_ID rows; any one of them
+// matching the proven address's contributor refuses the session.
+describe("POST /api/auth/wallet/verify — banned identity", () => {
+  async function bannedContributor(identifierType: "WALLET" | "USER_ID" | "EMAIL") {
+    const kp = Keypair.random();
+    const user = await prisma.user.create({
+      data: { email: "banned@example.com", passwordHash: "x", isVerified: true, walletAddress: kp.publicKey() },
+    });
+    const identifierValue = { WALLET: kp.publicKey(), USER_ID: user.id, EMAIL: "banned@example.com" }[identifierType];
+    await prisma.bannedIdentity.create({ data: { identifierType, identifierValue, reason: "test ban" } });
+    return kp;
+  }
+
+  it.each(["WALLET", "USER_ID", "EMAIL"] as const)("403 banned for a banned %s, with no session", async (type) => {
+    const { body } = await validProof(await bannedContributor(type));
+
+    const res = await POST(makeReq(body));
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "banned" });
+    expect(sessionCookies(res)).toHaveLength(0);
+  });
+
+  it("signs in once the identity ban has expired", async () => {
+    const kp = Keypair.random();
+    await prisma.bannedIdentity.create({
+      data: { identifierType: "WALLET", identifierValue: kp.publicKey(), bannedUntil: new Date(Date.now() - 1000) },
+    });
+    const { body } = await validProof(kp);
+
+    const res = await POST(makeReq(body));
+
+    expect(res.status).toBe(200);
+  });
+});

@@ -4,129 +4,78 @@ import prisma from "./prisma";
 import { getTxStatus } from "./stellar/client";
 import { checkAndAlert } from "./stellar/balance";
 import { refundReversal } from "./user-balance";
+import { reviveStrandedAttempts } from "./payout-attempt-revival";
+import { alertIfStale, claimHeldPayment, reconcileSubmission, settleHeldPayment } from "./payout-reconcile";
 
 const STALE_PROCESSING_MS = 30_000;
 const POLL_IDLE_MS = 5_000;
 const MAX_RETRIES = 3;
-const BATCH_SIZE = 50;
 
 let shouldStop = false;
 let currentId: string | null = null;
 
 
+/**
+ * Take the next `sent` payout due a Horizon check, or null.
+ *
+ * One statement, so exactly one reconciler gets the row (F1). The select and the
+ * lease used to be two statements, which ordered nothing: N reconcilers each
+ * read the same row, each wrote the lease over the others, and each went on to
+ * settle it. `FOR UPDATE SKIP LOCKED` is the same single-winner claim
+ * `claimNextJob` already uses for payout jobs.
+ */
 async function claimNextSubmission(): Promise<{ id: string; payoutTxHash: string } | null> {
   const staleBefore = new Date(Date.now() - STALE_PROCESSING_MS);
 
-  const claimed = await prisma.submission.findMany({
-    where: {
-      payoutStatus: "sent",
-      payoutTxHash: { not: null },
-      OR: [
-        { lastRetriedAt: null },
-        { lastRetriedAt: { lt: staleBefore } },
-      ],
-    },
-    orderBy: { lastRetriedAt: "asc" },
-    take: BATCH_SIZE,
-    select: { id: true, payoutTxHash: true },
-  });
+  const claimed = await prisma.$queryRaw<{ id: string; payoutTxHash: string }[]>`
+    UPDATE "submissions"
+    SET "lastRetriedAt" = NOW()
+    WHERE "id" = (
+      SELECT "id" FROM "submissions"
+      WHERE "payoutStatus" = 'sent'
+        AND "payoutTxHash" IS NOT NULL
+        AND ("lastRetriedAt" IS NULL OR "lastRetriedAt" < ${staleBefore})
+      ORDER BY "lastRetriedAt" ASC NULLS FIRST
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING "id", "payoutTxHash"
+  `;
 
-  if (claimed.length === 0) return null;
-
-  const first = claimed[0];
-  await prisma.submission.update({
-    where: { id: first.id },
-    data: { lastRetriedAt: new Date() },
-  });
-  return { id: first.id, payoutTxHash: first.payoutTxHash! };
+  return claimed[0] ?? null;
 }
 
-export async function processSubmission(id: string, txHash: string): Promise<void> {
-  currentId = id;
-
-  try {
-    // Horizon lookup (ST-1b) maps to three states: confirmed (successful tx),
-    // failed (tx included but op failed), or not_found (404 — not yet visible).
-    const status = await getTxStatus(txHash);
-
-    if (status === "confirmed") {
-      await prisma.submission.update({
-        where: { id },
-        data: { payoutStatus: "confirmed", lastRetriedAt: new Date() },
-      });
-      console.log(`[reconciler] confirmed submission ${id}`);
-    } else if (status === "failed") {
-      await handleSubmissionRetry(id, "transaction failed on Horizon");
-    } else {
-      // not_found: still pending. A submitted Stellar tx is only assigned a hash
-      // once included in a ledger (≈5s finality), so a 404 here is Horizon
-      // read-lag, not a drop. Leave the payout `sent` and re-check next pass —
-      // claimNextSubmission already refreshed lastRetriedAt — without burning a
-      // retry.
-      console.log(`[reconciler] submission ${id} not yet visible on Horizon — leaving sent`);
-    }
-  } catch (err: any) {
-    // A Horizon read error (network / 5xx) is transient — soft-retry so a flaky
-    // Horizon can't strand a real payout as failed.
-    await handleSubmissionRetry(id, err?.message ?? String(err));
-  } finally {
-    currentId = null;
-  }
-}
-
-async function handleSubmissionRetry(id: string, reason: string): Promise<void> {
-  const sub = await prisma.submission.findUnique({ where: { id } });
-  if (!sub) return;
-
-  const newCount = (sub.retryCount ?? 0) + 1;
-  if (newCount >= MAX_RETRIES) {
-    await prisma.submission.update({
-      where: { id },
-      data: { payoutStatus: "failed", retryCount: newCount, lastRetriedAt: new Date() },
-    });
-    console.warn(`[reconciler] submission ${id} marked failed after ${MAX_RETRIES} retries: ${reason}`);
-    Sentry.captureMessage(`[reconciler] submission ${id} failed: ${reason}`, { level: "warning" });
-  } else {
-    await prisma.submission.update({
-      where: { id },
-      data: { retryCount: newCount, lastRetriedAt: new Date() },
-    });
-    console.log(`[reconciler] submission ${id} retry ${newCount}/${MAX_RETRIES}: ${reason}`);
-  }
-}
-
-
+/**
+ * Take the next in-flight withdrawal due a Horizon check, or null.
+ *
+ * Single-winner for the reason above, and it matters more here than for a
+ * submission: this row's terminal path hands money back. Two reconcilers that
+ * both claimed it would each count a retry and each reverse the same debit, and
+ * a later withdrawal would pay out the duplicated restoration (F1).
+ */
 async function claimNextWithdrawal(): Promise<{ id: string; txHash: string; userId: string; amountUnits: bigint } | null> {
   const staleBefore = new Date(Date.now() - STALE_PROCESSING_MS);
 
-  const claimed = await prisma.payoutJob.findMany({
-    where: {
-      type: "WITHDRAWAL",
-      status: "processing",
-      txHash: { not: null },
-      OR: [
-        { workerHeartbeatAt: null },
-        { workerHeartbeatAt: { lt: staleBefore } },
-      ],
-    },
-    orderBy: { createdAt: "asc" },
-    take: BATCH_SIZE,
-    select: { id: true, txHash: true, userId: true, amountUnits: true },
-  });
+  const claimed = await prisma.$queryRaw<
+    { id: string; txHash: string; userId: string; amountUnits: bigint }[]
+  >`
+    UPDATE "payout_jobs"
+    SET "workerHeartbeatAt" = NOW(),
+        "updatedAt" = NOW()
+    WHERE "id" = (
+      SELECT "id" FROM "payout_jobs"
+      WHERE "type" = 'WITHDRAWAL'
+        AND "status" = 'processing'
+        AND "txHash" IS NOT NULL
+        AND ("workerHeartbeatAt" IS NULL OR "workerHeartbeatAt" < ${staleBefore})
+      ORDER BY "createdAt" ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    )
+    RETURNING "id", "txHash", "userId", "amountUnits"
+  `;
 
-  if (claimed.length === 0) return null;
-
-  const first = claimed[0];
-  await prisma.payoutJob.update({
-    where: { id: first.id },
-    data: { workerHeartbeatAt: new Date() },
-  });
-  return {
-    id: first.id,
-    txHash: first.txHash!,
-    userId: first.userId!,
-    amountUnits: first.amountUnits!,
-  };
+  return claimed[0] ?? null;
 }
 
 export async function processWithdrawal(id: string, txHash: string, userId: string, amountUnits: bigint): Promise<void> {
@@ -146,8 +95,15 @@ export async function processWithdrawal(id: string, txHash: string, userId: stri
       console.log(`[reconciler] withdrawal ${id} not yet visible on Horizon — leaving processing`);
     }
   } catch (err: any) {
-    // Transient Horizon read error — soft-retry rather than refund a live payout.
-    await handleWithdrawalRetry(id, userId, amountUnits, err?.message ?? String(err));
+    // #40 D2/D7: never refund on a read error. A withdrawal that actually paid
+    // and was then refunded is paid twice.
+    const message = `Horizon read failed: ${err?.message ?? String(err)}`;
+    const job = await prisma.payoutJob.update({
+      where: { id },
+      data: { lastError: message },
+      select: { createdAt: true },
+    });
+    alertIfStale("withdrawal", id, job?.createdAt, message);
   } finally {
     currentId = null;
   }
@@ -159,12 +115,19 @@ async function handleWithdrawalRetry(id: string, userId: string, amountUnits: bi
 
   const newCount = (job.retryCount ?? 0) + 1;
   if (newCount >= MAX_RETRIES) {
-    await prisma.$transaction([
-      prisma.payoutJob.update({
-        where: { id },
-        data: { status: "failed", completedAt: new Date(), lastError: reason, retryCount: newCount },
-      }),
-    ]);
+    // The move out of `processing` is the single winner (F1). A reconciler that
+    // loses it has not counted this retry and must not reverse the debit: the
+    // reversal hands real balance back, and a second one is withdrawable money
+    // the platform never took. `refundReversal` refuses a repeat for this job id
+    // as well, so neither a lost race nor a replay can double it.
+    const { count } = await prisma.payoutJob.updateMany({
+      where: { id, status: "processing" },
+      data: { status: "failed", completedAt: new Date(), lastError: reason, retryCount: newCount },
+    });
+    if (count === 0) {
+      console.log(`[reconciler] withdrawal ${id} was already finalized by another pass — leaving it`);
+      return;
+    }
     await refundReversal(userId, amountUnits, id, `Reconciler refund for failed withdrawal: ${reason}`).catch(() => {});
     console.warn(`[reconciler] withdrawal ${id} marked failed after ${MAX_RETRIES} retries: ${reason}`);
     Sentry.captureMessage(`[reconciler] withdrawal ${id} failed: ${reason}`, { level: "warning" });
@@ -184,7 +147,24 @@ export async function runReconcilerLoop(): Promise<void> {
     try {
       const subClaim = await claimNextSubmission();
       if (subClaim) {
-        await processSubmission(subClaim.id, subClaim.payoutTxHash);
+        currentId = subClaim.id;
+        try {
+          await reconcileSubmission(subClaim.id, subClaim.payoutTxHash);
+        } finally {
+          currentId = null;
+        }
+        continue;
+      }
+
+      // #40 D5: payments Horizon accepted that could not be recorded, settled on proof.
+      const heldClaim = await claimHeldPayment();
+      if (heldClaim) {
+        currentId = heldClaim.id;
+        try {
+          await settleHeldPayment(heldClaim.id, heldClaim.payoutTxHash);
+        } finally {
+          currentId = null;
+        }
         continue;
       }
 
@@ -193,6 +173,12 @@ export async function runReconcilerLoop(): Promise<void> {
         await processWithdrawal(wdClaim.id, wdClaim.txHash, wdClaim.userId, wdClaim.amountUnits);
         continue;
       }
+
+      // #38: hand back stranded payouts whose unknown envelope is now proven.
+      await reviveStrandedAttempts().catch((err) => {
+        console.error("[reconciler] payout attempt revival failed:", err);
+        Sentry.captureException(err, { extra: { context: "reconciler-attempt-revival" } });
+      });
 
       await checkAndAlert();
       await sleep(POLL_IDLE_MS);

@@ -10,6 +10,11 @@ import { describe, expect, it } from "vitest";
 // first-connect path, client and server: none reads, parses, builds or asks for
 // a secret seed. Payout-account keys (the platform's own) live elsewhere and are
 // guarded by `lib/stellar/key-custody.ts`.
+//
+// Freighter now comes in two shapes and the invariant covers both: the browser
+// extension, which signs behind `@stellar/freighter-api`, and the mobile app,
+// which signs on the phone and returns the result over WalletConnect. Neither
+// hands a key to this codebase, and the checks below hold each to that.
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -21,7 +26,11 @@ const CLIENT = [
   "components/WalletClaim.tsx",
   "components/PayoutSetup.tsx",
   "components/AccountSheet.tsx",
+  "components/FreighterPairing.tsx",
   "lib/stellar/wallet.ts",
+  "lib/stellar/wallet-errors.ts",
+  "lib/stellar/wallet-extension.ts",
+  "lib/stellar/wallet-connect.ts",
   "lib/stellar/wallet-sign-in.ts",
   "lib/stellar/wallet-claim.ts",
   "lib/stellar/payout-setup.ts",
@@ -59,11 +68,25 @@ describe("contributor key custody on the first-connect path (#30)", () => {
   });
 
   it("signs only through Freighter: every signature is made in the wallet, not in Centient code", () => {
-    const wallet = source("lib/stellar/wallet.ts");
-    expect(wallet).toMatch(/import\("@stellar\/freighter-api"\)/);
+    // Extension transport: signing is delegated to the injected provider.
+    const extension = source("lib/stellar/wallet-extension.ts");
+    expect(extension).toMatch(/import\("@stellar\/freighter-api"\)/);
     for (const call of ["signMessage", "signTransaction"]) {
-      expect(wallet).toContain(call);
+      expect(extension).toContain(call);
     }
+
+    // Mobile transport: signing is delegated to the phone over WalletConnect,
+    // so what leaves this codebase is a method name and a message — never a key.
+    const walletConnect = source("lib/stellar/wallet-connect.ts");
+    for (const method of ["stellar_signMessage", "stellar_signXDR"]) {
+      expect(walletConnect).toContain(method);
+    }
+
+    // The facade reaches a wallet only through those two, and signs nothing itself.
+    const wallet = source("lib/stellar/wallet.ts");
+    expect(wallet).toMatch(/from "\.\/wallet-extension"/);
+    expect(wallet).toMatch(/import\("\.\/wallet-connect"\)/);
+
     // No client module on the path signs with the SDK itself.
     for (const file of CLIENT) {
       expect(/\.sign\s*\(\s*(sep53Digest|hash|tx)/.test(source(file)), `${file} signs with the SDK`).toBe(false);

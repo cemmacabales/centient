@@ -20,6 +20,8 @@ v3 rebuilds the deck around three themes that are now first-class (and are the r
 
 It also reflects the **Celo → Stellar migration** being complete (`@stellar/stellar-sdk`, Freighter, StrKey addresses, USDC-on-Stellar), and the **accumulate-then-withdraw** payout model.
 
+> **Since v3 (2026-09-21):** accumulate-then-withdraw is retired. Each accepted answer is now paid on-chain, instantly, to the contributor's wallet through a 2-of-3 multisig payout. Nothing accrues off-chain, and only balances from before the change can still be withdrawn ([ADR-0007](adr/0007-retire-accumulate-then-withdraw.md), #39). Wherever the narrative below says earnings "accrue" and "settle once at withdrawal", or says there is one transaction per cash-out, present per-answer payout instead. Update the deck at its next revision.
+
 ---
 
 ## Deck at a glance

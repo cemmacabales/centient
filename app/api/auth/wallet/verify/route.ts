@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { isValidStellarAddress } from "@/lib/stellar/signature";
 import { consumeSignInChallenge, findOrCreateWalletUser } from "@/lib/stellar/auth-challenge";
 import { setLabelerSessionCookie, signLabelerJWT } from "@/lib/labeler-auth";
+import { isAnyIdentifierBanned } from "@/lib/ban-identity";
+import prisma from "@/lib/prisma";
 
 /**
  * POST /api/auth/wallet/verify — sign in by proving control of a Stellar address (#25).
@@ -21,6 +23,10 @@ import { setLabelerSessionCookie, signLabelerJWT } from "@/lib/labeler-auth";
  * wallet-only one. A request that already carries a session is signed in as the
  * proven address's contributor instead. Linking an address to an email account
  * is still `/api/me/wallet`'s job, not this route's.
+ *
+ * A contributor banned on any identifier (email, address or account, #36) gets
+ * a 403 `banned` and no session. The submit route checks the same, so this only
+ * keeps a banned identity out rather than being the guard that stops payment.
  */
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
@@ -54,6 +60,10 @@ export async function POST(req: NextRequest) {
   }
 
   const user = await findOrCreateWalletUser(result.address);
+  const holder = await prisma.user.findUnique({ where: { id: user.id }, select: { email: true } });
+  if (await isAnyIdentifierBanned(holder?.email ?? null, result.address, user.id)) {
+    return NextResponse.json({ error: "banned" }, { status: 403 });
+  }
   const token = await signLabelerJWT(user.id);
   const res = NextResponse.json({
     success: true,

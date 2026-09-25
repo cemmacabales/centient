@@ -43,6 +43,7 @@ model User {
   identifierHistory UserIdentifierHistory[]
   flaggedWithdrawals FlaggedWithdrawal[]
   sponsoredTrustlines SponsoredTrustline[]
+  legacyEarningsBackfill LegacyEarningsBackfill?
 
   @@map("users")
 }
@@ -239,6 +240,7 @@ model Submission {
   user User @relation(fields: [userId], references: [id])
   task Task @relation(fields: [taskId], references: [id])
   payoutJob PayoutJob?
+  payoutAttempts PayoutAttempt[]
 
   @@unique([userId, taskId])
   @@index([userId])
@@ -313,6 +315,34 @@ enum UploadJobStatus {
   cancelled
 }
 
+/// One signed payout envelope for a submission, recorded before it is submitted
+/// (#38). The submission id is the payout's idempotency key; each envelope
+/// signed under it is an attempt. An `open` attempt may still land on-chain, so
+/// no payer builds another envelope, and the co-signer signs none, until it is
+/// settled by its hash: `confirmed` (it applied) or `void` (it provably never
+/// can). The partial unique index makes "one live envelope per submission" a
+/// database rule rather than a code convention.
+model PayoutAttempt {
+  id           String    @id @default(uuid())
+  submissionId String
+  envelopeHash String    @unique
+  /// The envelope's maxTime: no ledger closing after it can include it.
+  expiresAt    DateTime
+  /// open | confirmed | void
+  status       String    @default("open")
+  /// Why a settled attempt settled, e.g. `rejected: tx_bad_seq` or `expired unincluded`.
+  outcome      String?
+  createdAt    DateTime  @default(now())
+  resolvedAt   DateTime?
+
+  submission Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@unique([submissionId], name: "payout_attempts_one_open_per_submission", map: "payout_attempts_one_open_per_submission", where: raw("\"status\" = 'open'"))
+  @@index([submissionId])
+  @@index([status, expiresAt])
+  @@map("payout_attempts")
+}
+
 enum PayoutJobStatus {
   queued
   processing
@@ -343,6 +373,10 @@ model PayoutJob {
   completedAt        DateTime?
   lastError          String?
   retryCount         Int             @default(0)
+  // #38: not claimable before this instant. Set when a job stands down on a
+  // payout envelope whose fate is not yet known, so it waits without spinning
+  // and without spending a retry.
+  notBefore          DateTime?
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 
@@ -428,9 +462,10 @@ enum UserLedgerType {
   REVERSAL
 }
 
-// Off-chain labeler balance ledger — mirrors BalanceLedger. Approved answers credit
-// pendingBalanceUnits (CREDIT_REWARD); withdrawals debit it (WITHDRAWAL); failed/reversed
-// withdrawals re-credit (REVERSAL). Schema only in P0a — no writes yet.
+// Off-chain labeler balance ledger — mirrors BalanceLedger. Approved answers used to
+// credit pendingBalanceUnits (CREDIT_REWARD); withdrawals debit it (WITHDRAWAL);
+// failed/reversed withdrawals re-credit (REVERSAL). #39 retired accrual: no new
+// CREDIT_REWARD is written, and the rows are kept for audit (ADR-0007).
 model UserBalanceLedger {
   id           String         @id @default(uuid())
   userId       String
@@ -443,6 +478,20 @@ model UserBalanceLedger {
 
   @@index([userId, createdAt])
   @@map("user_balance_ledger")
+}
+
+// #39 (ADR-0007): what the legacy earnings backfill added to each user —
+// `amountUnits` to totalEarnedUnits and `accruedCount` to submissionCount, from
+// their `accrued` answers, which accrual credited to pendingBalanceUnits only. One row per user; its presence is what makes the
+// backfill run once.
+model LegacyEarningsBackfill {
+  userId       String   @id
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amountUnits  BigInt
+  accruedCount Int
+  appliedAt    DateTime @default(now())
+
+  @@map("legacy_earnings_backfill")
 }
 
 // Why a withdrawal was blocked by the P4a/P4b anti-fraud gates. Severity orders the

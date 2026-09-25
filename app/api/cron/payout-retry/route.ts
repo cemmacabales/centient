@@ -3,10 +3,11 @@ import prisma from "@/lib/prisma";
 import { reprocessPayoutWithNonceSafety } from "@/lib/payout-service";
 import { StellarPaymentError } from "@/lib/stellar/client";
 import { authenticateCron } from "@/lib/cron-auth";
+import { SUBMISSION_RETRY_BUDGET } from "@/lib/payout-retry-claim";
 
 export const dynamic = "force-dynamic";
 
-const MAX_RETRIES = 5;
+const MAX_RETRIES = SUBMISSION_RETRY_BUDGET;
 const BASE_BACKOFF_MS = 60_000;
 const MAX_BACKOFF_MS = 8 * 60_000;
 const STUCK_PAYOUT_THRESHOLD_MS = 5 * 60 * 1000;
@@ -16,11 +17,20 @@ export async function POST(req: NextRequest) {
   if (authErr) return authErr;
 
   try {
+    // #37: a row whose SUBMISSION_PAYOUT job is still queued or processing
+    // belongs to the payout worker, which may be about to broadcast it. The
+    // worker also takes this row's retry claim before it broadcasts, so a race
+    // here stands one side down; skipping live jobs keeps the cron from
+    // contending for work the worker owns in the first place.
     const stuckPending = await prisma.$queryRaw`
       SELECT id, "walletAddress", "retryCount"
-      FROM "submissions"
+      FROM "submissions" s
       WHERE "payoutStatus" = 'pending'
         AND "retryCount" < ${MAX_RETRIES}
+        AND NOT EXISTS (
+          SELECT 1 FROM "payout_jobs" j
+          WHERE j."submissionId" = s.id AND j."status" IN ('queued', 'processing')
+        )
         AND EXTRACT(EPOCH FROM (NOW() - "createdAt")) * 1000 > ${STUCK_PAYOUT_THRESHOLD_MS}
       ORDER BY "createdAt" ASC
       LIMIT 100
@@ -28,9 +38,13 @@ export async function POST(req: NextRequest) {
 
     const eligibleFailed = await prisma.$queryRaw`
       SELECT id, "walletAddress", "retryCount"
-      FROM "submissions"
+      FROM "submissions" s
       WHERE "payoutStatus" = 'failed'
         AND "retryCount" < ${MAX_RETRIES}
+        AND NOT EXISTS (
+          SELECT 1 FROM "payout_jobs" j
+          WHERE j."submissionId" = s.id AND j."status" IN ('queued', 'processing')
+        )
         AND EXTRACT(EPOCH FROM (NOW() - COALESCE("lastRetriedAt", "createdAt"))) * 1000
             >= LEAST(POWER(2, "retryCount") * ${BASE_BACKOFF_MS}, ${MAX_BACKOFF_MS})
       ORDER BY "lastRetriedAt" ASC NULLS FIRST, "createdAt" ASC

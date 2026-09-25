@@ -24,6 +24,12 @@ export interface LedgerPayout {
   status: string;
   /** Non-null once Horizon accepted a payment for this row. */
   txHash: string | null;
+  /**
+   * #38: the hash of an envelope already signed for this row whose fate is not
+   * yet settled — it may still land. Always null for a payout job, which is
+   * not journalled.
+   */
+  openAttemptHash: string | null;
   /** Where the *ledger* says to pay — never where the request says. */
   destination: string | null;
   amountUnits: bigint | null;
@@ -72,6 +78,14 @@ export function assertLedgerAgrees(
       `payout co-signer: ${kind} ${id} already carries broadcast hash ${row.txHash} — refusing to sign a second payment for it`,
     );
   }
+  // #38: an envelope signed earlier may still land. Until the payer settles it
+  // by its hash, a new signature would be a second payment in waiting — the
+  // double-pay a process killed mid-broadcast used to leave behind.
+  if (row.openAttemptHash) {
+    throw new Error(
+      `payout co-signer: ${kind} ${id} has an unsettled envelope ${row.openAttemptHash} — refusing to sign another until it is settled`,
+    );
+  }
   if (!SIGNABLE_STATUSES[kind].includes(row.status)) {
     throw new Error(
       `payout co-signer: ${kind} ${id} has status "${row.status}", which is not signable (expected one of ${SIGNABLE_STATUSES[kind].join(", ")})`,
@@ -106,17 +120,8 @@ export function assertLedgerAgrees(
  * instead of the instance is what lets the two stay separate.
  */
 export interface LedgerReader {
-  submission: {
-    findUnique(args: {
-      where: { id: string };
-      select: { walletAddress: true; payoutAmountUnits: true; payoutStatus: true; payoutTxHash: true };
-    }): Promise<{
-      walletAddress: string | null;
-      payoutAmountUnits: bigint;
-      payoutStatus: string;
-      payoutTxHash: string | null;
-    } | null>;
-  };
+  /** One SQL statement: the submission read below must be a single snapshot. */
+  $queryRaw<T = unknown>(query: TemplateStringsArray, ...values: unknown[]): PromiseLike<T>;
   payoutJob: {
     aggregate(args: {
       _sum: { amountUnits: true };
@@ -150,21 +155,33 @@ export async function readLedgerPayout(
   reference: PayoutReference,
 ): Promise<LedgerPayout | null> {
   if (reference.kind === "submission") {
-    const row = await client.submission.findUnique({
-      where: { id: reference.id },
-      select: {
-        walletAddress: true,
-        payoutAmountUnits: true,
-        payoutStatus: true,
-        payoutTxHash: true,
-      },
-    });
+    // The row and its open envelope in ONE statement, so one snapshot (#38
+    // review). Read separately, a payer recording its payment in between turns
+    // the row's "pending, no hash" and the envelope's "confirmed" into a stale
+    // pair that looks unpaid with nothing in flight, and this signs again.
+    const [row] = await client.$queryRaw<
+      {
+        walletAddress: string | null;
+        payoutAmountUnits: bigint;
+        payoutStatus: string;
+        payoutTxHash: string | null;
+        openAttemptHash: string | null;
+      }[]
+    >`
+      SELECT s."walletAddress", s."payoutAmountUnits", s."payoutStatus", s."payoutTxHash",
+             (SELECT a."envelopeHash" FROM "payout_attempts" a
+               WHERE a."submissionId" = s."id" AND a."status" = 'open'
+               LIMIT 1) AS "openAttemptHash"
+      FROM "submissions" s
+      WHERE s."id" = ${reference.id}
+    `;
     if (!row) return null;
     return {
       kind: "submission",
       id: reference.id,
       status: row.payoutStatus,
       txHash: row.payoutTxHash,
+      openAttemptHash: row.openAttemptHash,
       destination: row.walletAddress,
       amountUnits: row.payoutAmountUnits,
     };
@@ -180,6 +197,7 @@ export async function readLedgerPayout(
     id: reference.id,
     status: row.status,
     txHash: row.txHash,
+    openAttemptHash: null,
     destination: row.destinationAddress,
     amountUnits: row.amountUnits,
   };

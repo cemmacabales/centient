@@ -11,20 +11,6 @@ export const REWARD_TOKEN_SYMBOL = process.env.NEXT_PUBLIC_REWARD_TOKEN_SYMBOL ?
 export const REWARD_TOKEN_DECIMALS = Number(process.env.NEXT_PUBLIC_REWARD_TOKEN_DECIMALS ?? "7");
 export const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
-// Minimum accumulated balance (in units) a labeler must have before they can
-// withdraw, keeping per-withdrawal fees economical. Required + fail-fast like
-// PLATFORM_FEE_UNITS: an unset/invalid value fails the withdrawal closed (no
-// payout) rather than silently defaulting to "no minimum".
-export function getMinWithdrawalUnits(): bigint {
-  const raw = process.env.MIN_WITHDRAWAL_UNITS;
-  if (!raw || !/^\d+$/.test(raw)) {
-    throw new Error(
-      "MIN_WITHDRAWAL_UNITS env var is required and must be a non-negative integer string"
-    );
-  }
-  return BigInt(raw);
-}
-
 export function parseGoldRatio(raw: string | undefined): number {
   const value = Number(raw?.trim() || "0.1");
   if (value < 0 || value > 1 || Number.isNaN(value)) {
@@ -41,7 +27,7 @@ export const MAX_SHARED_WALLET_ACCOUNTS = Number(process.env.MAX_SHARED_WALLET_A
 
 // P4a — withdrawal eligibility gates. These anti-fraud thresholds (spec §4.4)
 // gate cash-out behind quality history so cheap mass-created accounts can't
-// instantly withdraw. Unlike MIN_WITHDRAWAL_UNITS these fail *open*: an unset (or
+// instantly withdraw. These fail *open*: an unset (or
 // 0) value disables that gate, so gating is opt-in per environment. Recommended
 // production values: WITHDRAWAL_MIN_SUBMISSIONS=50, WITHDRAWAL_MIN_GOLD_RATE=0.7,
 // WITHDRAWAL_MIN_ACCOUNT_AGE_HOURS=24.
@@ -91,10 +77,21 @@ export function getWithdrawalThresholds(): WithdrawalThresholds {
 }
 
 // Submission payout statuses that represent an *accepted & rewarded* answer:
-// legacy per-question on-chain payouts ("sent"/"confirmed") plus the
-// accumulate-then-withdraw path ("accrued" — credited to the user's off-chain
-// balance). Use this wherever answers are counted toward a task's response
-// target or inter-annotator agreement. NOTE: this is deliberately NOT the same
-// set used for on-chain *spend* accounting (lib/payout-cap.ts), which must only
-// count funds actually moved on-chain and therefore excludes "accrued".
-export const REWARDED_STATUSES = ["sent", "confirmed", "accrued"] as const;
+// an instant payout still in flight ("pending", #37), a per-question on-chain
+// payout ("sent"/"confirmed"), and the legacy accumulate-then-withdraw path
+// ("accrued" — credited to the user's off-chain balance until #39). Use this
+// wherever answers are counted toward a task's response target; agreement
+// scoring and task resolution use SETTLED_STATUSES below. "pending" is here because an accepted answer is
+// written `pending` and paid out of band: leaving it out would let a task be
+// over-answered, and over-paid, while its payouts are in flight. NOTE: this is
+// deliberately NOT the same set used for on-chain *spend* accounting
+// (lib/payout-cap.ts), which must only count funds actually moved on-chain.
+export const REWARDED_STATUSES = ["pending", "sent", "confirmed", "accrued"] as const;
+
+// The subset of REWARDED_STATUSES whose payout has settled: paid on-chain, or
+// credited under the legacy balance. Use this for anything irreversible that an
+// answer feeds — agreement scoring and resolving a task — because a `pending`
+// payout can still fail, be refunded, and drop out of REWARDED_STATUSES, and a
+// resolved task is never recomputed (#37). `pending` reserves room under the
+// response target; only a settled answer decides the result.
+export const SETTLED_STATUSES = ["sent", "confirmed", "accrued"] as const;

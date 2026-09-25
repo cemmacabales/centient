@@ -173,6 +173,8 @@ describe("setUpPayouts — recoverable failures", () => {
 
   it.each<[WalletErrorCode, PayoutSetupFailure]>([
     ["rejected", "rejected"],
+    ["cancelled", "cancelled"],
+    ["timed_out", "timed_out"],
     ["wrong_account", "wrong_account"],
     ["freighter_missing", "freighter_missing"],
     ["unsupported", "failed"],
@@ -229,7 +231,7 @@ describe("setUpPayouts — recoverable failures", () => {
 
   it("has a message for every failure", () => {
     const reasons: PayoutSetupFailure[] = [
-      "wallet_required", "freighter_missing", "rejected", "wrong_account", "pending", "cap_reached",
+      "wallet_required", "freighter_missing", "rejected", "cancelled", "timed_out", "wrong_account", "pending", "cap_reached",
       "address_in_use", "unavailable", "rate_limited", "network", "failed",
     ];
     for (const reason of reasons) expect(PAYOUT_SETUP_MESSAGES[reason]).toBeTruthy();

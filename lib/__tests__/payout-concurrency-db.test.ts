@@ -267,6 +267,39 @@ describe("N concurrent payouts settle once each", () => {
     expect(settled?.payoutTxHash).toBeTruthy();
   });
 
+  it("broadcasts a submission payout once when the worker and the retry path race for it (#37)", async () => {
+    // Submit enqueues a SUBMISSION_PAYOUT job for a `pending` row with no hash —
+    // exactly the row the retry cron treats as stuck. The worker's job lease and
+    // the cron's row lease are separate, so the worker must take the row's claim
+    // too, or both broadcast and the co-signer signs both.
+    const user = await createPayableUser();
+    const task = await createTask({ campaignId: null, isGold: false });
+    const submission = await prisma.submission.create({
+      data: {
+        walletAddress: user.walletAddress,
+        userId: user.id,
+        taskId: task.id,
+        choice: "A",
+        reason: VALID_REASON,
+        payoutAmountUnits: AMOUNT_UNITS,
+        payoutStatus: "pending",
+      },
+    });
+    await prisma.payoutJob.create({
+      data: { type: "SUBMISSION_PAYOUT", submissionId: submission.id, status: "queued" },
+    });
+
+    await Promise.all([
+      workerTick(),
+      ...Array.from({ length: WORKERS }, () => reprocessPayoutWithNonceSafety(submission.id)),
+    ]);
+
+    expect(broadcasts).toHaveLength(1);
+    const settled = await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } });
+    expect(settled.payoutStatus).toBe("sent");
+    expect(settled.payoutTxHash).toBeTruthy();
+  });
+
   it("keeps refreshing the claim while the broadcast is still in flight", async () => {
     // The lease's failure mode if it were only taken once: a Horizon submit that
     // outlives RETRY_CLAIM_LEASE_MS would let a second claimant broadcast before

@@ -18,7 +18,8 @@ import OnboardingScreen from "@/components/OnboardingScreen";
 import DisputeForm from "@/components/DisputeForm";
 import { identify, track } from "@/lib/analytics";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
-import { isValidStellarAddress } from "@/lib/stellar/signature";
+import { sessionStep, type SessionMe } from "@/lib/contributor-session";
+import { waitForPayoutToSettle } from "@/lib/payout-settle-watch";
 
 const MIN_LOADING_MS = 1500;
 
@@ -35,6 +36,7 @@ type Screen =
   | "no_tasks"
   | "success"
   | "quality_failed"
+  | "quality_passed"
   | "banned"
   | "cooldown"
   | "wallet_error";
@@ -57,16 +59,6 @@ interface SubmitResponseBody {
   error?: string;
   status?: "pending";
   submissionId?: string;
-}
-
-interface BalanceLedgerEntry {
-  id: string;
-  type: string;
-  amount: string;
-  amountUnits: string;
-  submissionId: string | null;
-  note: string | null;
-  createdAt: string;
 }
 
 const EXPLORER_URL =
@@ -96,6 +88,8 @@ function submitErrorMessage(status: number, code?: string): string {
       return "This task is no longer available.";
     case "response_target_reached":
       return "This task has enough submissions. Try the next one.";
+    case "payout_check_unavailable":
+      return "We couldn't check your wallet can receive USDC. Please try again in a moment.";
     case "payout_failed":
       return "Payment failed. Please try again.";
     case "server_error":
@@ -114,9 +108,12 @@ export default function Home() {
   const [screen, setScreen] = useState<Screen>("checking");
   const [wallet, setWallet] = useState<string | null>(null);
   const [task, setTask] = useState<TaskData | null>(null);
-  const [balance, setBalance] = useState("0");
-  const [recentCredits, setRecentCredits] = useState<BalanceLedgerEntry[]>([]);
+  // #39: what the contributor has been paid, from /api/me. Answers pay out
+  // on-chain as they are accepted, so there is no withdrawable balance to show.
+  const [totalEarned, setTotalEarned] = useState("0");
   const [submitting, setSubmitting] = useState(false);
+  // #35: a failed submission is announced beside the submit action, not only toasted.
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [submissionCount, setSubmissionCount] = useState(0);
   const [accountOpen, setAccountOpen] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
@@ -158,6 +155,7 @@ export default function Home() {
     // contents off a tab that has since been signed out.
     if (sessionGeneration.current !== generation) return null;
     setSubmissionCount(data.submissionCount ?? 0);
+    setTotalEarned(data.totalEarned ?? "0");
     setOnboardingCompleted(data.onboardingCompleted ?? false);
     setUnbannedAt(data.unbannedAt ?? null);
     setBannedReason(data.bannedReason ?? null);
@@ -172,23 +170,15 @@ export default function Home() {
     return data;
   }, []);
 
-  // Accumulate-then-withdraw (P2b): the labeler's earnings now accrue into a
-  // session-scoped off-chain balance instead of a per-question on-chain payout.
-  // Best-effort: a transient balance fetch failure must not block the flow.
-  const fetchBalance = useCallback(async () => {
-    const generation = sessionGeneration.current;
-    try {
-      const res = await fetch("/api/me/balance");
-      if (!res.ok) return;
-      const data = await res.json();
-      if (sessionGeneration.current !== generation) return;
-      setBalance(data.pendingBalance ?? "0");
-      setRecentCredits(Array.isArray(data.ledger) ? data.ledger : []);
-    } catch {
-      // ignore — balance display is non-critical
-    }
-  }, []);
+  // #39: the sheet shows earnings, which may have risen since the last refresh.
+  useEffect(() => {
+    if (accountOpen) fetchUserData().catch(() => {});
+  }, [accountOpen, fetchUserData]);
 
+  /**
+   * Loads the next task for this session onto the ranking surface, clearing the
+   * previous task's submit error; with none left, shows no_tasks.
+   */
   const fetchTask = useCallback(async () => {
     const res = await fetch("/api/task");
     // #30: an account without a bound wallet is served no work until it claims one.
@@ -198,6 +188,7 @@ export default function Home() {
     }
     const data = await res.json();
     if (data.task) {
+      setSubmitError(null);
       setTask({
         id: data.task.id,
         prompt: data.task.prompt,
@@ -224,17 +215,11 @@ export default function Home() {
   const resolveSession = useCallback(async (): Promise<Screen> => {
     const res = await fetch("/api/auth/me");
     if (!res.ok) return "login";
-    const data = (await res.json()) as {
-      authenticated?: boolean;
-      userId?: string;
-      wallet?: string | null;
-    };
-    if (!data.authenticated) return "login";
-    if (data.userId) identify(data.userId);
-    // No wallet, or a legacy EVM `0x…` that can never receive USDC: claim one.
-    if (!data.wallet || !isValidStellarAddress(data.wallet)) return "claim_wallet";
-    setWallet(data.wallet);
-    return "payout_setup";
+    const data = (await res.json()) as SessionMe;
+    const next = sessionStep(data);
+    if (next.step !== "login" && data.userId) identify(data.userId);
+    if (next.step === "payout_setup") setWallet(next.wallet);
+    return next.step;
   }, []);
 
   useEffect(() => {
@@ -270,14 +255,13 @@ export default function Home() {
     setScreen("loading");
     try {
       const userData = await fetchUserData();
-      await fetchBalance();
       // fetchUserData has already shown the cooldown screen; don't replace it.
       if (userData?.isCooldown) return;
       setScreen(userData?.onboardingCompleted ? "landing" : "onboarding");
     } catch {
       setScreen("wallet_error");
     }
-  }, [fetchUserData, fetchBalance]);
+  }, [fetchUserData]);
 
   const handlePayoutReady = useCallback(
     async ({ address, sponsored }: { address: string; sponsored: boolean }) => {
@@ -288,10 +272,10 @@ export default function Home() {
     [enterApp],
   );
 
-  // PR #105 review: tasks and submissions need only a bound wallet; payout setup
-  // is needed to withdraw. A failure there — Horizon down, the sponsor short of
-  // XLM, a legacy account at the sponsorship cap — must not keep a contributor
-  // out of the app. A withdrawal refused `payout_setup_required` brings them back.
+  // PR #105 review: a failure in payout setup — Horizon down, the sponsor short
+  // of XLM, a legacy account at the sponsorship cap — must not keep a contributor
+  // out of the app. An answer or a withdrawal refused `payout_setup_required`
+  // brings them back, since an answer is paid on-chain at once (#37).
   const handlePayoutSkipped = useCallback(
     async (reason: string) => {
       track("payout_setup_skipped", { reason });
@@ -331,16 +315,18 @@ export default function Home() {
     fetchTask();
   }, [fetchTask]);
 
-  // Logging out clears the session cookie server-side; everything the signed-in
-  // session put in client state has to be dropped here too, or the next labeler
-  // to sign in on this tab would flash the previous one's wallet and balance.
+  /**
+   * Logging out clears the session cookie server-side; everything the signed-in
+   * session put in client state has to be dropped here too, or the next labeler
+   * to sign in on this tab would flash the previous one's wallet and earnings.
+   */
   const handleLogout = useCallback(() => {
     sessionGeneration.current += 1;
     setAccountOpen(false);
     setWallet(null);
     setTask(null);
-    setBalance("0");
-    setRecentCredits([]);
+    setSubmitError(null);
+    setTotalEarned("0");
     setSubmissionCount(0);
     setOnboardingCompleted(false);
     setUnbannedAt(null);
@@ -357,11 +343,17 @@ export default function Home() {
     track("onboarding_completed");
   }, []);
 
+  /**
+   * Submits a ranking. Outcomes that leave the task move to their screen; a
+   * failure stays on it as `submitError`, which TaskCard announces beside the
+   * submit action with the choice and reason kept for a retry.
+   */
   async function handleSubmit(choice: "A" | "B", reason: string) {
     if (!task) return;
     const generation = sessionGeneration.current;
     const loggedOutSince = () => sessionGeneration.current !== generation;
     setSubmitting(true);
+    setSubmitError(null);
     try {
       let res: Response;
       try {
@@ -373,7 +365,7 @@ export default function Home() {
         });
       } catch (err) {
         console.error("[submit] network error", err);
-        showToast("Network error. Please check your connection and try again.", "error");
+        setSubmitError("Network error. Please check your connection and try again.");
         return;
       }
 
@@ -393,6 +385,14 @@ export default function Home() {
         return;
       }
 
+      // The wallet can't hold USDC yet, so the answer was not recorded. Payout
+      // setup adds the trustline; the task stays unanswered for afterwards.
+      if (res.status === 409 && data.error === "payout_setup_required") {
+        track("submission_blocked", { task_id: task.id, reason: "payout_setup_required" });
+        handlePayoutSetupRequired();
+        return;
+      }
+
       if (res.status === 403) {
         setScreen("banned");
         track("submission_blocked", { task_id: task.id, reason: "account_banned" });
@@ -406,13 +406,27 @@ export default function Home() {
         return;
       }
 
+      // #37: a passed gold check earns nothing. It was served like any other
+      // task, so this is the first the contributor hears it was a quality check.
+      if (!data.paid && data.reason === "quality_check_passed") {
+        setScreen("quality_passed");
+        track("submission_quality_check_passed", { task_id: task.id });
+        return;
+      }
+
       if (data.status === "pending") {
-        // The approved answer is credited to the off-chain balance (P2a). Refresh
-        // the balance + recent credits instead of polling a per-question payout.
+        // #37: the approved answer is queued for an on-chain payout. Refresh the
+        // profile; its status is read from the account sheet, not shown here.
         await fetchUserData();
-        await fetchBalance();
         if (loggedOutSince()) return;
         setScreen("success");
+        // #39: earnings rise only once the worker has paid, after this returns.
+        // Refresh them when it has, so the last answer of a session is counted.
+        if (typeof data.submissionId === "string") {
+          void waitForPayoutToSettle(data.submissionId, { isCancelled: loggedOutSince }).then((paid) => {
+            if (paid && !loggedOutSince()) fetchUserData().catch(() => {});
+          });
+        }
         track("submission_approved", {
           task_id: task.id,
           choice,
@@ -422,7 +436,7 @@ export default function Home() {
       }
 
       console.error("[submit] error response", { status: res.status, error: data.error });
-      showToast(submitErrorMessage(res.status, data.error), "error");
+      setSubmitError(submitErrorMessage(res.status, data.error));
     } finally {
       setSubmitting(false);
     }
@@ -451,7 +465,7 @@ export default function Home() {
   } else if (screen === "landing") {
     body = (
       <InAppLanding
-        totalEarned={balance}
+        totalEarned={totalEarned}
         submissionCount={submissionCount}
         onStart={handleStartEarning}
       />
@@ -488,18 +502,26 @@ export default function Home() {
               aria-label="View account"
               className="rounded-full transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
             >
-              <EarningsBadge totalEarned={balance} />
+              <EarningsBadge totalEarned={totalEarned} />
             </button>
           </div>
         </header>
         <main className="mx-auto max-w-lg px-4 py-6">
-          <TaskCard task={task} onSubmit={handleSubmit} loading={submitting} reward={task.rewardDisplay} tokenSymbol={task.rewardSymbol} />
+          <TaskCard
+            key={task.id}
+            task={task}
+            onSubmit={handleSubmit}
+            loading={submitting}
+            error={submitError}
+            reward={task.rewardDisplay}
+            tokenSymbol={task.rewardSymbol}
+          />
         </main>
         <AccountSheet
           open={accountOpen}
           onClose={() => setAccountOpen(false)}
           walletAddress={wallet ?? ""}
-          totalEarned={balance}
+          totalEarned={totalEarned}
           rewardSymbol={REWARD_TOKEN_SYMBOL}
           submissionCount={submissionCount}
           explorerUrl={EXPLORER_URL}
@@ -533,45 +555,14 @@ export default function Home() {
             </span>
           </div>
           <h2 className="text-2xl font-headline font-bold text-on-surface">
-            {`+${task?.rewardDisplay ?? REWARD_AMOUNT} ${task?.rewardSymbol ?? REWARD_TOKEN_SYMBOL} added`}
+            {`+${task?.rewardDisplay ?? REWARD_AMOUNT} ${task?.rewardSymbol ?? REWARD_TOKEN_SYMBOL} on its way`}
           </h2>
+          {/* #37: the reward is queued for an on-chain payout, not yet sent. Say so,
+              and point at where it can be followed to sent and confirmed. */}
           <p className="text-center font-body text-sm text-on-surface-variant">
-            Your contribution helps improve AI. Earnings build up in your balance —
-            withdraw to your wallet anytime.
+            Your contribution helps improve AI. Your reward is being sent to your wallet —
+            follow it in your account.
           </p>
-          <div className="w-full rounded-3xl bg-surface-container-lowest p-6 shadow-[0_8px_32px_rgba(25,28,30,0.06)]">
-            <div className="flex flex-col items-center">
-              <span className="mb-2 font-label text-xs font-bold uppercase tracking-widest text-outline">
-                Your balance
-              </span>
-              <div className="flex items-baseline gap-1">
-                <span className="font-headline text-4xl font-extrabold tracking-tighter text-on-surface">
-                  {balance}
-                </span>
-                <span className="font-headline text-xl font-bold text-secondary">{REWARD_TOKEN_SYMBOL}</span>
-              </div>
-            </div>
-            {recentCredits.length > 0 && (
-              <div className="mt-5 border-t border-outline-variant/40 pt-4">
-                <span className="font-label text-[10px] font-bold uppercase tracking-[0.18em] text-outline">
-                  Recent credits
-                </span>
-                <ul className="mt-2 flex flex-col gap-1.5">
-                  {recentCredits.slice(0, 3).map((entry) => (
-                    <li
-                      key={entry.id}
-                      className="flex items-center justify-between font-body text-sm text-on-surface-variant"
-                    >
-                      <span>{new Date(entry.createdAt).toLocaleDateString()}</span>
-                      <span className="font-semibold text-primary">
-                        +{entry.amount} {REWARD_TOKEN_SYMBOL}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
           <SubmitButton label="Next Task" onClick={() => fetchTask()} />
         </div>
       </div>
@@ -590,6 +581,27 @@ export default function Home() {
           </div>
           <h2 className="text-2xl font-headline font-bold text-on-surface">Quality check failed</h2>
           <p className="text-center font-body text-sm text-on-surface-variant">Try another task.</p>
+          <SubmitButton label="Next Task" onClick={() => fetchTask()} />
+        </div>
+      </div>
+    );
+  } else if (screen === "quality_passed") {
+    body = (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-6">
+        <div className="flex w-full max-w-sm flex-col items-center gap-6">
+          <div className="flex h-32 w-32 items-center justify-center rounded-full bg-secondary-container">
+            <span
+              className="material-symbols-outlined text-[64px] text-on-secondary-container"
+              aria-hidden="true"
+            >
+              verified
+            </span>
+          </div>
+          <h2 className="text-2xl font-headline font-bold text-on-surface">Quality check passed</h2>
+          <p className="text-center font-body text-sm text-on-surface-variant">
+            That was a quality-check question. They don&apos;t earn a reward, but passing them keeps your
+            account in good standing.
+          </p>
           <SubmitButton label="Next Task" onClick={() => fetchTask()} />
         </div>
       </div>
@@ -694,7 +706,7 @@ export default function Home() {
             <span className="font-label text-xs uppercase tracking-[0.18em] text-outline">
               Total earned
             </span>
-            <EarningsBadge totalEarned={balance} />
+            <EarningsBadge totalEarned={totalEarned} />
           </div>
         </div>
       </div>

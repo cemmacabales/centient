@@ -1,7 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { track } from "@/lib/analytics";
+import CancelWalletWait from "./CancelWalletWait";
+import FreighterPairing from "./FreighterPairing";
+import { cancelWalletRequest, prepareWallet, type WalletTransport } from "@/lib/stellar/wallet";
 import {
   WALLET_SIGN_IN_MESSAGES,
   signInWithWallet,
@@ -17,7 +20,11 @@ interface WalletSignInViewProps {
   phase: WalletSignInPhase;
   /** Set when `phase` is "failed". */
   reason?: WalletSignInFailure;
+  /** Which Freighter this browser will reach; null until resolved. */
+  transport?: WalletTransport | null;
   onConnect: () => void;
+  /** Stop waiting on the Freighter app. Shown only while waiting on it. */
+  onCancel?: () => void;
 }
 
 /**
@@ -26,15 +33,31 @@ interface WalletSignInViewProps {
  *
  * A declined prompt is shown as neutral guidance, not an error: nothing went
  * wrong, and #24 found a rejection uses nothing up server-side.
+ *
+ * The label follows the transport, because the two are different acts: the
+ * extension opens a prompt in this browser, while the mobile app has to be
+ * opened. Promising the wrong one is how a contributor on a phone ends up
+ * waiting on a window that is never going to appear.
  */
-export function WalletSignInView({ phase, reason, onConnect }: WalletSignInViewProps) {
+export function WalletSignInView({
+  phase,
+  reason,
+  transport,
+  onConnect,
+  onCancel,
+}: WalletSignInViewProps) {
   const connecting = phase === "connecting";
   const failure = phase === "failed" ? (reason ?? "failed") : null;
+  const mobile = transport === "walletconnect";
   const label = connecting
-    ? "Waiting for Freighter…"
+    ? mobile
+      ? "Waiting for the Freighter app…"
+      : "Waiting for Freighter…"
     : failure
       ? "Try again"
-      : "Connect Freighter";
+      : mobile
+        ? "Open Freighter app"
+        : "Connect Freighter";
 
   return (
     <div className="flex w-full max-w-xs flex-col items-center gap-3">
@@ -51,12 +74,14 @@ export function WalletSignInView({ phase, reason, onConnect }: WalletSignInViewP
         {label}
       </button>
 
+      {connecting && mobile && onCancel && <CancelWalletWait onCancel={onCancel} />}
+
       <div role="status" aria-live="polite" className="w-full text-center">
         {failure && (
           <p
             data-failure={failure}
             className={`font-body text-sm ${
-              failure === "rejected" ? "text-on-surface-variant" : "text-error"
+              failure === "rejected" || failure === "cancelled" ? "text-on-surface-variant" : "text-error"
             }`}
           >
             {WALLET_SIGN_IN_MESSAGES[failure]}
@@ -88,6 +113,21 @@ interface WalletSignInProps {
 export default function WalletSignIn({ onSignedIn, signIn = signInWithWallet }: WalletSignInProps) {
   const [phase, setPhase] = useState<WalletSignInPhase>("idle");
   const [reason, setReason] = useState<WalletSignInFailure | undefined>();
+  const [transport, setTransport] = useState<WalletTransport | null>(null);
+
+  // Resolved on mount so the button reads correctly before it is pressed —
+  // extension detection needs `window`, so it can't happen during render — and
+  // so the mobile path's slow parts (relay SDK, deep-link lookup) happen while
+  // the contributor is still reading, not between their tap and the app.
+  useEffect(() => {
+    let live = true;
+    void prepareWallet().then((t) => {
+      if (live) setTransport(t);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   /** Run one sign-in attempt; ignores clicks while one is already in flight. */
   const handleConnect = async () => {
@@ -104,5 +144,16 @@ export default function WalletSignIn({ onSignedIn, signIn = signInWithWallet }: 
     setPhase("failed");
   };
 
-  return <WalletSignInView phase={phase} reason={reason} onConnect={handleConnect} />;
+  return (
+    <>
+      <WalletSignInView
+        phase={phase}
+        reason={reason}
+        transport={transport}
+        onConnect={handleConnect}
+        onCancel={() => void cancelWalletRequest()}
+      />
+      <FreighterPairing />
+    </>
+  );
 }

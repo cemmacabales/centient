@@ -14,6 +14,12 @@ interface LoginScreenProps {
   error: string | null;
 }
 
+/** The Centient promo video on the Artisam Labs YouTube channel. */
+const PROMO_VIDEO_ID = "uxjxu33TOuM";
+
+/** The public Centient docs on GitBook, synced from `docs/instawards`. */
+const DOCS_URL = "https://centient.gitbook.io/centient-docs/";
+
 const FOCUS_RING =
   "rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface";
 
@@ -56,20 +62,40 @@ export default function LoginScreen({ onWalletSignedIn, onEmailSignIn, error }: 
             Centient
           </span>
         </div>
-        <nav aria-label="Page sections" className="hidden items-center gap-6 sm:flex">
+        <div className="flex items-center gap-6">
+          <nav aria-label="Page sections" className="hidden items-center gap-6 sm:flex">
+            <a
+              href="#watch"
+              className={`font-label text-sm font-semibold text-on-surface-variant transition-colors hover:text-primary ${FOCUS_RING}`}
+            >
+              Watch
+            </a>
+            <a
+              href="#how-it-works"
+              className={`font-label text-sm font-semibold text-on-surface-variant transition-colors hover:text-primary ${FOCUS_RING}`}
+            >
+              How it works
+            </a>
+            <a
+              href="#faq"
+              className={`font-label text-sm font-semibold text-on-surface-variant transition-colors hover:text-primary ${FOCUS_RING}`}
+            >
+              FAQ
+            </a>
+          </nav>
           <a
-            href="#how-it-works"
-            className={`font-label text-sm font-semibold text-on-surface-variant transition-colors hover:text-primary ${FOCUS_RING}`}
+            href={DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 font-label text-sm font-bold text-on-primary shadow-[0_4px_12px_rgba(0,109,61,0.15)] transition-transform duration-200 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
           >
-            How it works
+            <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+              menu_book
+            </span>
+            Docs
+            <span className="sr-only"> (opens in a new tab)</span>
           </a>
-          <a
-            href="#faq"
-            className={`font-label text-sm font-semibold text-on-surface-variant transition-colors hover:text-primary ${FOCUS_RING}`}
-          >
-            FAQ
-          </a>
-        </nav>
+        </div>
       </header>
 
       <main>
@@ -134,6 +160,31 @@ export default function LoginScreen({ onWalletSignedIn, onEmailSignIn, error }: 
           </div>
 
           <Mascot />
+        </section>
+
+        {/* youtube-nocookie sets no cookies until the visitor presses play. */}
+        <section
+          id="watch"
+          aria-labelledby="watch-heading"
+          className="mx-auto max-w-5xl scroll-mt-6 px-5 pb-20 sm:px-8"
+        >
+          <h2
+            id="watch-heading"
+            className="text-center font-headline text-3xl font-extrabold tracking-tight sm:text-4xl"
+          >
+            Meet Centient
+          </h2>
+          <div className="mt-8 aspect-video w-full overflow-hidden rounded-3xl bg-surface-container-highest shadow-[0_16px_48px_rgba(0,109,61,0.12)]">
+            <iframe
+              src={`https://www.youtube-nocookie.com/embed/${PROMO_VIDEO_ID}?rel=0`}
+              title="Centient promo video"
+              loading="lazy"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              referrerPolicy="strict-origin-when-cross-origin"
+              allowFullScreen
+              className="h-full w-full border-0"
+            />
+          </div>
         </section>
 
         <section

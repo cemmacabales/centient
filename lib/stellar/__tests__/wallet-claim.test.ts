@@ -47,6 +47,7 @@ describe("claimWallet — success", () => {
     await expect(claimWallet(deps)).resolves.toEqual({ ok: true, address: ADDR });
 
     expect(String(fetchMock.mock.calls[0][0])).toBe(`/api/me/wallet?address=${encodeURIComponent(ADDR)}`);
+    expect(deps.connect).toHaveBeenCalledWith({ fresh: true });
     expect(deps.signOwnership).toHaveBeenCalledWith(CHALLENGE.message, ADDR);
     const [url, init] = fetchMock.mock.calls[1];
     expect(String(url)).toBe("/api/me/wallet");
@@ -58,6 +59,8 @@ describe("claimWallet — failures", () => {
   it.each<[WalletErrorCode, WalletClaimFailure]>([
     ["freighter_missing", "freighter_missing"],
     ["rejected", "rejected"],
+    ["cancelled", "cancelled"],
+    ["timed_out", "timed_out"],
     ["wrong_account", "wrong_account"],
     ["unsupported", "unsupported"],
     ["invalid_address", "failed"],
@@ -113,7 +116,7 @@ describe("claimWallet — failures", () => {
 
   it("has a message for every failure", () => {
     const reasons: WalletClaimFailure[] = [
-      "freighter_missing", "rejected", "wrong_account", "unsupported", "expired", "address_in_use",
+      "freighter_missing", "rejected", "cancelled", "timed_out", "wrong_account", "unsupported", "expired", "address_in_use",
       "wallet_already_bound", "rate_limited", "network", "failed",
     ];
     for (const reason of reasons) expect(WALLET_CLAIM_MESSAGES[reason]).toBeTruthy();

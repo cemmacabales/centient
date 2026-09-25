@@ -82,10 +82,6 @@ ensure("NEXT_PUBLIC_APP_URL", "http://localhost:3000", (v) => isMissing(v) || !/
 // Per-submission platform fee in units — getPlatformFeeUnits() throws if unset/invalid.
 ensure("PLATFORM_FEE_UNITS", "1500000", (v) => isMissing(v) || !/^\d+$/.test(v));
 
-// Minimum withdrawal balance in units — getMinWithdrawalUnits() throws if
-// unset/invalid, so scaffold a usable default (1 XLM = 10000000 units).
-ensure("MIN_WITHDRAWAL_UNITS", "10000000", (v) => isMissing(v) || !/^\d+$/.test(v));
-
 // Cron shared secret — /api/cron/* return 401 unless this is set. Generate one so
 // the cron endpoints are testable with `Authorization: Bearer <CRON_SECRET>`.
 ensure("CRON_SECRET", hex(32), (v) => isMissing(v) || looksPlaceholder(v));

@@ -21,7 +21,9 @@ import { prisma, truncateAll } from "@/tests/helpers/db";
 import { createUser, makeWallet } from "@/tests/helpers/factories";
 
 const ORIGINAL_ENV = { ...process.env };
-const MIN = "1000000000000000000"; // 1 token
+// #39: the only balances left are legacy ones, and the old 1 USDC minimum is
+// waived for them — 0.20 USDC was stranded under it.
+const LEGACY_DUST = 2_000_000n; // 0.20 USDC
 const SOME_SESSION = "11111111-1111-1111-1111-111111111111";
 // #30: a withdrawal goes to the account's bound wallet, so every user that reaches
 // the payout path is created holding a valid Stellar `G…`. The shared
@@ -56,7 +58,7 @@ beforeEach(async () => {
   vi.mocked(getLabelerSession).mockReset();
   vi.mocked(accountHasUsdcTrustline).mockReset();
   vi.mocked(accountHasUsdcTrustline).mockResolvedValue(true);
-  process.env = { ...ORIGINAL_ENV, MIN_WITHDRAWAL_UNITS: MIN };
+  process.env = { ...ORIGINAL_ENV };
 });
 
 afterEach(() => {
@@ -129,16 +131,28 @@ describe("POST /api/me/withdraw", () => {
     expect((await res.json()).destinationAddress).toBe(G_WALLET);
   });
 
-  it("returns 400 below_minimum when balance is under the threshold", async () => {
-    const user = await createUser({ pendingBalanceUnits: 500000000000000000n, walletAddress: G_WALLET });
+  it("returns 409 no_balance and enqueues nothing when there is no legacy balance (#39)", async () => {
+    const user = await createUser({ pendingBalanceUnits: 0n, walletAddress: G_WALLET });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
     const res = await POST(makeReq());
-    expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({
-      error: "below_minimum",
-      minimumUnits: MIN,
-      balanceUnits: "500000000000000000",
-    });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "no_balance" });
+    await expectNothingWithdrawn(user.id, 0n);
+  });
+
+  it("withdraws a legacy balance below the retired 1 USDC minimum (#39)", async () => {
+    // Set before the minimum was waived, so a leftover env var must not strand it.
+    process.env.MIN_WITHDRAWAL_UNITS = "10000000";
+    const user = await createUser({ pendingBalanceUnits: LEGACY_DUST, walletAddress: G_WALLET });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+    const res = await POST(makeReq());
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).amountUnits).toBe(LEGACY_DUST.toString());
+    const jobs = await prisma.payoutJob.findMany({ where: { userId: user.id } });
+    expect(jobs).toMatchObject([{ type: "WITHDRAWAL", amountUnits: LEGACY_DUST, destinationAddress: G_WALLET }]);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).pendingBalanceUnits).toBe(0n);
   });
 
   it("queues a single lump-sum payout to the bound wallet and decrements the balance on success", async () => {
@@ -510,7 +524,7 @@ describe("GET /api/me/withdraw (summary)", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns balance, threshold, the bound wallet, empty history, and canWithdraw=true above the minimum", async () => {
+  it("returns the legacy balance, the bound wallet, empty history, and canWithdraw=true", async () => {
     const user = await createUser({ pendingBalanceUnits: ENOUGH, walletAddress: G_WALLET });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
 
@@ -519,12 +533,13 @@ describe("GET /api/me/withdraw (summary)", () => {
     const body = await res.json();
     expect(body).toMatchObject({
       pendingBalanceUnits: "5000000000000000000",
-      thresholdUnits: MIN,
       destinationAddress: G_WALLET,
       canWithdraw: true,
       withdrawals: [],
     });
     expect(body).not.toHaveProperty("walletLinked");
+    // #39: no minimum is reported, because none applies to a legacy balance.
+    expect(body).not.toHaveProperty("thresholdUnits");
   });
 
   it.each([
@@ -539,12 +554,21 @@ describe("GET /api/me/withdraw (summary)", () => {
     expect(body.destinationAddress).toBeNull();
   });
 
-  it("reports canWithdraw=false when the balance is below the minimum", async () => {
-    const user = await createUser({ pendingBalanceUnits: 1n, walletAddress: G_WALLET });
+  it("reports canWithdraw=true for a legacy balance below the retired minimum (#39)", async () => {
+    process.env.MIN_WITHDRAWAL_UNITS = "10000000";
+    const user = await createUser({ pendingBalanceUnits: LEGACY_DUST, walletAddress: G_WALLET });
     vi.mocked(getLabelerSession).mockResolvedValue(user.id);
 
     const body = await (await GET(makeGetReq())).json();
-    expect(body.canWithdraw).toBe(false);
+    expect(body.canWithdraw).toBe(true);
+  });
+
+  it("reports canWithdraw=false when there is no legacy balance (#39)", async () => {
+    const user = await createUser({ pendingBalanceUnits: 0n, walletAddress: G_WALLET });
+    vi.mocked(getLabelerSession).mockResolvedValue(user.id);
+
+    const body = await (await GET(makeGetReq())).json();
+    expect(body).toMatchObject({ pendingBalanceUnits: "0", canWithdraw: false });
   });
 
   it("reports canWithdraw=false when a withdrawal is already in flight", async () => {

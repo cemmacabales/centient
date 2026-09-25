@@ -52,6 +52,8 @@ describe("signInWithWallet — success", () => {
     await expect(signInWithWallet(deps)).resolves.toEqual({ ok: true, address: ADDR, created: true });
 
     expect(bodyOf(fetchMock, "/api/auth/wallet/challenge")).toEqual({ address: ADDR });
+    // A stored mobile session may be one Freighter no longer holds.
+    expect(deps.connect).toHaveBeenCalledWith({ fresh: true });
     expect(deps.signOwnership).toHaveBeenCalledWith(CHALLENGE.message, ADDR);
     expect(bodyOf(fetchMock, "/api/auth/wallet/verify")).toEqual({
       address: ADDR,
@@ -84,6 +86,8 @@ describe("signInWithWallet — wallet failures", () => {
   const cases: [WalletErrorCode, WalletSignInFailure][] = [
     ["freighter_missing", "freighter_missing"],
     ["rejected", "rejected"],
+    ["cancelled", "cancelled"],
+    ["timed_out", "timed_out"],
     ["wrong_account", "wrong_account"],
     ["unsupported", "unsupported"],
     ["invalid_address", "failed"],
@@ -177,6 +181,18 @@ describe("signInWithWallet — server responses", () => {
     await expect(signInWithWallet(deps)).resolves.toEqual({ ok: false, reason });
   });
 
+  it("a banned identity resolves to banned, not to a retry", async () => {
+    // #36 added a 403 `banned` to verify. Mapping it to `failed` would invite
+    // an attempt that can never succeed.
+    const { deps } = withResponses(json(200, CHALLENGE), json(403, { error: "banned" }));
+    await expect(signInWithWallet(deps)).resolves.toEqual({ ok: false, reason: "banned" });
+  });
+
+  it("a 403 that is not a ban stays failed", async () => {
+    const { deps } = withResponses(json(200, CHALLENGE), json(403, { error: "forbidden" }));
+    await expect(signInWithWallet(deps)).resolves.toEqual({ ok: false, reason: "failed" });
+  });
+
   it("a verify error without a JSON body resolves to failed", async () => {
     const { deps } = withResponses(json(200, CHALLENGE), new Response("<html>", { status: 502 }));
     await expect(signInWithWallet(deps)).resolves.toEqual({ ok: false, reason: "failed" });
@@ -184,12 +200,20 @@ describe("signInWithWallet — server responses", () => {
 });
 
 describe("WALLET_SIGN_IN_MESSAGES", () => {
+  it("tells a banned contributor where to go instead of to try again", () => {
+    expect(WALLET_SIGN_IN_MESSAGES.banned).not.toMatch(/try again/i);
+    expect(WALLET_SIGN_IN_MESSAGES.banned).toMatch(/centient@artisam\.xyz/);
+  });
+
   it("has actionable copy for every failure", () => {
     const reasons: WalletSignInFailure[] = [
       "freighter_missing",
       "rejected",
+      "cancelled",
+      "timed_out",
       "wrong_account",
       "unsupported",
+      "wrong_network",
       "expired",
       "rate_limited",
       "network",

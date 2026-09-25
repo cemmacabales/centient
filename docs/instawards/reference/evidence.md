@@ -74,30 +74,45 @@ Every account and transaction from the sprint, in one place. Transaction and acc
 
 The signed-challenge evidence has no transaction, because signing a message does not touch the ledger. It is in the Freighter evidence file below: a real SEP-53 signature and seven verification checks.
 
+## Deliverable 3 transactions
+
+Each is one 0.25 USDC instant payout for one validated answer, sent from the payout account with two signatures inside a fee bump. Both were checked on Horizon on 24 September.
+
+| Date | What it proves | Transaction |
+| --- | --- | --- |
+| 23 Sep | **Instant payout on validation**, from QA's epic scenario (#41) | [`5975cdea…`](https://stellar.expert/explorer/testnet/tx/5975cdea767310fe789e61b5ac324b038bc48d5a0522009600b27a8d79343e93) |
+| 23 Sep | A second instant payout to a different contributor (#41) | [`76486d20…`](https://stellar.expert/explorer/testnet/tx/76486d20cc69b691a5b6b5ae6fee7bc46c0e4648908711849b17a13bc0c411da) |
+
+The instant path made 80 payments from 21 to 24 September. The [metrics page](metrics.md) shows how to list them all.
+
 ## Evidence files
 
 | File | Issue | Contents |
 | --- | --- | --- |
-| [`payments-lane-evidence.md`](https://github.com/cemmacabales/centient/blob/develop/docs/payments-lane-evidence.md) | #12 | The no-single-key guard, the Definition-of-Done mapping and residual risks |
-| [`2026-09-14-freighter-wallet-signing-evidence.json`](https://github.com/cemmacabales/centient/blob/develop/docs/superpowers/specs/2026-09-14-freighter-wallet-signing-evidence.json) | #24 | Freighter connect, challenge, replay, decline and sponsorship signing |
-| [`2026-09-14-sponsored-account-creation-evidence.json`](https://github.com/cemmacabales/centient/blob/develop/docs/superpowers/specs/2026-09-14-sponsored-account-creation-evidence.json) | #27 | Never-funded address → sponsored account, decline, duplicate submit |
-| [`2026-09-14-sponsored-trustline-fee-bump-evidence.json`](https://github.com/cemmacabales/centient/blob/develop/docs/superpowers/specs/2026-09-14-sponsored-trustline-fee-bump-evidence.json) | #28 | Six forged-envelope refusals, fee bump, minimum inner fee |
-| [`2026-09-14-sponsored-reserve-reclaim-evidence.json`](https://github.com/cemmacabales/centient/blob/develop/docs/superpowers/specs/2026-09-14-sponsored-reserve-reclaim-evidence.json) | #29 | 19/19 reclaim checks |
-| [`2026-09-15-first-connect-onboarding-evidence.json`](https://github.com/cemmacabales/centient/blob/develop/docs/superpowers/specs/2026-09-15-first-connect-onboarding-evidence.json) | #30 | Definition of Done → named tests |
+| [`payments-lane-evidence.md`](https://github.com/artisam-centient/centient/blob/develop/docs/payments-lane-evidence.md) | #12 | The no-single-key guard, the Definition-of-Done mapping and residual risks |
+| [`2026-09-14-freighter-wallet-signing-evidence.json`](https://github.com/artisam-centient/centient/blob/develop/docs/superpowers/specs/2026-09-14-freighter-wallet-signing-evidence.json) | #24 | Freighter connect, challenge, replay, decline and sponsorship signing |
+| [`2026-09-14-sponsored-account-creation-evidence.json`](https://github.com/artisam-centient/centient/blob/develop/docs/superpowers/specs/2026-09-14-sponsored-account-creation-evidence.json) | #27 | Never-funded address → sponsored account, decline, duplicate submit |
+| [`2026-09-14-sponsored-trustline-fee-bump-evidence.json`](https://github.com/artisam-centient/centient/blob/develop/docs/superpowers/specs/2026-09-14-sponsored-trustline-fee-bump-evidence.json) | #28 | Six forged-envelope refusals, fee bump, minimum inner fee |
+| [`2026-09-14-sponsored-reserve-reclaim-evidence.json`](https://github.com/artisam-centient/centient/blob/develop/docs/superpowers/specs/2026-09-14-sponsored-reserve-reclaim-evidence.json) | #29 | 19/19 reclaim checks |
+| [`2026-09-15-first-connect-onboarding-evidence.json`](https://github.com/artisam-centient/centient/blob/develop/docs/superpowers/specs/2026-09-15-first-connect-onboarding-evidence.json) | #30 | Definition of Done → named tests |
 
 ## Builds
 
 | Build | SHA | Meaning |
 | --- | --- | --- |
-| D1 QA-passed | [`263be4c`](https://github.com/cemmacabales/centient/commit/263be4cd5ab06103d965044c6a8bd3c40678f308) | `QA:PASSED` 28/28 on #80 |
+| D1 QA-passed | [`263be4c`](https://github.com/artisam-centient/centient/commit/263be4cd5ab06103d965044c6a8bd3c40678f308) | `QA:PASSED` 28/28 on #80 |
 | D1 on `main` | — | Promoted by PR #92 on 14 September |
-| D2 under test | [`8f660cc`](https://github.com/cemmacabales/centient/commit/8f660cc632f1c868a41618434a1c169dc0edabcc) | Deployed on `staging`, reviewed `P0:0 P1:0`; same tree as `develop` [`aac52cc`](https://github.com/cemmacabales/centient/commit/aac52ccf6533b69e70876390c817be06bf8d0f40) |
+| D2 QA-passed | [`8f660cc`](https://github.com/artisam-centient/centient/commit/8f660cc632f1c868a41618434a1c169dc0edabcc) | `QA PASSED` on #31, 21 September, 38/40 executed; reviewed `P0:0 P1:0`; same tree as `develop` [`aac52cc`](https://github.com/artisam-centient/centient/commit/aac52ccf6533b69e70876390c817be06bf8d0f40) |
+| D2 on `main` | — | Promoted by PR #121 on 21 September |
+| D3 QA-passed | [`1fde77d`](https://github.com/artisam-centient/centient/commit/1fde77d539ca040bb12c07df0c82dad5c8cf3a58) | `QA PASSED` on #41, 24 September |
+| Live on `staging` | [`36524aa`](https://github.com/artisam-centient/centient/commit/36524aacd32df08a518d18508ac4a3e1c8bedc67) | `1fde77d` plus the landing-page promo video (PR #153), ruled outside D3 |
 
 ## Screenshots and recordings
 
 | Item | Deliverable | Status |
 | --- | --- | --- |
 | Deliverable 1 proof of deliverables (PDF, explorer captures of both accounts and a two-signature payment) | D1 | Held by the builder; to be attached here |
-| Recording: wallet connect → signed challenge → session issued | D2 | Pending from #31 |
-| Recording: connect → rank → instant USDC → reconciled | D3 | Week 3 |
+| Recording: wallet connect → signed challenge → session issued | D2 | [D2 evidence folder](https://drive.google.com/drive/folders/1JS5hYQ-G4g-n92Hzf9RTNRBKWsUuvbFd?usp=drive_link) |
+| Phone recordings for the #137 cases (iOS) | D3 | Held outside the repository; not yet reviewed on record |
+| Recording: connect → rank → instant USDC → reconciled | D3 | Covered by the Week 4 demo |
 | 3–5 minute demo | D4 | Week 4 |

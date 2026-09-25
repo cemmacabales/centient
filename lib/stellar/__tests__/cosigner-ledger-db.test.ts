@@ -35,6 +35,7 @@ describe("readLedgerPayout", () => {
       id: submission.id,
       status: "pending",
       txHash: null,
+      openAttemptHash: null,
       destination: submission.walletAddress,
       amountUnits: 25_000_000n,
     });
@@ -59,6 +60,7 @@ describe("readLedgerPayout", () => {
       id: job.id,
       status: "queued",
       txHash: null,
+      openAttemptHash: null,
       destination: user.walletAddress,
       amountUnits: 500_000_000n,
     });
@@ -75,6 +77,43 @@ describe("readLedgerPayout", () => {
 
     expect(row?.txHash).toBe("already-broadcast");
     expect(row?.status).toBe("sent");
+  });
+
+  it("carries a submission's open envelope through, and only an open one (#38)", async () => {
+    const submission = await seedPendingSubmission();
+    const expiresAt = new Date(Date.now() + 180_000);
+    await prisma.payoutAttempt.create({
+      data: { submissionId: submission.id, envelopeHash: "a".repeat(64), expiresAt, status: "void" },
+    });
+    expect((await readLedgerPayout(prisma, { kind: "submission", id: submission.id }))?.openAttemptHash).toBeNull();
+
+    await prisma.payoutAttempt.create({ data: { submissionId: submission.id, envelopeHash: "b".repeat(64), expiresAt } });
+
+    const row = await readLedgerPayout(prisma, { kind: "submission", id: submission.id });
+    expect(row?.openAttemptHash).toBe("b".repeat(64));
+  });
+
+  it("reads a submission and its open envelope in one statement, so one snapshot (#38 review)", async () => {
+    // Two reads could straddle a payer recording its payment: a stale
+    // "pending, no hash" row next to a freshly "confirmed" envelope reads as
+    // unpaid with nothing in flight, and the co-signer would sign again.
+    const submission = await seedPendingSubmission();
+    await prisma.payoutAttempt.create({
+      data: { submissionId: submission.id, envelopeHash: "c".repeat(64), expiresAt: new Date(Date.now() + 180_000) },
+    });
+    const statements: string[] = [];
+    const counting = {
+      $queryRaw: <T = unknown>(query: TemplateStringsArray, ...values: unknown[]) => {
+        statements.push(query.join("?"));
+        return prisma.$queryRaw<T>(query, ...values);
+      },
+      payoutJob: prisma.payoutJob,
+    };
+
+    const row = await readLedgerPayout(counting, { kind: "submission", id: submission.id });
+
+    expect(statements).toHaveLength(1);
+    expect(row).toMatchObject({ status: "pending", txHash: null, openAttemptHash: "c".repeat(64) });
   });
 
   it("returns null for a reference the ledger has no row for", async () => {

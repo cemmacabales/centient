@@ -29,6 +29,9 @@ vi.mock("@/lib/prisma", () => ({
         submission: {
           update: mockTxUpdate,
         },
+        // No refund on record: the refunded case is covered for real in
+        // refunded-db.test.ts.
+        balanceLedger: { findFirst: vi.fn(async () => null) },
       };
       return fn(tx);
     }),
@@ -44,6 +47,10 @@ import { POST } from "../route";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // F2: the restore is now guarded, so it re-reads the row under a lock before
+  // writing. Default to "row gone" — the safe outcome, restoring nothing. Tests
+  // about the restore itself queue the state the failure actually left.
+  mockQueryRaw.mockResolvedValue([]);
   mockReprocess.mockResolvedValue(undefined);
   mockTxUpdate.mockResolvedValue({});
   mockUpdate.mockResolvedValue({});
@@ -201,15 +208,17 @@ describe("/api/admin/submissions/[id]/retry", () => {
         }),
       ]);
       mockReprocess.mockRejectedValueOnce(new Error("RPC timeout"));
-      // payoutTxHash is null — safe to restore original status
-      mockFindUnique.mockResolvedValueOnce({ payoutTxHash: null });
+      // What the failure left: still `pending` from the claim, no hash, budget
+      // untouched — nothing the restore would undo, so the restore may run.
+      mockQueryRaw.mockResolvedValueOnce([
+        { payoutStatus: "pending", payoutTxHash: null, retryCount: 0 },
+      ]);
 
       const res = await POST(makeReq("sub-6"), {
         params: Promise.resolve({ id: "sub-6" }),
       } as any);
       expect(res.status).toBe(500);
-      // Rollback runs on the top-level client, outside the claim transaction.
-      expect(mockUpdate).toHaveBeenCalledWith(
+      expect(mockTxUpdate).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "sub-6" },
           data: expect.objectContaining({
@@ -221,20 +230,51 @@ describe("/api/admin/submissions/[id]/retry", () => {
       );
     });
 
+    // F2: the case the old "no txHash" guard missed. A non-retryable rail error
+    // spends the budget and refunds the campaign before throwing, and there is
+    // no hash — so the old guard restored the low retryCount over the spent one
+    // and handed the row back to the cron with its funding already returned.
+    it("does not restore over a budget the failure spent", async () => {
+      mockQueryRaw.mockResolvedValueOnce([
+        makeRow({ id: "sub-8", payoutStatus: "failed", retryCount: 1 }),
+      ]);
+      mockReprocess.mockRejectedValueOnce(new Error("op_no_trust"));
+      mockQueryRaw.mockResolvedValueOnce([
+        { payoutStatus: "failed", payoutTxHash: null, retryCount: 5 },
+      ]);
+
+      const res = await POST(makeReq("sub-8"), {
+        params: Promise.resolve({ id: "sub-8" }),
+      } as any);
+
+      expect(res.status).toBe(500);
+      const restores = mockTxUpdate.mock.calls.filter(
+        ([args]: any) => args.where?.id === "sub-8" && args.data?.retryCount === 1,
+      );
+      expect(restores).toHaveLength(0);
+    });
+
     it("does not overwrite sent status when txHash is already saved on failure", async () => {
       mockQueryRaw.mockResolvedValueOnce([
         makeRow({ id: "sub-7", payoutStatus: "failed", retryCount: 1 }),
       ]);
       mockReprocess.mockRejectedValueOnce(new Error("creditUserTotals DB error"));
       // txHash was persisted before the error — submission is already "sent"
-      mockFindUnique.mockResolvedValueOnce({ payoutTxHash: "0xalreadysaved" });
+      mockQueryRaw.mockResolvedValueOnce([
+        { payoutStatus: "sent", payoutTxHash: "0xalreadysaved", retryCount: 1 },
+      ]);
 
       const res = await POST(makeReq("sub-7"), {
         params: Promise.resolve({ id: "sub-7" }),
       } as any);
       expect(res.status).toBe(500);
-      // Must NOT call update — reconciler handles the on-chain verification
-      expect(mockUpdate).not.toHaveBeenCalled();
+      // Must NOT restore — the reconciler handles the on-chain verification
+      // Phase 1's claim legitimately writes `pending`; a restore would write the
+      // original `failed` back over it. Only the latter must be absent.
+      const restores = mockTxUpdate.mock.calls.filter(
+        ([args]: any) => args.where?.id === "sub-7" && args.data?.payoutStatus === "failed",
+      );
+      expect(restores).toHaveLength(0);
     });
   });
 });

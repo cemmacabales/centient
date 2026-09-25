@@ -47,7 +47,6 @@ import { sep53Digest } from "@/lib/stellar/signature";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 
 const ORIGINAL_NETWORK = process.env.STELLAR_NETWORK;
-const ORIGINAL_MIN_WITHDRAWAL = process.env.MIN_WITHDRAWAL_UNITS;
 
 /** Restore one environment variable to what it was before the suite touched it. */
 function restoreEnv(name: string, value: string | undefined) {
@@ -57,7 +56,6 @@ function restoreEnv(name: string, value: string | undefined) {
 
 beforeEach(async () => {
   process.env.STELLAR_NETWORK = "testnet";
-  process.env.MIN_WITHDRAWAL_UNITS = "1000000"; // read by the withdrawal summary
   await truncateAll();
   vi.clearAllMocks();
   hasTrustline.mockResolvedValue(false);
@@ -75,7 +73,6 @@ beforeEach(async () => {
 
 afterEach(() => {
   restoreEnv("STELLAR_NETWORK", ORIGINAL_NETWORK);
-  restoreEnv("MIN_WITHDRAWAL_UNITS", ORIGINAL_MIN_WITHDRAWAL);
 });
 
 /** A request to `path`, with a JSON body and the session cookie when given. */

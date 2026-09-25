@@ -24,6 +24,7 @@ import { StellarPaymentError } from "@/lib/stellar/client";
 import { creditBalance } from "@/lib/campaign-balance";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 import { createUser, createTask, createCampaign, VALID_REASON } from "@/tests/helpers/factories";
+import { SUBMISSION_RETRY_BUDGET } from "@/lib/payout-retry-claim";
 
 // The worker only marks a job permanently failed once its retry budget is exhausted.
 // Seeding retryCount one below MAX_RETRIES makes the next attempt terminal.
@@ -93,6 +94,178 @@ describe("payout-worker accepted submission payments", () => {
   });
 });
 
+describe("payout-worker instant submission payout (#37)", () => {
+  it("credits earned totals only: an on-chain reward is never also withdrawable", async () => {
+    vi.mocked(payReward).mockResolvedValueOnce(TX_HASH);
+    const { submission, job, user } = await enqueuePendingPayout();
+
+    await processJob(job.id, submission.id, user.id, AMOUNT_UNITS, "SUBMISSION_PAYOUT");
+
+    const paid = await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } });
+    expect(paid.payoutStatus).toBe("sent");
+    expect(paid.payoutTxHash).toBe(TX_HASH);
+    const settled = await prisma.payoutJob.findUniqueOrThrow({ where: { id: job.id } });
+    expect(settled.status).toBe("done");
+
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(after.totalEarnedUnits).toBe(user.totalEarnedUnits + AMOUNT_UNITS);
+    expect(after.submissionCount).toBe(user.submissionCount + 1);
+    expect(after.pendingBalanceUnits).toBe(user.pendingBalanceUnits);
+    expect(await prisma.userBalanceLedger.count({ where: { userId: user.id } })).toBe(0);
+  });
+
+  it("stands down without broadcasting while another payer holds the submission's claim", async () => {
+    const { submission, job, user } = await enqueuePendingPayout();
+    // What `claimForRetry` leaves behind for a retry-cron or admin broadcast in flight.
+    await prisma.submission.update({ where: { id: submission.id }, data: { lastRetriedAt: new Date() } });
+
+    await processJob(job.id, submission.id, user.id, AMOUNT_UNITS, "SUBMISSION_PAYOUT");
+
+    expect(payReward).not.toHaveBeenCalled();
+    const row = await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } });
+    expect(row.payoutStatus).toBe("pending");
+    expect(row.payoutTxHash).toBeNull();
+    const standDown = await prisma.payoutJob.findUniqueOrThrow({ where: { id: job.id } });
+    expect(standDown.status).toBe("failed");
+    expect(standDown.lastError).toContain("another payer");
+  });
+
+  it("stands down on a submission that already carries a hash", async () => {
+    const { submission, job, user } = await enqueuePendingPayout();
+    await prisma.submission.update({ where: { id: submission.id }, data: { payoutTxHash: "already-broadcast" } });
+
+    await processJob(job.id, submission.id, user.id, AMOUNT_UNITS, "SUBMISSION_PAYOUT");
+
+    expect(payReward).not.toHaveBeenCalled();
+  });
+
+  it("hands its claim back after a retryable failure, so its own requeued attempt can pay", async () => {
+    vi.mocked(payReward).mockRejectedValueOnce(new Error("rpc timeout")).mockResolvedValueOnce(TX_HASH);
+    const { submission, job, user } = await enqueuePendingPayout();
+
+    await processJob(job.id, submission.id, user.id, AMOUNT_UNITS, "SUBMISSION_PAYOUT");
+    const released = await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } });
+    expect(released.lastRetriedAt).toBeNull();
+    expect((await prisma.payoutJob.findUniqueOrThrow({ where: { id: job.id } })).status).toBe("queued");
+
+    await prisma.payoutJob.update({ where: { id: job.id }, data: { status: "processing" } });
+    await processJob(job.id, submission.id, user.id, AMOUNT_UNITS, "SUBMISSION_PAYOUT");
+
+    expect(payReward).toHaveBeenCalledTimes(2);
+    const paid = await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } });
+    expect(paid.payoutStatus).toBe("sent");
+  });
+
+  it.each([
+    ["retries exhausted", () => new Error("rpc timeout"), RETRY_BUDGET_EXHAUSTED],
+    ["non-retryable", () => new StellarPaymentError("no USDC trustline", "op_no_trust", false), 0],
+  ] as const)("a refunded %s payout exhausts the retry cron's budget too", async (_label, error, retryCount) => {
+    // The cron offers `failed` rows under its own budget. A row the worker has
+    // refunded must be out of it, or the cron pays it with no funding behind it.
+    vi.mocked(payReward).mockRejectedValueOnce(error());
+    const campaign = await createCampaign();
+    const { submission, job, user } = await enqueuePendingPayout({ campaignId: campaign.id, retryCount });
+
+    await processJob(job.id, submission.id, user.id, AMOUNT_UNITS, "SUBMISSION_PAYOUT");
+
+    expect(creditBalance).toHaveBeenCalledOnce();
+    const row = await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } });
+    expect(row.payoutStatus).toBe("failed");
+    expect(row.retryCount).toBeGreaterThanOrEqual(SUBMISSION_RETRY_BUDGET);
+  });
+});
+
+// #40 (Codex P1 on #132): `sent` must mean credited. The reconciler undoes the
+// credit of a `sent` payout that failed on-chain, so a `sent` row whose credit
+// never landed would have it subtract another answer's earnings. The credit is
+// raised in the same write as `sent`; if it cannot land, neither does `sent`.
+describe("payout-worker credits earnings in the write that records the payout (#40)", () => {
+  it("quarantines, never leaves sent-but-uncredited, when the credit write fails", async () => {
+    vi.mocked(payReward).mockResolvedValueOnce(TX_HASH);
+    const { submission, job, user } = await enqueuePendingPayout();
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { totalEarnedUnits: 7n, submissionCount: 1 }, // another answer's earnings
+    });
+
+    await prisma.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION test_fail_credit() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'credit write failed'; END $$ LANGUAGE plpgsql`);
+    await prisma.$executeRawUnsafe(`
+      CREATE TRIGGER test_fail_credit BEFORE UPDATE ON "users"
+      FOR EACH ROW WHEN (OLD."id" = '${user.id}') EXECUTE FUNCTION test_fail_credit()`);
+    try {
+      await processJob(job.id, submission.id, user.id, AMOUNT_UNITS, "SUBMISSION_PAYOUT").catch(() => {});
+    } finally {
+      await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_fail_credit ON "users"`);
+    }
+
+    const row = await prisma.submission.findUniqueOrThrow({ where: { id: submission.id } });
+    expect(row).toMatchObject({ payoutStatus: "needs_reconciliation", payoutTxHash: TX_HASH });
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(after).toMatchObject({ totalEarnedUnits: 7n, submissionCount: 1 });
+  });
+});
+
+describe("payout-worker task resolution counts settled answers only (#37)", () => {
+  /** A target-2 task holding one other answer in `otherStatus`, plus this one queued to pay. */
+  async function secondAnswerOf(otherStatus: string, otherChoice: "A" | "B" = "B") {
+    const task = await createTask({ campaignId: null, responseTarget: 2 });
+    const other = await createUser();
+    await prisma.submission.create({
+      data: {
+        walletAddress: other.walletAddress,
+        userId: other.id,
+        taskId: task.id,
+        choice: otherChoice,
+        reason: VALID_REASON,
+        payoutAmountUnits: AMOUNT_UNITS,
+        payoutStatus: otherStatus,
+      },
+    });
+    const user = await createUser();
+    const submission = await prisma.submission.create({
+      data: {
+        walletAddress: user.walletAddress,
+        userId: user.id,
+        taskId: task.id,
+        choice: "A",
+        reason: VALID_REASON,
+        payoutAmountUnits: AMOUNT_UNITS,
+        payoutStatus: "pending",
+      },
+    });
+    const job = await prisma.payoutJob.create({
+      data: { type: "SUBMISSION_PAYOUT", submissionId: submission.id, status: "processing" },
+    });
+    return { task, user, submission, job };
+  }
+
+  it("does not resolve a task on an answer whose payout is still in flight", async () => {
+    // The in-flight answer may yet fail and be refunded; a resolved task is
+    // never recomputed, so its choice must not be baked into the result.
+    vi.mocked(payReward).mockResolvedValueOnce(TX_HASH);
+    const { task, user, submission, job } = await secondAnswerOf("pending");
+
+    await processJob(job.id, submission.id, user.id, AMOUNT_UNITS, "SUBMISSION_PAYOUT");
+
+    const after = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+    expect(after.resolvedAt).toBeNull();
+    expect(after.majorityAnswer).toBeNull();
+  });
+
+  it("resolves once the target is met by settled answers", async () => {
+    vi.mocked(payReward).mockResolvedValueOnce(TX_HASH);
+    const { task, user, submission, job } = await secondAnswerOf("sent", "A");
+
+    await processJob(job.id, submission.id, user.id, AMOUNT_UNITS, "SUBMISSION_PAYOUT");
+
+    const after = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+    expect(after.resolvedAt).not.toBeNull();
+    expect(after.majorityAnswer).toBe("A");
+  });
+});
+
 describe("payout-worker campaign balance refunds", () => {
   it("leaves a cap-blocked submission pending without refunding or burning a retry", async () => {
     vi.mocked(payReward).mockRejectedValueOnce(new PayoutCapError(1n, 1n));
@@ -134,6 +307,7 @@ describe("payout-worker campaign balance refunds", () => {
       expect.any(BigInt),
       expect.stringContaining("payout failed"),
       "REFUND",
+      submission.id,
     );
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
     expect(updated?.payoutStatus).toBe("failed");
@@ -211,6 +385,7 @@ describe("payout-worker rail-error classification (ST-6a)", () => {
       expect.any(BigInt),
       expect.stringContaining("op_no_trust"),
       "REFUND",
+      submission.id,
     );
     const updated = await prisma.submission.findUnique({ where: { id: submission.id } });
     expect(updated?.payoutStatus).toBe("failed");

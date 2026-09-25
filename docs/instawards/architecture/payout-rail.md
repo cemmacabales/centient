@@ -69,19 +69,19 @@ How a USDC reward moves from Centient to a contributor, and why no single key or
 | Guarantee | Enforced by | Where |
 | --- | --- | --- |
 | No key can pay alone | The Stellar network: threshold 2, each key weight 1 | On-chain |
-| No *deployment* can pay alone | `assertCustodyBelowThreshold` refuses at the payout boundary | [`lib/stellar/key-custody.ts`](https://github.com/cemmacabales/centient/blob/develop/lib/stellar/key-custody.ts) |
-| No *code path* can broadcast a single-signed payout | Structural scan plus a boundary signature check, pinned in both directions | [`no-single-key-payout.test.ts`](https://github.com/cemmacabales/centient/blob/develop/lib/stellar/__tests__/no-single-key-payout.test.ts) |
-| The second signer does not trust the request | The co-signer re-derives from the task ledger through a read-only database role | [`services/cosigner`](https://github.com/cemmacabales/centient/tree/develop/services/cosigner) |
-| Neither signer alone can lift the cap | Separate cap checks in `web` and in the co-signer | [`lib/payout-cap.ts`](https://github.com/cemmacabales/centient/blob/develop/lib/payout-cap.ts) |
-| A compromised hot wallet loses at most the float | Refills restore *exactly* the target, and nothing else deposits into the hot wallet | [Cold reserve runbook](https://github.com/cemmacabales/centient/blob/develop/docs/stellar-cold-reserve-runbook.md) |
-| An ambiguous submit never pays twice | Resolved only on on-chain proof, never refunded, never blindly resubmitted | [`lib/payout-service.ts`](https://github.com/cemmacabales/centient/blob/develop/lib/payout-service.ts) |
-| Mainnet cannot run on simulated isolation | `COSIGNER_ISOLATION_LEVEL=same-workspace` fails closed on `public` | [`lib/stellar/cosigner-isolation.ts`](https://github.com/cemmacabales/centient/blob/develop/lib/stellar/cosigner-isolation.ts) |
+| No *deployment* can pay alone | `assertCustodyBelowThreshold` refuses at the payout boundary | [`lib/stellar/key-custody.ts`](https://github.com/artisam-centient/centient/blob/develop/lib/stellar/key-custody.ts) |
+| No *code path* can broadcast a single-signed payout | Structural scan plus a boundary signature check, pinned in both directions | [`no-single-key-payout.test.ts`](https://github.com/artisam-centient/centient/blob/develop/lib/stellar/__tests__/no-single-key-payout.test.ts) |
+| The second signer does not trust the request | The co-signer re-derives from the task ledger through a read-only database role | [`services/cosigner`](https://github.com/artisam-centient/centient/tree/develop/services/cosigner) |
+| Neither signer alone can lift the cap | Separate cap checks in `web` and in the co-signer | [`lib/payout-cap.ts`](https://github.com/artisam-centient/centient/blob/develop/lib/payout-cap.ts) |
+| A compromised hot wallet loses at most the float | Refills restore *exactly* the target, and nothing else deposits into the hot wallet | [Cold reserve runbook](https://github.com/artisam-centient/centient/blob/develop/docs/stellar-cold-reserve-runbook.md) |
+| An ambiguous submit never pays twice | Resolved only on on-chain proof, never refunded, never blindly resubmitted | [`lib/payout-service.ts`](https://github.com/artisam-centient/centient/blob/develop/lib/payout-service.ts) |
+| Mainnet cannot run on simulated isolation | `COSIGNER_ISOLATION_LEVEL=same-workspace` fails closed on `public` | [`lib/stellar/cosigner-isolation.ts`](https://github.com/artisam-centient/centient/blob/develop/lib/stellar/cosigner-isolation.ts) |
 
 ## Services
 
 | Service | Holds | Runs from |
 | --- | --- | --- |
-| `web` | One payout signer (weight 1), a dedicated sponsor key (not a payout signer) | `staging` branch → [centient.work](https://centient.work) |
+| `web` | One payout signer (weight 1), a dedicated sponsor key (not a payout signer) | `staging` branch → [beta.centient.work](https://beta.centient.work) |
 | `cosigner` | The policy signer (weight 1), the policy secret, read-only ledger access | Its own Railway project in the same workspace (ADR-0001) |
 
 The app refuses to boot if it can see both `COSIGNER_URL` and the policy secret, so the boundary is enforced at startup instead of assumed.

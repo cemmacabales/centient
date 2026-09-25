@@ -4,8 +4,10 @@
 
 **Deliverable:** [D3 — End-to-end contributor loop](../deliverables/d3.md)
 
-{% hint style="info" %}
-**Not started.** This page holds the plan and is replaced by the week's report as work lands. Week 3 starts when Epic 2 closes, meaning QA gate #31 has recorded `QA PASSED <sha>`.
+{% hint style="success" %}
+**Verdict, 24 September:** QA gate #41 recorded `QA PASSED` at [`1fde77d`](https://github.com/artisam-centient/centient/commit/1fde77d539ca040bb12c07df0c82dad5c8cf3a58). #35–#40 merged on Monday 21 September, and the contributor loop is joined: a validated answer now pays the connected wallet directly, with no off-chain balance in between. → [D3](../deliverables/d3.md)
+
+The sections below are the plan, written before the week started. They become the week's report when it closes on Sunday 27 September.
 {% endhint %}
 
 ## What this week changes
@@ -16,7 +18,7 @@ Weeks 1 and 2 built the two halves: a payout rail no single key can drain, and a
 connect → rank → validate → co-sign → pay → reconcile
 ```
 
-Today, a validated submission still credits an off-chain balance that the contributor withdraws later. At the end of this week, that step is gone from the active contributor path.
+Before this week, a validated submission credited an off-chain balance that the contributor withdrew later. That step is now gone from the active contributor path.
 
 ## Plan
 
@@ -50,5 +52,6 @@ These carry in from Weeks 1–2, or are new risks Week 3 creates. Each has an ow
 * **Hold the development stop.** Week 2's cut was followed by seven post-cut merges. Week 3's QA window is the same two days and cannot absorb that. After Wednesday end of day, nothing merges until #41 records its verdict.
 * **Decide mobile before #35 (D-4).** "Mobile-first" in #35 means a phone browser. Freighter on a phone needs WalletConnect v2, which nothing in the plan builds. Decide with cohort data whether it enters scope, because the Week 4 target of 25 unique wallets may depend on it.
 * **Existing custodial balances (#39).** On 15 September, staging held 10 email-only accounts, 5 of them with a balance. Retiring withdrawal must not strand that value. The treatment has to be decided and tested, not assumed.
+  * *Note, 21 Sep:* decided in [ADR-0007](https://github.com/artisam-centient/centient/blob/develop/docs/adr/0007-retire-accumulate-then-withdraw.md). Legacy balances stay withdrawable, with no minimum, until they reach zero.
 * **The cap under instant volume.** When every validation is a payout, the daily cap and hot-float refill run at real task volume for the first time. Check the deployed cap and the 20 / 24 / 5 refill policy against the Week 4 volume run (≥100 payouts) before it starts.
 * **Session revocation.** Logout does not revoke the 7-day JWT. Once a session can trigger payouts directly, decide whether that is still acceptable.

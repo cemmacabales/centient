@@ -163,24 +163,58 @@ export function describeStellarError(err: unknown): string {
   return `${message} (${parts.join(", ")})`;
 }
 
+/** A transaction as Horizon reports it: its outcome and, once included, its envelope. */
+export type TxLookup =
+  | { status: "not_found" }
+  | { status: "confirmed" | "failed"; envelopeXdr: string };
+
 /**
- * Look up a transaction by hash and map it to a coarse status for the reconciler
- * (ST-3b): `confirmed` (Horizon `successful: true`), `failed` (explicit
- * failure), or `not_found` (404 — not yet visible or never submitted).
+ * Look up a transaction by hash: `confirmed` (Horizon `successful: true`),
+ * `failed` (included, unsuccessful), or `not_found` (404 — not yet visible or
+ * never submitted). An included transaction carries its `envelope_xdr`, which is
+ * what it actually applied (#40 D4).
  *
  * An inner transaction's hash resolves to the fee bump that carried it, so a
  * sponsorship is looked up by the hash the contributor signed.
  */
+export async function lookupTx(hash: string): Promise<TxLookup> {
+  try {
+    const tx = await server().transactions().transaction(hash).call();
+    return { status: tx.successful ? "confirmed" : "failed", envelopeXdr: tx.envelope_xdr };
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    if (status === 404) return { status: "not_found" };
+    throw err;
+  }
+}
+
+/** `lookupTx`'s outcome alone, for callers that only need to know whether it applied (ST-3b). */
 export async function getTxStatus(
   hash: string,
 ): Promise<"confirmed" | "failed" | "not_found"> {
+  return (await lookupTx(hash)).status;
+}
+
+/**
+ * Close time of the most recent ledger Horizon has ingested, in Unix
+ * milliseconds, or null when that reading is unavailable.
+ *
+ * This is the only clock that can retire an envelope. Stellar evaluates
+ * `maxTime` against ledger close time, not against this host's wall clock, so a
+ * host running even slightly ahead of the network would otherwise declare a
+ * still-includable envelope dead and license a rebuild that settles twice.
+ * Horizon being unreachable is not evidence about the network's clock, so that
+ * case reads as "unknown" rather than as an expiry.
+ */
+export async function latestLedgerCloseMs(): Promise<number | null> {
   try {
-    const tx = await server().transactions().transaction(hash).call();
-    return tx.successful ? "confirmed" : "failed";
-  } catch (err) {
-    const status = (err as { response?: { status?: number } })?.response?.status;
-    if (status === 404) return "not_found";
-    throw err;
+    const page = await server().ledgers().order("desc").limit(1).call();
+    const closedAt = page.records[0]?.closed_at;
+    if (!closedAt) return null;
+    const closeMs = Date.parse(closedAt);
+    return Number.isNaN(closeMs) ? null : closeMs;
+  } catch {
+    return null;
   }
 }
 

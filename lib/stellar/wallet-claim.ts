@@ -13,7 +13,10 @@ import { WalletError, connect, signOwnership } from "./wallet";
 export type WalletClaimFailure =
   | "freighter_missing"
   | "rejected"
+  | "cancelled"
+  | "timed_out"
   | "wrong_account"
+  | "wrong_network"
   | "unsupported"
   | "expired"
   | "address_in_use"
@@ -61,9 +64,16 @@ function failureFromError(err: unknown): WalletClaimFailure {
     switch (err.code) {
       case "freighter_missing":
       case "rejected":
+      case "cancelled":
+      case "timed_out":
       case "wrong_account":
+      case "wrong_network":
       case "unsupported":
         return err.code;
+      // See wallet-sign-in.ts: an unconfigured mobile path is, to the
+      // contributor, just Freighter being unreachable.
+      case "walletconnect_unconfigured":
+        return "freighter_missing";
       default:
         return "failed";
     }
@@ -76,7 +86,9 @@ function failureFromError(err: unknown): WalletClaimFailure {
 /** Run the whole claim. Resolves, never rejects. */
 export async function claimWallet(deps: WalletClaimDeps = defaultDeps): Promise<WalletClaimResult> {
   try {
-    const { address } = await deps.connect();
+    // Fresh, for the same reason as sign-in: a stale mobile session drops the
+    // ownership request on the wallet's side without a word.
+    const { address } = await deps.connect({ fresh: true });
 
     const challengeRes = await deps.fetch(`/api/me/wallet?address=${encodeURIComponent(address)}`);
     if (!challengeRes.ok) {
@@ -102,10 +114,16 @@ export async function claimWallet(deps: WalletClaimDeps = defaultDeps): Promise<
 /** What the contributor sees for each failure. */
 export const WALLET_CLAIM_MESSAGES: Record<WalletClaimFailure, string> = {
   freighter_missing:
-    "Freighter isn't installed or isn't reachable. Install the Freighter browser extension, then try again.",
+    "We couldn't reach Freighter. Install the Freighter browser extension, or open this " +
+    "page on a phone with the Freighter app, then try again.",
   rejected: "You declined the request in Freighter. Nothing was signed — try again when you're ready.",
+  cancelled: "You cancelled the request to Freighter. Nothing was signed — try again when you're ready.",
+  timed_out: "Freighter didn't answer in time. Open the Freighter app, then try again.",
   wrong_account:
     "Freighter signed with a different account. Switch to the account you connected, then try again.",
+  wrong_network:
+    "Freighter is on a different Stellar network than Centient. Switch networks in " +
+    "Freighter, then try again.",
   unsupported: "This version of Freighter can't sign messages. Update Freighter, then try again.",
   expired: "That request expired. Try again to get a fresh one.",
   address_in_use:

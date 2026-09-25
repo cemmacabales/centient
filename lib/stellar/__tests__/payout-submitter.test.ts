@@ -78,6 +78,10 @@ function makeHorizon(
   return {
     submitted,
     currentSequence: () => sequence,
+    /** The account's sequence moving underneath us, as a `tx_bad_seq` means it did. */
+    advanceSequence: () => {
+      sequence += 1n;
+    },
     server: {
       // The artificial delay is what makes an unsynchronized implementation
       // interleave: two loads would observe the same sequence before either submits.
@@ -631,5 +635,196 @@ describe("submitMultisigPayout", () => {
       submitMultisigPayout(request("s1", 0n), { coSigner: honestCoSigner(), config }),
     ).rejects.toThrow(/must be positive/i);
     expect(horizon.server.loadAccount).not.toHaveBeenCalled();
+  });
+});
+
+// #38: every signed envelope is recorded before it can land, and voided only
+// once it provably cannot. The journal is what lets a payer that restarts after
+// an accepted submit find the envelope by its hash instead of building another.
+describe("submitMultisigPayout attempt journal (#38)", () => {
+  /** A journal that records every call, in order, against the submits around it. */
+  function journal(opts: { failOpen?: boolean } = {}) {
+    const events: string[] = [];
+    const j = {
+      events,
+      open: vi.fn(async ({ hash, expiresAt }: { hash: string; expiresAt: Date }) => {
+        if (opts.failOpen) throw new Error("db down");
+        expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
+        events.push(`open:${hash}`);
+      }),
+      void: vi.fn(async (hash: string, outcome: string) => {
+        events.push(`void:${hash}:${outcome}`);
+      }),
+    };
+    return j;
+  }
+
+  /** A Horizon whose submits are logged into the same event stream as the journal. */
+  function loggedHorizon(
+    events: string[],
+    submit: (tx: FeeBumpTransaction, n: number, advanceSequence: () => void) => Promise<{ hash: string }>,
+  ) {
+    let n = 0;
+    const horizon: ReturnType<typeof makeHorizon> = makeHorizon({
+      submitTransaction: vi.fn(async (tx: FeeBumpTransaction) => {
+        events.push(`submit:${tx.hash().toString("hex")}`);
+        return submit(tx, ++n, () => horizon.advanceSequence());
+      }),
+    });
+    return horizon;
+  }
+
+  it("opens the attempt with the envelope's hash before submitting it", async () => {
+    const j = journal();
+    const horizon = loggedHorizon(j.events, async (tx) => ({ hash: tx.hash().toString("hex") }));
+    mockedServer.mockReturnValue(horizon.server as never);
+
+    const result = await submitMultisigPayout(request("s1"), { coSigner: honestCoSigner(), config, attempts: j });
+
+    expect(j.events).toEqual([`open:${result.hash}`, `submit:${result.hash}`]);
+    expect(j.void).not.toHaveBeenCalled();
+  });
+
+  it("submits nothing when the attempt cannot be recorded", async () => {
+    const j = journal({ failOpen: true });
+    const horizon = makeHorizon();
+    mockedServer.mockReturnValue(horizon.server as never);
+
+    await expect(
+      submitMultisigPayout(request("s1"), { coSigner: honestCoSigner(), config, attempts: j }),
+    ).rejects.toThrow("db down");
+    expect(horizon.server.submitTransaction).not.toHaveBeenCalled();
+  });
+
+  it("voids a definitely rejected envelope", async () => {
+    const j = journal();
+    const horizon = loggedHorizon(j.events, async () => {
+      throw horizonError({ transaction: "tx_failed", operations: ["op_no_trust"] });
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+
+    await submitMultisigPayout(request("s1"), { coSigner: honestCoSigner(), config, attempts: j }).catch(() => {});
+
+    const hash = horizon.server.submitTransaction.mock.calls[0][0].hash().toString("hex");
+    expect(j.events).toEqual([`open:${hash}`, `submit:${hash}`, `void:${hash}:rejected: tx_failed, op_no_trust`]);
+  });
+
+  it("voids the stale envelope before opening the rebuilt one on tx_bad_seq", async () => {
+    const j = journal();
+    const horizon = loggedHorizon(j.events, async (tx, n, advanceSequence) => {
+      if (n === 1) {
+        advanceSequence();
+        throw horizonError({ transaction: "tx_bad_seq" });
+      }
+      return { hash: tx.hash().toString("hex") };
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+
+    const result = await submitMultisigPayout(request("s1"), { coSigner: honestCoSigner(), config, attempts: j });
+
+    const first = horizon.server.submitTransaction.mock.calls[0][0].hash().toString("hex");
+    expect(first).not.toBe(result.hash);
+    expect(j.events).toEqual([
+      `open:${first}`,
+      `submit:${first}`,
+      `void:${first}:rejected: tx_bad_seq`,
+      `open:${result.hash}`,
+      `submit:${result.hash}`,
+    ]);
+  });
+
+  it("leaves an ambiguous envelope that settled open for the caller to confirm", async () => {
+    const j = journal();
+    const horizon = loggedHorizon(j.events, async () => {
+      throw new Error("504 Gateway Timeout");
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+    mockedGetTxStatus.mockResolvedValue("confirmed");
+
+    await submitMultisigPayout(request("s1"), { coSigner: honestCoSigner(), config, attempts: j });
+
+    expect(j.void).not.toHaveBeenCalled();
+  });
+
+  it("voids an ambiguous envelope Horizon reports included and failed", async () => {
+    const j = journal();
+    const horizon = loggedHorizon(j.events, async () => {
+      throw new Error("socket hang up");
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+    mockedGetTxStatus.mockResolvedValue("failed");
+
+    await submitMultisigPayout(request("s1"), { coSigner: honestCoSigner(), config, attempts: j }).catch(() => {});
+
+    expect(j.void).toHaveBeenCalledWith(expect.any(String), "included and failed");
+  });
+
+  it("voids an ambiguous envelope only once it is proven absent past its time bounds", async () => {
+    const j = journal();
+    const started = Date.now();
+    let ledgerReads = 0;
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async () => {
+        throw new Error("socket hang up");
+      }),
+      ledgerCloseAt: () => new Date(ledgerReads++ < 2 ? started : started + 10_000),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+    mockedGetTxStatus.mockResolvedValue("not_found");
+
+    const err = await submitMultisigPayout(request("s1"), {
+      coSigner: honestCoSigner(),
+      config,
+      timeoutSeconds: 1,
+      ambiguousPollIntervalMs: 10,
+      attempts: j,
+    }).catch((e) => e);
+
+    expect(err.retryable).toBe(true);
+    expect(j.void).toHaveBeenCalledOnce();
+    expect(j.void).toHaveBeenCalledWith(expect.any(String), "expired unincluded");
+  });
+
+  it("leaves an unprovable envelope open rather than guessing", async () => {
+    const j = journal();
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async () => {
+        throw new Error("socket hang up");
+      }),
+      ledgerCloseAt: () => new Date(Date.now() - 3_600_000),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+    mockedGetTxStatus.mockResolvedValue("not_found");
+
+    const err = await submitMultisigPayout(request("s1"), {
+      coSigner: honestCoSigner(),
+      config,
+      timeoutSeconds: 1,
+      ambiguousPollIntervalMs: 10,
+      ambiguousResolveGraceMs: 50,
+      attempts: j,
+    }).catch((e) => e);
+
+    expect(err.code).toBe("ambiguous_submit");
+    expect(err.retryable).toBe(false);
+    expect(j.void).not.toHaveBeenCalled();
+  });
+
+  it("keeps the payout's own error when voiding fails", async () => {
+    const j = journal();
+    j.void.mockRejectedValue(new Error("db down"));
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async () => {
+        throw horizonError({ transaction: "tx_failed", operations: ["op_no_trust"] });
+      }),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const err = await submitMultisigPayout(request("s1"), { coSigner: honestCoSigner(), config, attempts: j }).catch((e) => e);
+
+    error.mockRestore();
+    expect(err.code).toBe("op_no_trust");
+    expect(err.retryable).toBe(false);
   });
 });

@@ -1,7 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { signTransaction } from "@/lib/stellar/wallet";
+import CancelWalletWait from "./CancelWalletWait";
+import FreighterPairing from "./FreighterPairing";
+import SignOutForm from "./SignOutForm";
+import {
+  cancelWalletRequest,
+  resolveTransport,
+  signTransaction,
+  type WalletTransport,
+} from "@/lib/stellar/wallet";
 import {
   PAYOUT_SETUP_MESSAGES,
   PAYOUT_SIGNING_NOTICE,
@@ -25,6 +33,8 @@ interface PayoutSetupViewProps {
   onRetry: () => void;
   /** Leave setup for later and go on into the app. Offered on failure when set. */
   onContinue?: () => void;
+  /** Stop waiting on the Freighter app. Shown only while it is being asked to sign. */
+  onCancel?: () => void;
 }
 
 /**
@@ -40,6 +50,7 @@ export function PayoutSetupView({
   reason,
   onRetry,
   onContinue,
+  onCancel,
 }: PayoutSetupViewProps) {
   const failure = phase === "failed" ? (reason ?? "failed") : null;
 
@@ -68,6 +79,11 @@ export function PayoutSetupView({
               {PAYOUT_SIGNING_NOTICE[signingKind ?? "account+trustline"]}
             </p>
           )}
+          {phase === "signing" && onCancel && (
+            <div className="mt-2">
+              <CancelWalletWait onCancel={onCancel} />
+            </div>
+          )}
           {phase === "waiting" && (
             <p data-waiting={waitSeconds} className="font-body text-sm text-on-surface-variant">
               {payoutWaitingNotice(waitSeconds ?? 0)}
@@ -76,7 +92,7 @@ export function PayoutSetupView({
           {failure && (
             <p
               data-failure={failure}
-              className={`font-body text-sm ${failure === "rejected" ? "text-on-surface-variant" : "text-error"}`}
+              className={`font-body text-sm ${failure === "rejected" || failure === "cancelled" ? "text-on-surface-variant" : "text-error"}`}
             >
               {PAYOUT_SETUP_MESSAGES[failure]}
             </p>
@@ -106,14 +122,7 @@ export function PayoutSetupView({
                 You can keep earning. Finish payout setup before you withdraw.
               </p>
             )}
-            <form action="/api/auth/logout" method="post">
-              <button
-                type="submit"
-                className="w-full rounded-xl py-2 font-label text-sm font-semibold text-on-surface-variant underline-offset-2 hover:underline"
-              >
-                Sign out
-              </button>
-            </form>
+            <SignOutForm className="w-full rounded-xl py-2 font-label text-sm font-semibold text-on-surface-variant underline-offset-2 hover:underline" />
           </div>
         )}
       </div>
@@ -150,6 +159,17 @@ export default function PayoutSetup({ onReady, onSkip, run = runSetUpPayouts }: 
   const [waitSeconds, setWaitSeconds] = useState<number | undefined>();
   const [reason, setReason] = useState<PayoutSetupFailure | undefined>();
   const inFlight = useRef(false);
+  // Only the mobile app can be cancelled from here; the extension closes its own prompt.
+  const [transport, setTransport] = useState<WalletTransport | null>(null);
+  useEffect(() => {
+    let live = true;
+    void resolveTransport().then((t) => {
+      if (live) setTransport(t);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
   // Held in a ref so a parent re-render with a new callback never restarts setup.
   const onReadyRef = useRef(onReady);
   useEffect(() => {
@@ -186,13 +206,20 @@ export default function PayoutSetup({ onReady, onSkip, run = runSetUpPayouts }: 
   }, [attempt]);
 
   return (
-    <PayoutSetupView
-      phase={phase}
-      signingKind={signingKind}
-      waitSeconds={waitSeconds}
-      reason={reason}
-      onRetry={attempt}
-      onContinue={onSkip ? () => onSkip(reason ?? "failed") : undefined}
-    />
+    <>
+      <PayoutSetupView
+        phase={phase}
+        signingKind={signingKind}
+        waitSeconds={waitSeconds}
+        reason={reason}
+        onRetry={attempt}
+        onContinue={onSkip ? () => onSkip(reason ?? "failed") : undefined}
+        onCancel={transport === "walletconnect" ? () => void cancelWalletRequest() : undefined}
+      />
+      {/* Setup normally rides the session sign-in already paired, but that
+          session can expire; if the trustline co-signature has to pair again,
+          the prompt needs somewhere to render. */}
+      <FreighterPairing />
+    </>
   );
 }

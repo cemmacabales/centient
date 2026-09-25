@@ -2,14 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { getLabelerSession, requireLabelerSession } from "@/lib/labeler-auth";
-import {
-  getMinWithdrawalUnits,
-  getWithdrawalThresholds,
-  REWARD_TOKEN_SYMBOL,
-} from "@/lib/constants";
+import { getWithdrawalThresholds, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 import {
   enqueueWithdrawal,
-  BelowMinimumWithdrawalError,
+  NoBalanceToWithdrawError,
   WithdrawalInFlightError,
 } from "@/lib/user-balance";
 import {
@@ -24,7 +20,11 @@ import { isValidStellarAddress } from "@/lib/stellar/signature";
 import { accountHasUsdcTrustline } from "@/lib/stellar/client";
 
 /**
- * POST — withdraw the whole pending balance to the account's bound wallet.
+ * POST — withdraw the whole legacy balance to the account's bound wallet.
+ *
+ * #39: legacy only. Answers are paid on-chain as they are accepted (#37) and
+ * nothing accrues any more, so the only balances left predate that; this route
+ * stays until they reach zero (ADR-0007). No minimum applies to them.
  *
  * #30 — the destination is the Stellar address the account proved, at wallet
  * sign-in or by claiming an email account. It is never taken from the body. This
@@ -173,11 +173,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await enqueueWithdrawal(
-      userId!,
-      destinationAddress,
-      getMinWithdrawalUnits(),
-    );
+    const result = await enqueueWithdrawal(userId!, destinationAddress);
 
     return NextResponse.json({
       status: "queued",
@@ -187,15 +183,8 @@ export async function POST(req: NextRequest) {
       token: REWARD_TOKEN_SYMBOL,
     });
   } catch (err) {
-    if (err instanceof BelowMinimumWithdrawalError) {
-      return NextResponse.json(
-        {
-          error: "below_minimum",
-          minimumUnits: err.minimumUnits.toString(),
-          balanceUnits: err.balanceUnits.toString(),
-        },
-        { status: 400 },
-      );
+    if (err instanceof NoBalanceToWithdrawError) {
+      return NextResponse.json({ error: "no_balance" }, { status: 409 });
     }
     if (err instanceof WithdrawalInFlightError) {
       return NextResponse.json({ error: "withdrawal_in_flight" }, { status: 409 });
@@ -236,13 +225,13 @@ export async function POST(req: NextRequest) {
 }
 
 /**
- * GET — withdrawal summary for the labeler's own account: pending balance, the
- * minimum-withdrawal threshold, the bound wallet withdrawals go to, whether a
- * withdrawal can be attempted right now, and recent lump-sum withdrawals. The
- * withdrawal card loads it on open and re-fetches it after a withdrawal.
+ * GET — legacy-balance summary for the labeler's own account: the balance left
+ * from before instant payout, the bound wallet a withdrawal goes to, whether one
+ * can be attempted right now, and recent lump-sum withdrawals. The account sheet
+ * shows its withdraw card only while the balance is non-zero (#39).
  *
  * `canWithdraw` mirrors POST's cheap gates only — not banned, a bound Stellar
- * wallet, eligibility, balance ≥ minimum, and no withdrawal already in flight.
+ * wallet, eligibility, a non-zero balance, and no withdrawal already in flight.
  * The network USDC-trustline precheck deliberately stays on POST so this read
  * never blocks on Horizon; an unfinished payout setup is surfaced there as
  * `payout_setup_required`.
@@ -270,7 +259,6 @@ export async function GET(req: NextRequest) {
 
   const destinationAddress =
     user.walletAddress && isValidStellarAddress(user.walletAddress) ? user.walletAddress : null;
-  const minUnits = getMinWithdrawalUnits();
   const eligibility = checkWithdrawalEligibility(
     {
       submissionCount: user.submissionCount,
@@ -308,12 +296,11 @@ export async function GET(req: NextRequest) {
     !user.isBanned &&
     destinationAddress !== null &&
     eligibility.eligible &&
-    user.pendingBalanceUnits >= minUnits &&
+    user.pendingBalanceUnits > 0n &&
     !hasInFlightWithdrawal;
 
   return NextResponse.json({
     pendingBalanceUnits: user.pendingBalanceUnits.toString(),
-    thresholdUnits: minUnits.toString(),
     destinationAddress,
     canWithdraw,
     withdrawals: jobs.map((j) => ({

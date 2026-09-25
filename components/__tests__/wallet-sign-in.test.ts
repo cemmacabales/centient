@@ -66,6 +66,27 @@ describe("WalletSignInView", () => {
     expect(other).not.toContain("freighter.app");
   });
 
+  it("offers Cancel while waiting on the Freighter app, where a request can go unanswered", () => {
+    const html = render({ phase: "connecting", transport: "walletconnect", onConnect: noop, onCancel: noop });
+    expect(html).toMatch(/>Cancel</);
+  });
+
+  it("offers no Cancel on the extension path, whose prompt closes itself", () => {
+    const html = render({ phase: "connecting", transport: "extension", onConnect: noop, onCancel: noop });
+    expect(html).not.toMatch(/>Cancel</);
+  });
+
+  it("offers no Cancel when nothing is being waited on", () => {
+    const html = render({ phase: "idle", transport: "walletconnect", onConnect: noop, onCancel: noop });
+    expect(html).not.toMatch(/>Cancel</);
+  });
+
+  it("styles a cancelled request as guidance, not an error", () => {
+    const html = render({ phase: "failed", reason: "cancelled", onConnect: noop });
+    expect(html).toContain('data-failure="cancelled"');
+    expect(html).not.toContain("text-error");
+  });
+
   it("styles a declined prompt as guidance, not an error", () => {
     expect(render({ phase: "failed", reason: "rejected", onConnect: noop })).not.toContain("text-error");
     expect(render({ phase: "failed", reason: "wrong_account", onConnect: noop })).toContain("text-error");

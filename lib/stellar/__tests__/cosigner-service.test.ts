@@ -38,6 +38,7 @@ function ledgerRow(overrides: Partial<LedgerPayout> = {}): LedgerPayout {
     id: "sub-1",
     status: "pending",
     txHash: null,
+    openAttemptHash: null,
     destination,
     amountUnits,
     ...overrides,

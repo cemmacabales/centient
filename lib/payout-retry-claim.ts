@@ -21,6 +21,14 @@
 export const RETRY_CLAIM_LEASE_MS = 60_000;
 
 /**
+ * `Submission.retryCount` at which the retry cron stops offering a submission and
+ * its abandon sweep finalizes it. A payer that has refunded a failed payout's
+ * campaign debit writes this, because a row the cron still considers retryable
+ * would otherwise be paid after its funding was returned (#37).
+ */
+export const SUBMISSION_RETRY_BUDGET = 5;
+
+/**
  * Might a retry still be in flight for this submission?
  *
  * Nothing else about an in-flight row distinguishes it. The status still reads
