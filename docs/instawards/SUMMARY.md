@@ -1,7 +1,6 @@
 # Table of contents
 
-* [Centient — Instawards](README.md)
-* [Statement of Work](statement-of-work.md)
+* [Centient Docs](README.md)
 
 ## Weekly reports
 

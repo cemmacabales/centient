@@ -1,11 +1,11 @@
 $schema: https://api.gitbook.com/gitbook-docs.yaml
 site:
-  title: Centient Instawards
+  title: Centient Docs
   structure:
     - type: space
       key: space-instawards
-      title: Centient Instawards
-      path: instawards
+      title: Centient Docs
+      path: docs
       default: true
       content:
         directory: ./instawards

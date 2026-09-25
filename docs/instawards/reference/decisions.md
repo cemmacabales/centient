@@ -4,7 +4,7 @@ Every decision that changed scope, topology or process during the sprint, with t
 
 ## Where delivery differs from the SOW
 
-The [Statement of Work](../statement-of-work.md) is never edited. Every place the delivered system departs from its text is listed here, with the reason and what closes the gap.
+The Statement of Work is never edited. Every place the delivered system departs from its text is listed here, with the reason and what closes the gap.
 
 | SOW text | What was delivered | Why | Closes when |
 | --- | --- | --- | --- |

@@ -10,7 +10,7 @@ The sprint's success metrics, with running totals and how each one is counted.
 
 ## Results
 
-The ten success metrics from [SOW §6.3](../statement-of-work.md), in the SOW's order.
+The ten success metrics from SOW §6.3, in the SOW's order.
 
 | SOW §6.3 metric | Target | Now | Status |
 | --- | --- | --- | --- |

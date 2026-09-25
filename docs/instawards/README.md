@@ -1,6 +1,6 @@
-# Centient — Instawards
+# Centient Docs
 
-Weekly milestone reports for the Stellar Development Foundation Instawards program (Philippines chapter). Each week records what shipped, links every [Statement of Work](statement-of-work.md) item to the commits and on-chain transactions that prove it, and updates the success metrics.
+Weekly milestone reports for Centient's 30-day build sprint. Each week records what shipped, links every Statement of Work item to the commits and on-chain transactions that prove it, and updates the success metrics.
 
 | | |
 | --- | --- |
