@@ -62,6 +62,18 @@ describe("LoginScreen — wallet-first entry (#26)", () => {
     const html = render(createElement(LoginScreen, { ...props, error: "Connection failed" }));
     expect(html).toContain("Connection failed");
   });
+
+  it("links the public docs from the header, on every screen size, in a new tab", () => {
+    const html = render(createElement(LoginScreen, props));
+    const header = html.slice(html.indexOf("<header"), html.indexOf("</header>"));
+    const link = header.match(/<a[^>]*href="https:\/\/centient\.gitbook\.io\/centient-docs\/"[^>]*>.*?<\/a>/)?.[0];
+    expect(link).toBeDefined();
+    expect(link).toContain('target="_blank"');
+    expect(link).toContain('rel="noopener noreferrer"');
+    expect(link).toContain("Docs");
+    // The section links hide below `sm`; the docs link must not sit inside them.
+    expect(header.indexOf(link!)).toBeGreaterThan(header.indexOf("</nav>"));
+  });
 });
 
 describe("AccountAuthScreen — email sign-in for existing accounts (#30)", () => {

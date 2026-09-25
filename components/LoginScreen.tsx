@@ -17,6 +17,9 @@ interface LoginScreenProps {
 /** The Centient promo video on the Artisam Labs YouTube channel. */
 const PROMO_VIDEO_ID = "uxjxu33TOuM";
 
+/** The public Centient docs on GitBook, synced from `docs/instawards`. */
+const DOCS_URL = "https://centient.gitbook.io/centient-docs/";
+
 const FOCUS_RING =
   "rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface";
 
@@ -59,26 +62,40 @@ export default function LoginScreen({ onWalletSignedIn, onEmailSignIn, error }: 
             Centient
           </span>
         </div>
-        <nav aria-label="Page sections" className="hidden items-center gap-6 sm:flex">
+        <div className="flex items-center gap-6">
+          <nav aria-label="Page sections" className="hidden items-center gap-6 sm:flex">
+            <a
+              href="#watch"
+              className={`font-label text-sm font-semibold text-on-surface-variant transition-colors hover:text-primary ${FOCUS_RING}`}
+            >
+              Watch
+            </a>
+            <a
+              href="#how-it-works"
+              className={`font-label text-sm font-semibold text-on-surface-variant transition-colors hover:text-primary ${FOCUS_RING}`}
+            >
+              How it works
+            </a>
+            <a
+              href="#faq"
+              className={`font-label text-sm font-semibold text-on-surface-variant transition-colors hover:text-primary ${FOCUS_RING}`}
+            >
+              FAQ
+            </a>
+          </nav>
           <a
-            href="#watch"
-            className={`font-label text-sm font-semibold text-on-surface-variant transition-colors hover:text-primary ${FOCUS_RING}`}
+            href={DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 font-label text-sm font-bold text-on-primary shadow-[0_4px_12px_rgba(0,109,61,0.15)] transition-transform duration-200 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
           >
-            Watch
+            <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+              menu_book
+            </span>
+            Docs
+            <span className="sr-only"> (opens in a new tab)</span>
           </a>
-          <a
-            href="#how-it-works"
-            className={`font-label text-sm font-semibold text-on-surface-variant transition-colors hover:text-primary ${FOCUS_RING}`}
-          >
-            How it works
-          </a>
-          <a
-            href="#faq"
-            className={`font-label text-sm font-semibold text-on-surface-variant transition-colors hover:text-primary ${FOCUS_RING}`}
-          >
-            FAQ
-          </a>
-        </nav>
+        </div>
       </header>
 
       <main>
