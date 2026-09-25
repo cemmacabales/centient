@@ -40,7 +40,7 @@ A Saturday fix is not a shortcut. It re-enters development → CI → review →
 
 ```
 feature/issue-N  →  develop  →  staging  →  main
-                    (integration)  (centient.work)  (released deliverables)
+                    (integration)  (beta.centient.work)  (released deliverables)
 ```
 
 ## Epic gates
@@ -54,6 +54,6 @@ feature/issue-N  →  develop  →  staging  →  main
 
 ## Red lines
 
-* Never submit a mainnet transaction without a current approval naming the exact destination and amount.
+* Testnet only (D-7). Never submit a mainnet transaction.
 * Never retry an ambiguous payout. Reconcile it, because a blind retry is how a double payment happens.
 * Never mix up testnet and mainnet in a report. Redact keys, seeds and raw logs.

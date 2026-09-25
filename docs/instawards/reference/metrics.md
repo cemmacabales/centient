@@ -18,12 +18,12 @@ The ten success metrics from SOW §6.3, in the SOW's order.
 | No single-key payout path (payout account multisig threshold ≥ 2), verifiable on-chain | Yes | 2 / 2 / 2, three signers of weight 1; guarded in CI and at the deployment boundary | ✓ |
 | Contributors receive USDC with no XLM of their own (sponsored trustline + fee-bump) | Yes | Never-funded address sponsored in [`b1ef0d3a…`](https://stellar.expert/explorer/testnet/tx/b1ef0d3aa2d3f74f7b86c3cbff840205718e76164b70e3774b5263a3051a435b); every payout fee-bumped | ✓ |
 | Unique Stellar wallet addresses onboarded | ≥ 25 | Not yet counted. The payout account has paid **35** distinct addresses, but that includes D1 proof accounts and typed withdrawal destinations, so it is not a count of wallets that signed in and earned | Week 4 |
-| Successful mainnet config-flip smoke payout | ≥ 1 | — (needs the co-signer on its own account first) | Week 4 |
+| Successful mainnet config-flip smoke payout | ≥ 1 | Out of scope: the sprint is testnet only (D-7) | — |
 | Automated test suites green in CI (payments, identity, end-to-end) | Yes | Payments ✓ · identity ✓ · end-to-end ✓, all inside `build` and `payments-lane`. There is no separate end-to-end job | ✓ |
-| Unreconciled payouts | 0 | **0** across the D3 QA window ([report](https://github.com/cemmacabales/centient/blob/develop/docs/superpowers/specs/2026-09-24-d3-reconcile-report.md): 77 submissions, 70 payouts reconciled). The Week 4 evidence run repeats this over the full volume | Week 4 |
-| Public testnet URL live & accessible | Yes | [centient.work](https://centient.work) | ✓ |
+| Unreconciled payouts | 0 | **0** across the D3 QA window ([report](https://github.com/artisam-centient/centient/blob/develop/docs/superpowers/specs/2026-09-24-d3-reconcile-report.md): 77 submissions, 70 payouts reconciled). The Week 4 evidence run repeats this over the full volume | Week 4 |
+| Public testnet URL live & accessible | Yes | [beta.centient.work](https://beta.centient.work) | ✓ |
 | Demo video published | Yes | — | Week 4 |
-| Public GitHub repository released | Yes — already public | [github.com/cemmacabales/centient](https://github.com/cemmacabales/centient) | ✓ |
+| Public GitHub repository released | Yes — already public | [github.com/artisam-centient/centient](https://github.com/artisam-centient/centient) | ✓ |
 
 *Last updated 24 September 2026. Figures come from Horizon: every USDC `payment` sent by the payout account from its first payout (8 September) to 24 September 07:50 UTC.*
 

@@ -71,4 +71,4 @@ Every sponsored account and trustline locks XLM on the contributor's behalf. Cen
 
 Because of rule 6, most contributors' reserves stay outstanding. That is the correct outcome: a revocation never removes a trustline a payout needs.
 
-→ [Reclaim runbook](https://github.com/cemmacabales/centient/blob/develop/docs/stellar-sponsorship-reclaim-runbook.md)
+→ [Reclaim runbook](https://github.com/artisam-centient/centient/blob/develop/docs/stellar-sponsorship-reclaim-runbook.md)
