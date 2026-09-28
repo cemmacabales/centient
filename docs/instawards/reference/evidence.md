@@ -105,7 +105,8 @@ The instant path made 80 payments from 21 to 24 September. The [metrics page](me
 | D2 QA-passed | [`8f660cc`](https://github.com/artisam-centient/centient/commit/8f660cc632f1c868a41618434a1c169dc0edabcc) | `QA PASSED` on #31, 21 September, 38/40 executed; reviewed `P0:0 P1:0`; same tree as `develop` [`aac52cc`](https://github.com/artisam-centient/centient/commit/aac52ccf6533b69e70876390c817be06bf8d0f40) |
 | D2 on `main` | — | Promoted by PR #121 on 21 September |
 | D3 QA-passed | [`1fde77d`](https://github.com/artisam-centient/centient/commit/1fde77d539ca040bb12c07df0c82dad5c8cf3a58) | `QA PASSED` on #41, 24 September |
-| Live on `staging` | [`36524aa`](https://github.com/artisam-centient/centient/commit/36524aacd32df08a518d18508ac4a3e1c8bedc67) | `1fde77d` plus the landing-page promo video (PR #153), ruled outside D3 |
+| D3 on `staging` | [`36524aa`](https://github.com/artisam-centient/centient/commit/36524aacd32df08a518d18508ac4a3e1c8bedc67) | `1fde77d` plus the landing-page promo video (PR #153), ruled outside D3 |
+| Live on `staging` | [`983e18b`](https://github.com/artisam-centient/centient/commit/983e18bcc6011dc412a448e9869d39b9ea9b3049) | Epic 4's #46–#49, promoted on 28 September. CI green in [run 36382675655](https://github.com/artisam-centient/centient/actions/runs/36382675655) |
 
 ## Screenshots and recordings
 
@@ -115,4 +116,4 @@ The instant path made 80 payments from 21 to 24 September. The [metrics page](me
 | Recording: wallet connect → signed challenge → session issued | D2 | [D2 evidence folder](https://drive.google.com/drive/folders/1JS5hYQ-G4g-n92Hzf9RTNRBKWsUuvbFd?usp=drive_link) |
 | Phone recordings for the #137 cases (iOS) | D3 | Held outside the repository; not yet reviewed on record |
 | Recording: connect → rank → instant USDC → reconciled | D3 | Covered by the Week 4 demo |
-| 3–5 minute demo | D4 | Week 4 |
+| 3–5 minute demo | D4 | Recording in progress (#52). Linked from the [SOW evidence map](sow-evidence-map.md#start-here) once published |
