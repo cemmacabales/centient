@@ -45,7 +45,7 @@ export default function InAppLanding({ totalEarned, submissionCount, onStart }: 
         <div className="w-full rounded-3xl bg-surface-container-lowest p-6 shadow-[0_8px_32px_rgba(25,28,30,0.06)]">
           <div className="flex flex-col items-center">
             <span className="mb-2 font-label text-xs font-bold uppercase tracking-widest text-outline">
-              Your Balance
+              Total earned
             </span>
             <div className="flex items-baseline gap-1">
               <span className="font-headline text-4xl font-extrabold tracking-tighter text-on-surface">

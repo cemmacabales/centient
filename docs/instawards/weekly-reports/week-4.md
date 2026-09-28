@@ -30,7 +30,7 @@ Week 4 tries to break the rail, then proves it in public. It re-verifies both mu
 * **Recruit 25 real wallets.** Payouts to 25 distinct addresses need 25 contributors, or a documented and honest test-wallet method. Start recruiting and onboarding testers in Week 3. As of 18 September, the payout account has paid **9** distinct addresses. If mobile is out of scope (D-4), every one of those contributors needs a desktop browser with the Freighter extension.
 * **Testnet USDC availability.** If the testnet USDC issuer is unstable during the volume run, SOW §3.8's fallback applies: a Centient-issued test stablecoin for the testnet runs. The reward asset is already configuration-driven. Decide before #49 whether to trigger this fallback, rather than during the run.
 * **Fund the float for 100 payouts.** Size the cold reserve and refill policy for the whole run, so the volume proof is not stalled by the cap or the float.
-* **Seeded QA credentials.** ADR-0002 accepted them for internal testnet QA only. Its exit criteria must be met before the build is published for outside reviewers (#48).
+* **Seeded QA credentials.** ADR-0002's code exit criteria are met in #48. Rotating the live accounts is out of scope, because the SOW does not ask for it (amended 28 Sep).
 * **Out-of-scope analytics.** PostHog payout events (#119) send wallet addresses. Decide whether that is covered by the privacy notice before the public release.
 
 ## Evidence this week must produce

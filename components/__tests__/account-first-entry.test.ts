@@ -5,7 +5,7 @@
 // #26 made the entry wallet-first: Freighter sign-in is primary. #30 retired
 // email sign-up: email sign-in remains only for accounts that already exist, so
 // they can claim a wallet.
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -73,6 +73,32 @@ describe("LoginScreen — wallet-first entry (#26)", () => {
     expect(link).toContain("Docs");
     // The section links hide below `sm`; the docs link must not sit inside them.
     expect(header.indexOf(link!)).toBeGreaterThan(header.indexOf("</nav>"));
+  });
+
+  describe("footer build SHA (#48)", () => {
+    const SHA = "1fde77d539ca040bb12c07df0c82dad5c8cf3a58";
+    afterEach(() => vi.unstubAllEnvs());
+
+    function footer(): string {
+      const html = render(createElement(LoginScreen, props));
+      return html.slice(html.indexOf("<footer"), html.indexOf("</footer>"));
+    }
+
+    it("shows the deployed SHA, linked to that commit on the public mirror", () => {
+      vi.stubEnv("NEXT_PUBLIC_DEPLOYED_SHA", SHA);
+      const link = footer().match(/<a[^>]*>.*?<\/a>/)?.[0];
+      expect(link).toContain(`href="https://github.com/artisam-centient/centient/commit/${SHA}"`);
+      expect(link).toContain(`title="${SHA}"`);
+      expect(link).toContain("Build 1fde77d");
+      expect(link).toContain('target="_blank"');
+      expect(link).toContain('rel="noopener noreferrer"');
+    });
+
+    it("shows no build line when the build has no SHA", () => {
+      vi.stubEnv("NEXT_PUBLIC_DEPLOYED_SHA", "");
+      expect(footer()).not.toContain("Build");
+      expect(footer()).toContain("centient.work");
+    });
   });
 });
 

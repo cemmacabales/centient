@@ -99,7 +99,30 @@ async function voidQuietly(journal: PayoutAttemptJournal | undefined, hash: stri
 /** Horizon's result codes as one short label, for an attempt's recorded outcome. */
 function describeResultCodes(err: unknown): string {
   const codes = resultCodes(err);
-  return [codes.transaction, ...(codes.operations ?? [])].filter(Boolean).join(", ") || "unknown";
+  // A fee bump's own code is only `tx_fee_bump_inner_failed`; the reason is the inner one.
+  return (
+    [codes.transaction, codes.inner_transaction, ...(codes.operations ?? [])].filter(Boolean).join(", ") ||
+    "unknown"
+  );
+}
+
+/**
+ * Was this envelope rejected for a stale sequence number?
+ *
+ * Every payout is a fee bump, and Horizon never answers a fee bump with a bare
+ * `tx_bad_seq`: it reports `tx_fee_bump_inner_failed` and puts the inner
+ * transaction's `tx_bad_seq` in `inner_transaction` (captured on testnet,
+ * 2026-09-14; see `client.submitSponsoredTrustline`). Reading only the outer
+ * code meant a sequence collision never took the rebuild below and instead spent
+ * one of the worker's retries (#46). The bare form is still accepted, since it
+ * is what an unwrapped transaction would get.
+ */
+function isStaleSequence(err: unknown): boolean {
+  const codes = resultCodes(err);
+  return (
+    codes.transaction === "tx_bad_seq" ||
+    (codes.transaction === "tx_fee_bump_inner_failed" && codes.inner_transaction === "tx_bad_seq")
+  );
 }
 
 /**
@@ -448,7 +471,7 @@ export async function submitMultisigPayout(
         );
       }
 
-      if (codes.transaction === "tx_bad_seq") {
+      if (isStaleSequence(err)) {
         try {
           return await buildCoSignSubmit(
             request,
@@ -461,7 +484,7 @@ export async function submitMultisigPayout(
             attempts,
           );
         } catch (retryErr) {
-          if (resultCodes(retryErr).transaction === "tx_bad_seq") {
+          if (isStaleSequence(retryErr)) {
             throw new StellarPaymentError(
               `submitMultisigPayout: ${request.reference.kind} ${request.reference.id} — sustained sequence contention (tx_bad_seq after one rebuild); requeue`,
               "tx_bad_seq",

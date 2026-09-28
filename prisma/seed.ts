@@ -3,6 +3,13 @@ import bcrypt from "bcryptjs";
 import { readFileSync } from "node:fs";
 import { PrismaClient } from "../app/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { isLocalDevelopment, resolveSeedPassword } from "../lib/seed-credentials";
+
+// ADR-0002: both values are published and burned. They are used only on local
+// development (a loopback database outside Railway); everywhere else the seed
+// takes the password from the environment or refuses.
+const LOCAL_ADMIN_PASSWORD = "GoCent!123";
+const LOCAL_DEMO_PASSWORD = "Demo!123";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
 const prisma = new PrismaClient({ adapter });
@@ -1024,6 +1031,7 @@ const tasks: TaskSeed[] = [
 ];
 
 async function main() {
+  const local = isLocalDevelopment(process.env);
   for (const t of tasks) {
     await prisma.task.upsert({
       where: { id: t.id },
@@ -1051,7 +1059,12 @@ async function main() {
     where: { email: "admin@centient.work" },
   });
   if (!existingAdmin) {
-    const password = process.env.ADMIN_SEED_PASSWORD ?? "GoCent!123";
+    const password = resolveSeedPassword({
+      account: "admin@centient.work",
+      envValue: process.env.ADMIN_SEED_PASSWORD,
+      localDefault: LOCAL_ADMIN_PASSWORD,
+      local,
+    });
     await prisma.adminUser.create({
       data: {
         email: "admin@centient.work",
@@ -1089,9 +1102,13 @@ async function main() {
     console.log("Centient customer already exists — leaving untouched");
   }
 
-  // Demo labeler — an established account for local demos/QA. Logs in via
+  // Demo labeler — an established account for local demos. Logs in via
   // email/password at /api/auth/login (isVerified required); the eligibility
   // stats clear the anti-fraud gates.
+  //
+  // ADR-0002 amendment: seeded on local development only. The upsert below
+  // resets the password on every run, so on a deployed environment it would
+  // re-publish a known login on each deploy.
   //
   // #39 (ADR-0007): no balance is seeded. Answers are paid on-chain as they are
   // accepted, and a seeded "ready to withdraw" balance would recreate, on every
@@ -1099,7 +1116,16 @@ async function main() {
   // balance an existing demo account still holds are left as they are on
   // re-seed: a leftover balance is a legacy one, withdrawn like any other.
   const demoEmail = "demo@centient.work";
-  const demoPassword = process.env.DEMO_LABELER_PASSWORD ?? "Demo!123";
+  if (!local) {
+    console.log(`Skipping demo labeler '${demoEmail}' — seeded on local development only (ADR-0002)`);
+    return;
+  }
+  const demoPassword = resolveSeedPassword({
+    account: demoEmail,
+    envValue: process.env.DEMO_LABELER_PASSWORD,
+    localDefault: LOCAL_DEMO_PASSWORD,
+    local,
+  });
   const demoPasswordHash = await bcrypt.hash(demoPassword, 12);
   // Backdate creation so WITHDRAWAL_MIN_ACCOUNT_AGE_HOURS (if set) is satisfied.
   const demoCreatedAt = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -1124,7 +1150,7 @@ async function main() {
       ...demoStats,
     },
   });
-  console.log(`Seeded demo labeler '${demoEmail}' (password '${demoPassword}') [id=${demoUser.id}]`);
+  console.log(`Seeded demo labeler '${demoEmail}' [id=${demoUser.id}]`);
 }
 
 main()

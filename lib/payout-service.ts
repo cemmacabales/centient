@@ -8,6 +8,8 @@ import { retryClaimIsLive, SUBMISSION_RETRY_BUDGET } from "./payout-retry-claim"
 import { refundSubmissionDebit } from "./payout-refund";
 import { confirmAttempt, settleOpenAttempt } from "./payout-attempts";
 import { hasRefundedSubmission } from "./campaign-balance";
+import { CoSignerCapError, CoSignerUnavailableError } from "./stellar/cosigner-errors";
+import { raiseCoSignerDeferralAlert } from "./payout-deferral";
 
 // `needs_reconciliation` marks a payment that settled on-chain but could not be
 // recorded. It is terminal for retry purposes: a human must reconcile it against
@@ -231,12 +233,23 @@ export async function reprocessPayoutWithNonceSafety(submissionId: string): Prom
     } catch (err: any) {
       console.error(`[payout-service] reprocess failed for submission ${submissionId}:`, err);
 
-      if (err instanceof PayoutCapError || err?.name === "PayoutCapError") {
+      if (err instanceof PayoutCapError || err?.name === "PayoutCapError" || err instanceof CoSignerCapError) {
         // Cap breach is transient — leave the submission pending and don't burn a retry.
+        // #47: the co-signer's own cap is the same, and alerted here because
+        // the service's cap alert cannot see it.
+        if (err instanceof CoSignerCapError) raiseCoSignerDeferralAlert(err);
         await prisma.submission.update({
           where: { id: submissionId },
           data: { payoutStatus: "pending" },
         });
+        return;
+      }
+
+      if (err instanceof CoSignerUnavailableError) {
+        // #47: nothing was signed, so nothing was sent. Leave the row as it was
+        // and spend no retry; the claim's lease lapses and the next cron pass
+        // asks again.
+        raiseCoSignerDeferralAlert(err);
         return;
       }
 

@@ -119,7 +119,7 @@ export function PayoutSetupView({
             )}
             {onContinue && (
               <p className="font-body text-xs text-on-surface-variant">
-                You can keep earning. Finish payout setup before you withdraw.
+                Answers can't be accepted until payout setup is finished.
               </p>
             )}
             <SignOutForm className="w-full rounded-xl py-2 font-label text-sm font-semibold text-on-surface-variant underline-offset-2 hover:underline" />

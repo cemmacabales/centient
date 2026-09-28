@@ -174,6 +174,21 @@ describe("handleCoSignRequest", () => {
 
     expect(response.status).toBe(409);
     expect(JSON.stringify(response.body)).toMatch(/cap/i);
+    // #47: machine-readable, so the payer defers rather than fails.
+    expect((response.body as { code?: string }).code).toBe("daily_cap_reached");
+  });
+
+  it("puts the cap code on no other refusal (#47)", async () => {
+    const { body, headers } = signedRequest();
+
+    const response = await handleCoSignRequest(
+      deps({ ledger: { readPayout: async () => null, broadcastVolumeSince: async () => 0n } }),
+      body,
+      headers,
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.body).not.toHaveProperty("code");
   });
 
   it("still refuses when the payout service cap is disabled", async () => {

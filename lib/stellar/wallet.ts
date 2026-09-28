@@ -204,6 +204,15 @@ export async function signTransaction(
 }
 
 /**
+ * How long a sign-out that navigates away (a form post) waits on
+ * {@link disconnect} before leaving anyway. The WalletConnect disconnect bounds
+ * itself at `DISCONNECT_WAIT_MS` (3 s) and deletes the stored session inside
+ * that; posting sooner unloads the page mid-cleanup, and the next sign-in
+ * restores the stale session. The extra second covers loading the relay module.
+ */
+export const SIGN_OUT_WAIT_MS = 4_000;
+
+/**
  * Drop a paired mobile session, so the next connect starts clean. A no-op on
  * the extension path, which holds no session of its own. Call it on sign-out.
  */

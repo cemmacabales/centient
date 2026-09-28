@@ -28,8 +28,10 @@ import {
   signOwnership,
   signTransaction,
   FREIGHTER_REQUIRED_MESSAGE,
+  SIGN_OUT_WAIT_MS,
   WalletError,
 } from "@/lib/stellar/wallet";
+import { DISCONNECT_WAIT_MS } from "@/lib/stellar/wallet-connect";
 import { verify } from "@/lib/stellar/signature";
 
 const kp = Keypair.fromSecret(
@@ -205,5 +207,13 @@ describe("signTransaction", () => {
   it("throws install guidance when Freighter is unavailable", async () => {
     mockIsConnected.mockResolvedValue({ isConnected: false });
     await expect(signTransaction("UNSIGNED_XDR", ADDR)).rejects.toThrow(FREIGHTER_REQUIRED_MESSAGE);
+  });
+});
+
+describe("SIGN_OUT_WAIT_MS", () => {
+  it("outlasts the WalletConnect disconnect's own bound", () => {
+    // A form that posts sooner unloads the page mid-cleanup, and the stale
+    // session survives in storage for the next sign-in to restore.
+    expect(SIGN_OUT_WAIT_MS).toBeGreaterThan(DISCONNECT_WAIT_MS);
   });
 });

@@ -78,7 +78,7 @@ describe("PayoutSetupView", () => {
     (reason) => {
       const html = render({ phase: "failed", reason, onRetry: noop, onContinue: noop });
       expect(html).toContain("Continue for now");
-      expect(html).toContain("Finish payout setup before you withdraw");
+      expect(html).toContain(escaped("Answers can't be accepted until payout setup is finished."));
     },
   );
 

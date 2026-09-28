@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
 /**
  * The owl's poses, in loop order. They follow one task: hello, reading the
@@ -95,7 +95,7 @@ export default function LandingMascot() {
           monetization_on
         </span>
         <span className="font-headline text-base font-extrabold tracking-tight text-secondary sm:text-lg">
-          +{REWARD_AMOUNT} {REWARD_TOKEN_SYMBOL}
+          {REWARD_TOKEN_SYMBOL}
         </span>
         <span className="font-label text-[11px] font-bold uppercase tracking-[0.2em] text-outline">
           Paid

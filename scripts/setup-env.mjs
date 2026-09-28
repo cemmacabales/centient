@@ -103,6 +103,7 @@ if (changes.length === 0) {
 } else {
   for (const c of changes) console.log(`  ${c}`);
 }
-console.log("\n  Seeded test login (after db:seed):");
-console.log("    admin   → admin@centient.work     / GoCent!123   (SUPER_ADMIN, full access)");
-console.log("    customer→ centient@centient.work  / GoCent!123   (CUSTOMER)\n");
+console.log("\n  Seeded test logins (after db:seed, local database only) — see the README:");
+console.log("    admin    → admin@centient.work     (SUPER_ADMIN, full access)");
+console.log("    labeler  → demo@centient.work      (contributor)");
+console.log("    customer → centient@centient.work  (CUSTOMER, only when INTERNAL_CUSTOMER_PASSWORD is set)\n");

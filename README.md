@@ -14,20 +14,6 @@ rewarding for anyone with an internet connection — no bank account required.
 
 ---
 
-## DEMO ACCOUNTS
-
-User (Labeler)
-
-demo@centient.work
-
-Demo!123
-
-Admin (Issuer) - https://centient.work/admin/login
-
-admin@centient.work
-
-GoCent!123
-
 ## Tech Stack
 
 | Layer | Choice |
@@ -325,12 +311,16 @@ container, applies migrations, and seeds test data.
 | `STELLAR_PLATFORM_SECRET` | `S…` seed of the payout account master. **Do not set this alongside `STELLAR_OPS_SIGNER_SECRET`** — one deployment holding two of the three seeds meets the threshold on its own and the payout path refuses to start (F-01) |
 | `STELLAR_USDC_ISSUER` | USDC issuer `G…` (testnet default is Circle's test USDC) |
 
-Once seeded, log in to test every area:
+Once seeded, log in to test every area. These are **local-development defaults
+only** ([ADR-0002](docs/adr/0002-seeded-credentials-accepted-on-testnet-qa.md)):
+they are published and burned, the seed refuses them against any non-local
+database, and no deployed environment accepts them.
 
 | Account | Email | Password | Access |
 |---------|-------|----------|--------|
-| Admin | `admin@centient.work` | `GoCent!123` | `SUPER_ADMIN` — full admin dashboard |
-| Customer | `centient@centient.work` | `GoCent!123` | `CUSTOMER` — campaign owner views |
+| Admin | `admin@centient.work` | `GoCent!123` (or `ADMIN_SEED_PASSWORD`) | `SUPER_ADMIN` — full admin dashboard |
+| Labeler | `demo@centient.work` | `Demo!123` (or `DEMO_LABELER_PASSWORD`) | Contributor, email/password login — seeded locally only |
+| Customer | `centient@centient.work` | your `INTERNAL_CUSTOMER_PASSWORD` | `CUSTOMER` — campaign owner views; seeded only when that variable is set |
 
 > Not using Docker for Postgres? Run `pnpm setup:env` (env only), point
 > `DATABASE_URL` at your own database, then `pnpm db:deploy && pnpm db:seed`.

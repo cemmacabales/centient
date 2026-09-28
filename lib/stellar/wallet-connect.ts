@@ -181,6 +181,7 @@ export function isMobileBrowser(): boolean {
  */
 export interface WalletConnectProvider {
   session?: {
+    topic?: string;
     namespaces?: Record<string, { accounts?: string[] }>;
     peer?: { metadata?: { redirect?: { native?: string; universal?: string } } };
   };
@@ -190,7 +191,19 @@ export interface WalletConnectProvider {
   request<T>(args: { method: string; params?: unknown }, chain?: string): Promise<T>;
   disconnect(): Promise<void>;
   on(event: string, listener: (...args: never[]) => void): void;
+  /** The sign client underneath; see {@link dropSession} and {@link retireProvider}. */
+  client?: {
+    disconnect(params: { topic: string; reason: { code: number; message: string } }): Promise<void>;
+    session: { delete(topic: string, reason: { code: number; message: string }): Promise<void> };
+    core: {
+      relayer: { transportClose(): Promise<void> };
+      heartbeat: { stop(): void };
+    };
+  };
 }
+
+/** The SDK's reason for a dapp hanging up — `getSdkError("USER_DISCONNECTED")`. */
+const USER_DISCONNECTED = { code: 6000, message: "User disconnected." };
 
 let providerPromise: Promise<WalletConnectProvider> | null = null;
 
@@ -459,17 +472,48 @@ export const DROP_SESSION_WAIT_MS = 2_000;
  * relay (or the wallet behind it) is exactly what may not be there, so it gets
  * {@link DROP_SESSION_WAIT_MS} and then the session is cleared here regardless.
  * Whatever the relay does later, the next request can't go out over it.
+ *
+ * The goodbye goes through the sign client rather than `provider.disconnect()`.
+ * The provider's own cleanup runs whenever the relay finally answers — the SDK
+ * retries a publish for up to a minute, and a phone that went off to Freighter
+ * meanwhile only answers once it is back — and it clears `provider.session`
+ * whatever that holds by then. After a slow relay that is the session the
+ * *next* pairing just opened, and the sign-in after it then has nothing to
+ * send the challenge over.
+ *
+ * The session is deleted from the sign client's store too, so a provider built
+ * later (the next page load, or after {@link retireProvider}) can't restore it.
  */
 async function dropSession(provider: WalletConnectProvider): Promise<void> {
   if (!provider.session) return;
-  const told = provider.disconnect().catch(() => {});
+  const topic = provider.session.topic;
+  const client = provider.client;
+  const told = (
+    client && topic
+      ? client.disconnect({ topic, reason: USER_DISCONNECTED })
+      : provider.disconnect()
+  ).catch(() => {});
+  await within(told, DROP_SESSION_WAIT_MS);
+  provider.session = undefined;
+  if (client && topic) {
+    try {
+      // Awaited: the store persists the removal asynchronously, and pairing
+      // before it lands leaves the stale session for the next provider to restore.
+      await client.session.delete(topic, USER_DISCONNECTED);
+    } catch {
+      // Already gone, because the relay answered in time.
+    }
+  }
+}
+
+/** Wait for `promise`, but no longer than `ms`. Never rejects. */
+async function within(promise: Promise<unknown>, ms: number): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   await Promise.race([
-    told,
-    new Promise<void>((resolve) => (timer = setTimeout(resolve, DROP_SESSION_WAIT_MS))),
+    promise.catch(() => {}),
+    new Promise<void>((resolve) => (timer = setTimeout(resolve, ms))),
   ]);
   clearTimeout(timer);
-  provider.session = undefined;
 }
 
 /**
@@ -738,17 +782,68 @@ export async function warmUp(): Promise<void> {
   }
 }
 
-/** Drop the current session so the next connect pairs afresh. Never throws. */
+/**
+ * The longest sign-out waits on WalletConnect. Telling Freighter goodbye is a
+ * courtesy; a sign-out that sits on "Logging out…" because the relay is slow
+ * (it retries for up to a minute) is a bug.
+ */
+export const DISCONNECT_WAIT_MS = 3_000;
+
+/**
+ * Sign-out: drop the session and shut the relay connection down, so the next
+ * sign-in starts from a new one. Never throws, and never takes longer than
+ * {@link DISCONNECT_WAIT_MS}.
+ *
+ * Forgetting the provider isn't enough on its own. Sign-out doesn't reload the
+ * page, so the old provider's sign client would stay alive on an open socket,
+ * and the SDK hands every new sign client the page's existing core — relay,
+ * keychain and all. Each sign-out then stacked another client on one relay,
+ * every one of them handling every message Freighter sent, and a sign-in after
+ * a sign-out could lose the approval or the signature to a client nobody was
+ * listening to.
+ */
 export async function disconnect(): Promise<void> {
-  if (!providerPromise) return;
-  try {
-    const provider = await providerPromise;
-    if (provider.session) await provider.disconnect();
-  } catch {
-    // A session the relay already dropped is exactly the state we wanted.
-  } finally {
-    providerPromise = null;
-    publishPairing(null);
+  const pending = providerPromise;
+  // Cleared first, so a sign-in that starts while this finishes builds anew.
+  providerPromise = null;
+  publishPairing(null);
+  if (!pending) return;
+  await within(
+    pending.then(retireProvider, () => {}),
+    DISCONNECT_WAIT_MS,
+  );
+}
+
+/**
+ * Take `provider` out of service for good: drop its session, stop the SDK's
+ * timers, close its relay socket, and unhook its core from the page so the next
+ * provider gets a core of its own.
+ */
+async function retireProvider(provider: WalletConnectProvider): Promise<void> {
+  const core = provider.client?.core;
+  if (core) {
+    // Before anything is awaited: a sign-in screen mounting right now must
+    // not be handed this core.
+    forgetGlobalCore(core);
+    // The heartbeat is what reopens a closed socket (and runs the expirer).
+    core.heartbeat.stop();
+  }
+  await dropSession(provider);
+  await core?.relayer.transportClose().catch(() => {});
+}
+
+/**
+ * The SDK keeps the page's core on `globalThis._walletConnectCore_<prefix>` and
+ * hands it to every sign client created after it. Remove it (and the counter
+ * behind the SDK's "already initialized" warning) so the next one starts clean.
+ */
+function forgetGlobalCore(core: object): void {
+  const slots = globalThis as unknown as Record<string, unknown>;
+  for (const key of Object.keys(slots)) {
+    if (key.startsWith("_walletConnectCore_") && slots[key] === core) {
+      delete slots[key];
+      delete slots[`${key}_count`];
+    }
   }
 }
 

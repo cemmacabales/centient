@@ -13,6 +13,7 @@
 import { Mutex } from "async-mutex";
 import type { Asset, Keypair } from "@stellar/stellar-sdk";
 import { assertIsolationPermitted } from "./cosigner-isolation";
+import { COSIGNER_CAP_REFUSAL_CODE } from "./cosigner-errors";
 import { assertLedgerAgrees, type LedgerPayout } from "./cosigner-ledger";
 import { verifyCoSignRequest, type NonceStore } from "./cosigner-transport";
 import { assertEnvelopeMatchesRequest } from "./cosigner-verify";
@@ -145,8 +146,8 @@ function parseRequest(raw: string): PayoutCoSignRequest {
   return { stage, xdr, destination, amountUnits: BigInt(amountUnits), reference: ref };
 }
 
-function fail(status: number, error: string): CoSignerResponse {
-  return { status, body: { error } };
+function fail(status: number, error: string, code?: string): CoSignerResponse {
+  return { status, body: code ? { error, code } : { error } };
 }
 
 /**
@@ -220,6 +221,9 @@ export async function handleCoSignRequest(
         return fail(
           409,
           `payout co-signer: daily cap reached — ${broadcast} units broadcast plus ${outstanding} signed and in flight plus ${request.amountUnits} requested exceeds the co-signer's cap of ${deps.capUnits}`,
+          // Machine-readable, so the payer defers this refusal rather than
+          // failing the payout on it (#47). The message stays for the logs.
+          COSIGNER_CAP_REFUSAL_CODE,
         );
       }
 

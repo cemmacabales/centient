@@ -1,6 +1,6 @@
 "use client";
 
-import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
 const ITEMS: { q: string; a: string }[] = [
   {
@@ -9,7 +9,7 @@ const ITEMS: { q: string; a: string }[] = [
   },
   {
     q: "How much do I earn?",
-    a: `${REWARD_AMOUNT} ${REWARD_TOKEN_SYMBOL} per valid submission, added to your account balance — withdraw to your wallet anytime.`,
+    a: `Each task shows its ${REWARD_TOKEN_SYMBOL} reward before you answer. An accepted answer is paid straight to the wallet you signed in with — there is no balance to withdraw.`,
   },
   {
     q: "What makes a good submission?",
@@ -17,11 +17,11 @@ const ITEMS: { q: string; a: string }[] = [
   },
   {
     q: "How are payments sent?",
-    a: `Every valid submission triggers a ${REWARD_TOKEN_SYMBOL} transfer on Stellar. View every payout from your account sheet.`,
+    a: `Each accepted answer is sent as its own ${REWARD_TOKEN_SYMBOL} payment on Stellar. Your account sheet shows each payment's status: pending, sent or confirmed.`,
   },
   {
     q: "What is a quality check?",
-    a: "We occasionally mix in tasks with a clear right answer to keep quality high. Getting too many wrong may pause your account.",
+    a: "We occasionally mix in tasks with a clear right answer to keep quality high. They don't pay, and getting too many wrong may pause your account.",
   },
 ];
 

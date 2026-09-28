@@ -4,7 +4,8 @@ import Image from "next/image";
 import Faq from "./Faq";
 import Mascot from "./LandingMascot";
 import WalletSignIn from "./WalletSignIn";
-import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { deployedBuild } from "@/lib/build-info";
+import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 
 interface LoginScreenProps {
   /** Called once Freighter sign-in has set the session cookie (#26). */
@@ -38,7 +39,7 @@ const STEPS: { icon: string; title: string; body: string }[] = [
   {
     icon: "payments",
     title: "Get paid",
-    body: `Each approved answer adds ${REWARD_AMOUNT} ${REWARD_TOKEN_SYMBOL} to your balance, paid to the wallet you signed in with.`,
+    body: `Each approved answer pays the reward shown on its task, in ${REWARD_TOKEN_SYMBOL}, straight to the wallet you signed in with.`,
   },
 ];
 
@@ -53,6 +54,7 @@ const STEPS: { icon: string; title: string; body: string }[] = [
  * can earn or withdraw.
  */
 export default function LoginScreen({ onWalletSignedIn, onEmailSignIn, error }: LoginScreenProps) {
+  const build = deployedBuild();
   return (
     <div className="min-h-screen overflow-x-clip bg-surface text-on-surface">
       <header className="mx-auto flex max-w-6xl items-center justify-between px-5 py-5 sm:px-8">
@@ -122,7 +124,7 @@ export default function LoginScreen({ onWalletSignedIn, onEmailSignIn, error }: 
 
             <p className="mt-6 max-w-[34rem] font-body text-lg leading-relaxed text-on-surface-variant">
               Read a prompt, pick the better of two AI responses, and say why. Each approved
-              answer pays {REWARD_AMOUNT} {REWARD_TOKEN_SYMBOL}. Connect your Stellar wallet to
+              answer is paid in {REWARD_TOKEN_SYMBOL}, straight to your wallet. Connect your Stellar wallet to
               start — no email or password needed.
             </p>
 
@@ -153,7 +155,7 @@ export default function LoginScreen({ onWalletSignedIn, onEmailSignIn, error }: 
             <div className="mt-8 flex max-w-[34rem] items-start gap-3 border-l-2 border-primary-container pl-4">
               <p className="font-body text-sm leading-relaxed text-on-surface-variant">
                 Your <span className="font-semibold text-on-surface">wallet address</span>{" "}
-                is your account and where your {REWARD_TOKEN_SYMBOL} is paid. Freighter asks you to sign a
+                is your account and where your {`${REWARD_TOKEN_SYMBOL} is paid`}. Freighter asks you to sign a
                 one-time message to prove it&apos;s yours — it never moves funds.
               </p>
             </div>
@@ -258,9 +260,23 @@ export default function LoginScreen({ onWalletSignedIn, onEmailSignIn, error }: 
         <span className="font-headline text-base font-extrabold tracking-tighter text-primary">
           Centient
         </span>
-        <span className="font-label text-xs font-bold uppercase tracking-[0.2em] text-outline">
-          centient.work
-        </span>
+        <div className="flex flex-col items-end gap-1">
+          <span className="font-label text-xs font-bold uppercase tracking-[0.2em] text-outline">
+            centient.work
+          </span>
+          {build && (
+            <a
+              href={build.commitUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={build.sha}
+              className={`font-mono text-xs text-outline underline-offset-2 hover:underline ${FOCUS_RING}`}
+            >
+              Build {build.shortSha}
+              <span className="sr-only"> (opens in a new tab)</span>
+            </a>
+          )}
+        </div>
       </footer>
     </div>
   );

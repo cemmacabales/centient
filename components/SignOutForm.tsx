@@ -1,10 +1,7 @@
 "use client";
 
 import { type FormEvent, useRef } from "react";
-import { disconnect as disconnectWallet } from "@/lib/stellar/wallet";
-
-/** How long sign-out waits on the relay before posting the logout anyway. */
-const DISCONNECT_WAIT_MS = 1500;
+import { disconnect as disconnectWallet, SIGN_OUT_WAIT_MS } from "@/lib/stellar/wallet";
 
 /**
  * A sign-out button that drops the WalletConnect session before the logout
@@ -23,7 +20,7 @@ export default function SignOutForm({ className }: { className: string }) {
     const form = event.currentTarget;
     await Promise.race([
       disconnectWallet().catch(() => {}),
-      new Promise((resolve) => setTimeout(resolve, DISCONNECT_WAIT_MS)),
+      new Promise((resolve) => setTimeout(resolve, SIGN_OUT_WAIT_MS)),
     ]);
     form.submit();
   };

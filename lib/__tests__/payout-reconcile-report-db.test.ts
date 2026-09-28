@@ -66,9 +66,11 @@ async function payout(opts: {
   createdAt?: Date;
   broadcastAt?: Date;
   payoutError?: string;
+  /** Reuse a contributor, so one wallet can be paid more than once. */
+  user?: { id: string; walletAddress: string | null };
 }) {
   if (!campaignId) campaignId = (await createCampaign({ rewardUnits: AMOUNT })).id;
-  const user = await createUser({ walletAddress: Keypair.random().publicKey() });
+  const user = opts.user ?? (await createUser({ walletAddress: Keypair.random().publicKey() }));
   const task = await createTask({ campaignId, prompt: `Report ${Math.random()}?` });
   const submission = await prisma.submission.create({
     data: {
@@ -100,14 +102,14 @@ async function payout(opts: {
 }
 
 /** A payout confirmed in the database and, on the fake chain, exactly as owed. */
-async function reconciled() {
+async function reconciled(user?: { id: string; walletAddress: string | null }) {
   const hash = stellarHash();
-  const { submission, wallet } = await payout({ status: "confirmed", hash });
+  const { submission, wallet } = await payout({ status: "confirmed", hash, user });
   chain.set(hash, { status: "confirmed", envelopeXdr: envelope(wallet) });
   await prisma.payoutAttempt.create({
     data: { submissionId: submission.id, envelopeHash: hash, expiresAt: new Date(), status: "confirmed" },
   });
-  return { submission, hash };
+  return { submission, hash, wallet };
 }
 
 const report = () => buildReconcileReport({ since: since(), until: new Date(), sentOverdueMs: 10 * MINUTE, horizon });
@@ -234,5 +236,83 @@ describe("buildReconcileReport", () => {
     const [a, b] = [await buildReconcileReport(window), await buildReconcileReport(window)];
 
     expect({ ...a, generatedAt: null }).toEqual({ ...b, generatedAt: null });
+  });
+});
+
+// #49 — the volume proof. The same report, read as the D4 evidence run: how many
+// payouts settled, to how many wallets, and every other outcome counted once.
+describe("buildReconcileReport volume", () => {
+  const TARGETS = { settlements: 3, wallets: 2 };
+  const volumeReport = (targets?: typeof TARGETS) =>
+    buildReconcileReport({ since: since(), until: new Date(), sentOverdueMs: 10 * MINUTE, horizon, targets });
+
+  it("counts each outcome once and names wallets only in shortened form", async () => {
+    const repeat = await createUser({ walletAddress: Keypair.random().publicKey() });
+    await reconciled(repeat);
+    await reconciled(repeat);
+    const single = await reconciled();
+    await payout({ status: "skipped" });
+    await payout({ status: "failed" });
+    await payout({ status: "abandoned" });
+
+    const r = await volumeReport();
+
+    expect(r.volume).toMatchObject({ successful: 3, uniqueWallets: 2, rejected: 1, failed: 2, duplicate: 0, unreconciled: 0 });
+    const short = (w: string) => `${w.slice(0, 4)}…${w.slice(-4)}`;
+    expect(r.volume.wallets).toEqual([
+      { wallet: short(repeat.walletAddress!), payouts: 2 },
+      { wallet: short(single.wallet!), payouts: 1 },
+    ]);
+    const json = JSON.stringify(r.volume);
+    expect(json).not.toContain(repeat.walletAddress!);
+    expect(json).not.toContain(single.wallet!);
+  });
+
+  it("counts a duplicate or unreconciled submission once, however many findings it carries", async () => {
+    const twiceLanded = await reconciled();
+    await prisma.payoutAttempt.create({
+      data: { submissionId: twiceLanded.submission.id, envelopeHash: stellarHash(), expiresAt: new Date(), status: "confirmed" },
+    });
+    const sharedHash = stellarHash();
+    const sharedA = await payout({ status: "confirmed", hash: sharedHash });
+    await payout({ status: "abandoned", hash: sharedHash }); // shared_hash and terminal_with_hash
+    chain.set(sharedHash, { status: "confirmed", envelopeXdr: envelope(sharedA.wallet!) });
+    await payout({ status: "confirmed", hash: stellarHash() }); // horizon_missing
+
+    const r = await volumeReport();
+
+    expect(r.unreconciled).toHaveLength(5);
+    expect(r.volume).toMatchObject({ successful: 0, duplicate: 3, unreconciled: 4, failed: 1 });
+  });
+
+  it("leaves the targets unjudged unless they are given", async () => {
+    await reconciled();
+
+    const r = await volumeReport();
+
+    expect(r.volume.targets).toBeNull();
+    expect(r.volume.met).toBeNull();
+    expect(renderReconcileMarkdown(r)).not.toMatch(/Volume target/);
+  });
+
+  it("meets the targets only with enough payouts and wallets, and nothing duplicate or unreconciled", async () => {
+    const repeat = await createUser({ walletAddress: Keypair.random().publicKey() });
+    await reconciled(repeat);
+    await reconciled(repeat);
+    await reconciled();
+
+    const met = await volumeReport(TARGETS);
+    expect(met.volume).toMatchObject({ targets: TARGETS, met: true, shortfalls: [] });
+    expect(renderReconcileMarkdown(met)).toMatch(/Volume target met/);
+
+    const short = await volumeReport({ settlements: 4, wallets: 3 });
+    expect(short.volume.met).toBe(false);
+    expect(short.volume.shortfalls).toEqual(["3 of 4 settlements", "2 of 3 unique wallets"]);
+
+    await payout({ status: "confirmed", hash: stellarHash() }); // horizon_missing
+    const dirty = await volumeReport(TARGETS);
+    expect(dirty.volume.met).toBe(false);
+    expect(dirty.volume.shortfalls).toEqual(["1 unreconciled"]);
+    expect(renderReconcileMarkdown(dirty)).toMatch(/Volume target not met/);
   });
 });

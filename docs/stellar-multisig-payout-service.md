@@ -93,6 +93,8 @@ second process can interleave.
 | Ambiguous submit (timeout, dropped socket, post-acceptance 5xx) | **Only once provably dead** | No rebuild. The envelope hash is known before submission, so Horizon is polled for that exact transaction until it resolves, or until the envelope's time bounds expire. A payout that settled returns its real hash. Expiry yields `ambiguous_submit` marked retryable, because the envelope can no longer be included. |
 | Ambiguous submit on an envelope with no time bounds | **No** | Cannot be proven dead, so it is reported non-retryable for manual reconciliation rather than risking a second settlement. |
 | Co-signer refuses | **No** | Nothing is submitted. The payout fails with the co-signer's reason. |
+| Co-signer unreachable, timing out, or answering 5xx | **Deferred** | Nothing is submitted. `CoSignerUnavailableError`: the worker holds the job for 30s with no retry spent, and the retry path leaves the row as it was. A `cosigner-unavailable` page fires. The payout resumes when the co-signer answers (#47). |
+| Co-signer refuses on its own daily cap (`code: daily_cap_reached`) | **Deferred** | Nothing is submitted. `CoSignerCapError`: deferred exactly like the payout service's own cap, with a `cosigner-cap` page (#47). |
 | Co-signer answers with the wrong key | **No** | Rejected before submission. Indicates a configuration or transport fault — check `STELLAR_POLICY_SIGNER_PUBLIC`. |
 | Co-signer signature does not verify | **No** | Rejected before submission. Indicates envelope tampering or a signer/network-passphrase mismatch. |
 | No co-signer configured | **No** | `payReward` throws before building anything. There is no single-signature fallback. |

@@ -17,6 +17,8 @@ import { claimSubmissionForBroadcast, heartbeatRetryClaim } from "./payout-servi
 import { SUBMISSION_RETRY_BUDGET } from "./payout-retry-claim";
 import { refundCampaignBalance } from "./payout-refund";
 import { confirmAttempt, settleOpenAttempt } from "./payout-attempts";
+import { CoSignerCapError, CoSignerUnavailableError } from "./stellar/cosigner-errors";
+import { COSIGNER_RETRY_AFTER_MS, raiseCoSignerDeferralAlert } from "./payout-deferral";
 
 const STALE_PROCESSING_MS = 60_000;
 // Refresh the in-flight job's heartbeat well within STALE_PROCESSING_MS so a slow
@@ -231,7 +233,27 @@ async function processWithdrawalJob(
     // *why*, which is the difference between an actionable failure and a mystery.
     const message = describeStellarError(err);
 
-    if (err instanceof PayoutCapError) {
+    // #47: an unreachable co-signer says nothing about this withdrawal. Hold it
+    // and ask again shortly, spending no retry, so an outage never refunds it.
+    if (err instanceof CoSignerUnavailableError) {
+      await prisma.payoutJob.update({
+        where: { id: jobId },
+        data: {
+          status: "queued",
+          workerHeartbeatAt: null,
+          notBefore: new Date(Date.now() + COSIGNER_RETRY_AFTER_MS),
+          lastError: message,
+        },
+      });
+      raiseCoSignerDeferralAlert(err);
+      console.warn(`[payout-worker] withdrawal job ${jobId} held: ${message}`);
+      return;
+    }
+
+    // Either signer's cap: the co-signer's refusal is handled as the service's
+    // own would be, and alerted, since the service's cap alert cannot see it.
+    if (err instanceof PayoutCapError || err instanceof CoSignerCapError) {
+      if (err instanceof CoSignerCapError) raiseCoSignerDeferralAlert(err);
       await prisma.$transaction([
         prisma.payoutJob.update({
           where: { id: jobId },
@@ -564,7 +586,29 @@ async function processSubmissionPayout(
     // F-04b: same reasoning as the withdrawal path — keep Horizon's result codes.
     const message = describeStellarError(err);
 
-    if (err instanceof PayoutCapError) {
+    // #47: an unreachable co-signer says nothing about this payout. Hold the job
+    // and ask again shortly, spending no retry and refunding nothing, for as
+    // long as the outage lasts. The submission is still `pending` with no hash.
+    if (err instanceof CoSignerUnavailableError) {
+      await prisma.payoutJob.update({
+        where: { id: jobId },
+        data: {
+          status: "queued",
+          workerHeartbeatAt: null,
+          notBefore: new Date(Date.now() + COSIGNER_RETRY_AFTER_MS),
+          lastError: message,
+        },
+      });
+      raiseCoSignerDeferralAlert(err);
+      console.warn(`[payout-worker] submission job ${jobId} held: ${message}`);
+      return;
+    }
+
+    // Either signer's cap defers the payout to the retry path. The co-signer's
+    // refusal is alerted here, since the service's cap alert reads only its own
+    // ledger and cannot see a refusal made on the co-signer's window.
+    if (err instanceof PayoutCapError || err instanceof CoSignerCapError) {
+      if (err instanceof CoSignerCapError) raiseCoSignerDeferralAlert(err);
       await prisma.$transaction([
         prisma.submission.update({
           where: { id: submissionId },

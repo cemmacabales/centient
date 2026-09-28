@@ -10,7 +10,8 @@ payout service**, not the single-key `payUsdc` broadcast. The failure modes belo
 are unchanged, but the signing and sequence behavior now lives in
 `stellar/payout-submitter.ts` — see
 [the payout service runbook](./stellar-multisig-payout-service.md), which also
-covers the co-signer failure modes this table does not.
+covers the co-signer's own failure modes. The two co-signer answers a payer
+defers on, an outage and the co-signer's cap (#47), are in the table below.
 
 ## Failure modes at a glance
 
@@ -18,10 +19,12 @@ covers the co-signer failure modes this table does not.
 |---|---|---|---|---|
 | `op_no_trust` | Recipient `G…` exists but holds **no USDC trustline** | **No** | Payout marked **failed**, balance **refunded**, job retry budget consumed (no requeue). Surfaced to Sentry. | Tell the labeler to run **"Set up USDC payouts (free)"** (the sponsored-trustline flow, ST-4e) in their wallet, then re-withdraw. Their balance is intact. |
 | `op_no_destination` | Recipient `G…` **doesn't exist / is unfunded** (never created on-chain) | **No** | Same as `op_no_trust`: failed + refunded + budget consumed. | The address was never created on-chain. The sponsored flow (ST-4e) creates + funds the account's base reserve. Have them complete "Set up USDC payouts", then re-withdraw. Double-check they linked the correct `G…`. |
-| `tx_bad_seq` | Stale sequence number on the **payout** account (concurrency) | **Yes** | `submitMultisigPayout` rebuilds and resubmits **once** in-call, re-collecting both signatures because the rebuilt envelope has a new hash. If it still fails, it's classified retryable → the **job requeues** (backoff via the job queue, up to 3 attempts). | None normally — self-heals. If a job is stuck requeuing, check for a rogue second process submitting from the same platform key (sequence contention). |
+| `tx_bad_seq` | Stale sequence number on the **payout** account (concurrency). Every payout is a fee bump, so Horizon reports it as `tx_fee_bump_inner_failed` with `inner_transaction: tx_bad_seq`; both forms are read (#46) | **Yes** | `submitMultisigPayout` rebuilds and resubmits **once** in-call, re-collecting both signatures because the rebuilt envelope has a new hash. If it still fails, it's classified retryable → the **job requeues** (immediately, with no delay; up to 3 attempts). | None normally — self-heals. If a job is stuck requeuing, check for a rogue second process submitting from the same platform key (sequence contention). |
 | `op_low_reserve` | **Platform** account lacks XLM to fund a sponsored reserve (trustline flow) | **No** | Sponsored-trustline submit fails with a clear error (→ 400 at the route). | Top up the platform account's **XLM** (fees + base/trustline reserves). See wallet-health below. |
 | `invalid_sponsor_tx` | A sponsored-trustline XDR was malformed / tampered / wrong shape | **No** | Rejected at the route (400) before submit. | Client-side/abuse signal — the co-signed envelope didn't match the platform-built shape. No money moved. |
 | Timeout / Horizon 5xx / network | Submit or status read didn't complete | **Only once proven dead** | A missing hash is *not* evidence the payout never broadcast, so it alone never licenses a retry. `submitMultisigPayout` resolves the envelope by hash first (see below): it requeues only when Horizon reports the transaction absent as of a ledger that closed past its time bounds. Anything less resolves as `ambiguous_submit`, non-retryable, **without a refund**. If a broadcast tx isn't yet visible, the reconciler sees `not_found` (404) and **leaves it `sent`/`processing`** without burning a retry, re-checking next pass (~5s finality). | None for the retryable case — it self-heals. `ambiguous_submit` needs the reconciliation steps below. Check Horizon status if many jobs stall. |
+| Co-signer unavailable (#47) | The co-signer request failed, timed out, or answered 5xx (`CoSignerUnavailableError`) | **Yes, without spending a retry** | Nothing reaches Horizon and no attempt opens. The submission stays `pending` with no hash. The worker holds the job 30 s (`notBefore`) and asks again, for as long as the outage lasts. The retry cron leaves the row as it was. Nothing is refunded, and nothing is sent on one signature. A `cosigner-unavailable` **PAGE** fires to Discord, deduplicated. Legacy withdrawals hold the same way. | Restore the co-signer service (see [co-signer deployment](./cosigner-deployment.md)). Payouts resume on the next pass once it answers. No manual retry is needed. |
+| Co-signer daily cap reached (#47) | The co-signer answered 409 with `code: daily_cap_reached` (`CoSignerCapError`) | **Yes, when its window has room** | Deferred exactly like the service's own cap: submission `pending`, no retry spent, campaign debit kept. A `cosigner-cap` **PAGE** fires. The co-signer's cap runs on its own UTC-day window, independent of `DAILY_PAYOUT_CAP_UNITS`. Needs the co-signer build that sends the code. An older co-signer's refusal is treated as an ordinary refusal (a failed attempt). | Expected at the cap. Payouts resume when the co-signer's window rolls over. To lift it, follow the [daily payout cap runbook](./stellar-daily-payout-cap-runbook.md) on the co-signer's own `COSIGNER_DAILY_CAP_UNITS`. Never route around the co-signer. |
 
 ## Trustline vs. destination — the two "recipient can't receive" cases
 
@@ -151,7 +154,8 @@ reset or duplicate it.
 Enforced in **USDC units** (7-dec base units; ST-2b) independently by the payout
 service and policy co-signer. When the application cap blocks a per-submission
 payout, the submission remains pending, its retry budget is not consumed, its
-campaign debit stays reserved, and the cap alert is emitted; a co-signer breach
-returns no signature. See the
+campaign debit stays reserved, and the cap alert is emitted. A co-signer breach
+returns no signature. Since #47 the payout is deferred in the same way and a
+`cosigner-cap` alert fires (see the table above). See the
 [daily payout cap runbook](stellar-daily-payout-cap-runbook.md) for both variables,
 their deliberately different windows, and the change procedure.

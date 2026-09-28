@@ -2,7 +2,7 @@
 
 What is not finished and what is accepted as a known limit. Each item is a way the program could miss a target or the rail could fail. **They are listed here so they can be managed, not as caveats.**
 
-*Last reviewed 18 September 2026. R-3, R-4, R-6 and the mobile limit were updated on 24 September, after the D3 gate.*
+*Last reviewed 18 September 2026. R-3, R-4, R-6 and the mobile limit were updated on 24 September, after the D3 gate. The seeded-credential and cap-alert limits and the small follow-ups were updated on 28 September (D4, #46–#48). The refund limit and the privacy notice were settled the same day, in the owner's rulings on the D4 requirements analysis.*
 
 ## Blocking a future deliverable
 
@@ -29,20 +29,21 @@ What is not finished and what is accepted as a known limit. Each item is a way t
 | Item | Accepted because | Revisit when |
 | --- | --- | --- |
 | **Simulated co-signer isolation** (server, not account) | Testnet only (D-7), zero value at risk | — |
-| **Seeded QA credentials** (ADR-0002) | Internal testnet QA only | Before the public release (#48). See ADR-0002's exit criteria |
+| **Seeded QA credentials** (ADR-0002) | Testnet only (D-7). Not in the SOW, so live rotation is out of scope (28 Sep) | Before any mainnet work. The code side is done in #48: the seed refuses the published defaults outside local development, the demo account is seeded locally only, and no password is printed. The two live accounts keep their original passwords |
 | **Freighter only; phone sign-in tested on iOS only** (ADR-0003 and its amendment, D-4) | One wallet meets every acceptance item; the phone gate was ruled iOS-only | If an Android contributor reports a problem |
 | **No wallet rotation** (D-3) | Out of D2 | After the sprint |
 | **Logout does not revoke the 7-day session token** | Pre-existing; not in D2 scope | When instant payouts make a session more valuable (Week 3) |
 | **Most sponsored reserves cannot be reclaimed** while the owner holds no XLM | This is how the chain behaves, and reclaiming would break payouts | Ongoing. The liability is tracked and capped per contributor |
-| **Cap alerts are fire-and-forget** | Ledger-based health monitoring raises the same alert | Week 4 hardening (#47) |
+| **A failed campaign refund is not retried** (`refundCampaignBalance` swallows a failed credit) | Testnet only (D-7). The refund is keyed per submission, so a missed one can be re-credited by hand without double-crediting. On 28 September no real payout had ever failed; the only failed campaign payout is a D1 QA fixture that is never refunded by design | After the release, in [#163](https://github.com/webnxt-2030/Centient/issues/163), which makes the refund durable |
+| **Cap alerts are fire-and-forget** | Ledger-based health monitoring raises the same alert, and the `wallet-health` cron reports each alert's delivery outcome. #47 kept this deliberately: a slow Discord or Redis must never delay a payer. Its new co-signer alerts are sent the same way | If an alert is missed that the health cron did not also raise |
 
 ## Small follow-ups
 
 * [ ] #119's CodeRabbit thread: `lib/__tests__/payout-analytics.test.ts` does not clear `POSTHOG_KEY` (a one-line fix).
 * [ ] #112's CodeRabbit thread is fixed by #114 but still shows unresolved on #112.
-* [ ] #28's fee-bump `tx_bad_seq` read is still unfiled.
+* [x] #28's fee-bump `tx_bad_seq` read: fixed in #46. The submitter reads the fee-bump form (`tx_fee_bump_inner_failed` with an inner `tx_bad_seq`) and rebuilds in the same call.
 * [ ] A server-side analytics event for a payout the worker fails *after* the API accepted it; #110 does not cover it.
 * [ ] Cap and co-signer-config failures emit no analytics event, and a retried payout emits one `failed` event per attempt.
-* [ ] PostHog payout events send wallet addresses (deliberately, since they are public on the ledger). Confirm the privacy notice covers this before the public release.
+* [x] PostHog payout events send wallet addresses (deliberately, since they are public on the ledger). Covered by the [privacy and analytics notice](privacy.md), published with the D4 release (owner's ruling, 28 September).
 * [ ] Legacy cleanup: remote `codex/*` branches, the `agent-ready` / `agent-in-progress` labels, and the dead `.github/codex-dispatch` check in `single-contributor.yml`.
 * [ ] The code still says `labeler` in about 67 files, where the canonical term is **contributor**. Rename gradually, as files are touched.

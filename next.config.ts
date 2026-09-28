@@ -1,5 +1,6 @@
 import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
+import { resolveDeployedSha } from "./lib/build-info";
 
 // PostHog is reached through the same-origin `/ingest` rewrite below, so the
 // CSP needs no PostHog hosts; `worker-src blob:` is for session replay's worker.
@@ -35,6 +36,11 @@ const csp = [
 
 const config: NextConfig = {
   output: "standalone",
+  // The commit this build was made from, inlined for the landing footer and
+  // `/api/version` (#48). Empty for a local build, which then shows no SHA.
+  env: {
+    NEXT_PUBLIC_DEPLOYED_SHA: resolveDeployedSha() ?? "",
+  },
   allowedDevOrigins: [
     "impromptu-effective-qualify.ngrok-free.dev",
     "*.ngrok-free.dev",

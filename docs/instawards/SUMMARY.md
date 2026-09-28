@@ -29,5 +29,6 @@
 * [Open risks and follow-ups](reference/risks.md)
 * [How work is delivered](reference/delivery-process.md)
 * [Runbooks](reference/runbooks.md)
+* [Privacy and analytics](reference/privacy.md)
 * [Glossary](reference/glossary.md)
 * [Full changelog](reference/changelog.md)

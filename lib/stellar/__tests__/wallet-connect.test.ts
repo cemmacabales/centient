@@ -15,6 +15,8 @@ import {
   cancelPairing,
   cancelWalletRequest,
   connect,
+  disconnect,
+  DISCONNECT_WAIT_MS,
   formatNativeUrl,
   isFreighterInAppBrowser,
   isWalletConnectConfigured,
@@ -483,6 +485,188 @@ describe("connect — a fresh pairing", () => {
     await expect(connect()).resolves.toEqual({ address: ADDR, wallet: "freighter" });
     expect(provider.disconnect).not.toHaveBeenCalled();
     expect(provider.connect).not.toHaveBeenCalled();
+  });
+});
+
+/** A stand-in for the sign client under a provider, with a live `topic` session. */
+function fakeClient(provider: WalletConnectProvider, topic = "topic-1") {
+  provider.session = { ...provider.session, topic };
+  const client = {
+    disconnect: vi.fn(async () => {}),
+    session: { delete: vi.fn(async () => {}) },
+    core: {
+      relayer: { transportClose: vi.fn(async () => {}) },
+      heartbeat: { stop: vi.fn() },
+    },
+  };
+  provider.client = client;
+  return client;
+}
+
+describe("connect — dropping a session through the sign client", () => {
+  it("says goodbye over the sign client, not provider.disconnect()", async () => {
+    // provider.disconnect() clears `provider.session` whenever the relay gets
+    // round to answering — by which time it can be the next pairing's session.
+    const provider = fakeProvider({ accounts: [OTHER] });
+    const client = fakeClient(provider, "stale");
+    provider.connect = vi.fn().mockImplementation(() => {
+      provider.session = { topic: "new", namespaces: { stellar: { accounts: [`${CHAIN}:${ADDR}`] } } };
+      return Promise.resolve(undefined);
+    });
+    setWalletConnectProvider(provider);
+
+    await expect(connect({ fresh: true })).resolves.toEqual({ address: ADDR, wallet: "freighter" });
+    expect(client.disconnect).toHaveBeenCalledWith(expect.objectContaining({ topic: "stale" }));
+    expect(provider.disconnect).not.toHaveBeenCalled();
+  });
+
+  it("deletes the stored session even when the relay never confirms", async () => {
+    vi.useFakeTimers();
+    const provider = fakeProvider({ accounts: [OTHER] });
+    const client = fakeClient(provider, "stale");
+    client.disconnect = vi.fn(() => new Promise<never>(() => {}));
+    provider.connect = vi.fn().mockImplementation(() => {
+      provider.session = { topic: "new", namespaces: { stellar: { accounts: [`${CHAIN}:${ADDR}`] } } };
+      return Promise.resolve(undefined);
+    });
+    setWalletConnectProvider(provider);
+
+    const attempt = connect({ fresh: true });
+    await vi.advanceTimersByTimeAsync(DROP_SESSION_WAIT_MS);
+    await expect(attempt).resolves.toEqual({ address: ADDR, wallet: "freighter" });
+    // Or the next provider (the next page load) restores it.
+    expect(client.session.delete).toHaveBeenCalledWith("stale", expect.anything());
+    vi.useRealTimers();
+  });
+
+  it("waits for the stored session's deletion to persist before pairing again", async () => {
+    // The store's delete() is async: it resolves once the removal is persisted.
+    // Pairing before then leaves the stale session for the next provider to restore.
+    vi.useFakeTimers();
+    const provider = fakeProvider({ accounts: [OTHER] });
+    const client = fakeClient(provider, "stale");
+    client.disconnect = vi.fn(() => new Promise<never>(() => {}));
+    let persisted!: () => void;
+    client.session.delete = vi.fn(() => new Promise<void>((resolve) => (persisted = resolve)));
+    provider.connect = vi.fn().mockImplementation(() => {
+      provider.session = { topic: "new", namespaces: { stellar: { accounts: [`${CHAIN}:${ADDR}`] } } };
+      return Promise.resolve(undefined);
+    });
+    setWalletConnectProvider(provider);
+
+    const attempt = connect({ fresh: true });
+    await vi.advanceTimersByTimeAsync(DROP_SESSION_WAIT_MS);
+    expect(provider.connect).not.toHaveBeenCalled();
+    persisted();
+    await expect(attempt).resolves.toEqual({ address: ADDR, wallet: "freighter" });
+    vi.useRealTimers();
+  });
+
+  it("still pairs when deleting the stored session fails", async () => {
+    vi.useFakeTimers();
+    const provider = fakeProvider({ accounts: [OTHER] });
+    const client = fakeClient(provider, "stale");
+    client.disconnect = vi.fn(() => new Promise<never>(() => {}));
+    client.session.delete = vi.fn(() => Promise.reject(new Error("No matching key")));
+    provider.connect = vi.fn().mockImplementation(() => {
+      provider.session = { topic: "new", namespaces: { stellar: { accounts: [`${CHAIN}:${ADDR}`] } } };
+      return Promise.resolve(undefined);
+    });
+    setWalletConnectProvider(provider);
+
+    const attempt = connect({ fresh: true });
+    await vi.advanceTimersByTimeAsync(DROP_SESSION_WAIT_MS);
+    await expect(attempt).resolves.toEqual({ address: ADDR, wallet: "freighter" });
+    vi.useRealTimers();
+  });
+});
+
+describe("disconnect — sign-out", () => {
+  const GLOBAL_CORE = "_walletConnectCore_";
+  const slots = globalThis as unknown as Record<string, unknown>;
+
+  afterEach(() => {
+    delete slots[GLOBAL_CORE];
+    delete slots[`${GLOBAL_CORE}_count`];
+    vi.useRealTimers();
+  });
+
+  it("drops the session and shuts the relay connection down", async () => {
+    const provider = fakeProvider({ accounts: [ADDR] });
+    const client = fakeClient(provider);
+    setWalletConnectProvider(provider);
+    await connect(); // resolves the provider, as a signed-in page has
+
+    await disconnect();
+
+    expect(client.disconnect).toHaveBeenCalledWith(expect.objectContaining({ topic: "topic-1" }));
+    expect(client.core.heartbeat.stop).toHaveBeenCalled();
+    expect(client.core.relayer.transportClose).toHaveBeenCalled();
+    expect(provider.session).toBeUndefined();
+  });
+
+  it("unhooks the page's core, so the next sign-in gets a new one", async () => {
+    // The SDK hands this global core to every sign client created after it;
+    // left in place, each sign-out stacked another client on one relay.
+    const provider = fakeProvider({ accounts: [ADDR] });
+    const client = fakeClient(provider);
+    slots[GLOBAL_CORE] = client.core;
+    slots[`${GLOBAL_CORE}_count`] = 1;
+    setWalletConnectProvider(provider);
+    await connect();
+
+    await disconnect();
+
+    expect(slots[GLOBAL_CORE]).toBeUndefined();
+    expect(slots[`${GLOBAL_CORE}_count`]).toBeUndefined();
+  });
+
+  it("leaves a core it doesn't own alone", async () => {
+    const provider = fakeProvider({ accounts: [ADDR] });
+    fakeClient(provider);
+    const someoneElses = {};
+    slots[GLOBAL_CORE] = someoneElses;
+    setWalletConnectProvider(provider);
+    await connect();
+
+    await disconnect();
+
+    expect(slots[GLOBAL_CORE]).toBe(someoneElses);
+  });
+
+  it("finishes within DISCONNECT_WAIT_MS however stuck the relay is", async () => {
+    // The SDK retries the goodbye for up to a minute; sign-out sat on
+    // "Logging out…" for all of it.
+    vi.useFakeTimers();
+    const provider = fakeProvider({ accounts: [ADDR] });
+    const client = fakeClient(provider);
+    provider.disconnect = vi.fn(() => new Promise<never>(() => {}));
+    client.disconnect = vi.fn(() => new Promise<never>(() => {}));
+    client.core.relayer.transportClose = vi.fn(() => new Promise<never>(() => {}));
+    setWalletConnectProvider(provider);
+    await connect();
+
+    let done = false;
+    void disconnect().then(() => (done = true));
+    await vi.advanceTimersByTimeAsync(DISCONNECT_WAIT_MS);
+    expect(done).toBe(true);
+  });
+
+  it("builds a new provider for the next sign-in", async () => {
+    const provider = fakeProvider({ accounts: [ADDR] });
+    fakeClient(provider);
+    setWalletConnectProvider(provider);
+    await connect();
+
+    await disconnect();
+
+    // With no provider left and no project id, the next call has to build one.
+    delete process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
+    await expect(connect()).rejects.toMatchObject({ code: "walletconnect_unconfigured" });
+  });
+
+  it("is a no-op when nothing was ever connected", async () => {
+    await expect(disconnect()).resolves.toBeUndefined();
   });
 });
 

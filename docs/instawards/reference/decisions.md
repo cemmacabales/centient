@@ -25,7 +25,7 @@ The Statement of Work is never edited. Every place the delivered system departs 
 | ADR | Decision | Status | Consequence |
 | --- | --- | --- | --- |
 | [ADR-0001](https://github.com/artisam-centient/centient/blob/develop/docs/adr/0001-simulated-cosigner-isolation.md) | The policy co-signer runs in **its own Railway project inside the existing workspace**, simulating the account boundary with every boundary Railway and Postgres can enforce | Accepted, 8 Sep | Meets *server* isolation, not *account* isolation. `same-workspace` fails closed on mainnet, so a separate account is required before #51 |
-| [ADR-0002](https://github.com/artisam-centient/centient/blob/develop/docs/adr/0002-seeded-credentials-accepted-on-testnet-qa.md) | Seeded QA credentials are **accepted for the internal testnet QA pass** | Accepted, 9 Sep | Holds explicit exit criteria that must be met before any wider exposure |
+| [ADR-0002](https://github.com/artisam-centient/centient/blob/develop/docs/adr/0002-seeded-credentials-accepted-on-testnet-qa.md) | Seeded QA credentials are **accepted for the internal testnet QA pass** | Accepted, 9 Sep; amended 28 Sep | The code exit criteria are met in #48. Rotating the live accounts is out of scope, because the SOW does not ask for it. Revisit before any mainnet work |
 | [ADR-0003](https://github.com/artisam-centient/centient/blob/develop/docs/adr/0003-freighter-only-wallet-support.md) | **Freighter only**; Albedo is descoped from Deliverable 2 | Accepted, 14 Sep; amended 22 Sep | The QA matrix halves. The amendment records that the mobile gap is closed by Freighter Mobile over WalletConnect v2, which is a second transport for Freighter and not a second wallet |
 
 ## Owner decisions

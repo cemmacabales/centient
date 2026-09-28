@@ -52,6 +52,81 @@ Rebuilding it would pay twice, so it stays for a human.
 A Horizon read error never refunds or fails a `WITHDRAWAL` job. Everything else
 about withdrawals is unchanged ([ADR-0007](adr/0007-retire-accumulate-then-withdraw.md)).
 
+## Retries, the attempt journal and revival (#38)
+
+The reconciler settles *broadcast* payouts. Before a broadcast, and after an
+unknown one, three more pieces keep a payout converging on one outcome. They are
+decided in [ADR-0006](adr/0006-journal-payout-envelopes.md).
+
+### The attempt journal
+
+`payout_attempts` holds one row per signed envelope: its hash, its `maxTime` and
+a status of `open`, `confirmed` or `void`. A partial unique index allows **one
+`open` attempt per submission**. `submitMultisigPayout` opens the attempt after
+both signatures and before it submits. If that write fails, nothing is
+submitted. The co-signer refuses to sign while the submission has an `open`
+attempt.
+
+An attempt is voided only on proof the envelope cannot apply: a definite
+rejection, an inclusion that failed, or an absence proven past its time bounds.
+Anything unprovable stays `open`. A landed attempt is confirmed in the same write
+that records the submission's hash.
+
+### Settle before building
+
+Every payer (the worker, the retry cron, admin retry) takes the submission's
+row claim and then calls `settleOpenAttempt` before building anything:
+
+| Horizon says about the open attempt | Result |
+| --- | --- |
+| Landed | Recorded as the payment. Nothing is sent |
+| Included and failed | Voided. One new envelope is built |
+| Absent, in a lookup after a ledger closed past `maxTime` | Voided. One new envelope is built |
+| Still inside its bounds, or unreachable | Wait. The worker requeues with `PayoutJob.notBefore`. The retry path throws `attempt_unsettled`. Neither spends a retry |
+
+### The retry cron (`POST /api/cron/payout-retry`)
+
+It picks up to 100 submissions per call that no live `SUBMISSION_PAYOUT` job
+owns:
+
+- `pending` rows older than 5 minutes;
+- `failed` rows past their backoff, which is `min(2^retryCount × 60 s, 8 min)`.
+
+Each goes through `reprocessPayoutWithNonceSafety`, grouped by wallet. A
+non-retryable rail error (`op_no_trust`, `op_no_destination`) exhausts the
+budget at once. The call ends with the abandon sweep: every `pending` or
+`failed` row with `retryCount >= 5` (`SUBMISSION_RETRY_BUDGET`) becomes
+`abandoned`. The co-signer's "not now" answers (#47) hold a row without spending
+its budget. See the [failure matrix](payout-failure-matrix.md).
+
+### Revival of stranded attempts
+
+An unprovable `ambiguous_submit` leaves a submission `failed` with its budget
+spent, unrefunded, and its envelope still `open`. The abandon sweep may relabel
+it `abandoned`. No payer returns to such a row on its own.
+
+`reviveStrandedAttempts` (`lib/payout-attempt-revival.ts`) runs on every idle
+reconciler pass, 20 rows at a time, oldest expiry first. It picks rows that
+meet all of the following:
+
+- an `open` attempt past `expiresAt`;
+- `failed` or `abandoned`;
+- no hash, and its retry budget spent;
+- a wallet;
+- **no refund**.
+
+For each one, it takes the row claim and settles the attempt:
+
+| Settlement | Result |
+| --- | --- |
+| Landed, or proven void | `revived`: back to `failed` with `retryCount` 0 and a `payoutError` saying which. The retry cron's next pass records the landed envelope, or builds the one replacement |
+| Still unprovable | `waiting`: left as it is, and asked again on a later pass |
+| Refunded meanwhile, or claimed by another payer | `skipped` |
+
+Revival never writes a payment itself. The retry path stays the only writer. A
+refunded row is never revived, because paying it now would pay with no funding
+behind it.
+
 ## The zero-unreconciled report
 
 ```bash
@@ -99,3 +174,28 @@ in exactly one of:
 
 **Zero** means the unreconciled list is empty. The same database and chain give
 the same findings.
+
+### The volume proof (#49)
+
+```bash
+npm run reconcile:report -- --since=<run start> --min-settlements=100 --min-wallets=25
+```
+
+The same report is read as the D4 evidence run. Every report has a **Volume**
+section, and each count is of submissions: a submission with several findings
+counts once.
+
+| Count | Meaning |
+| --- | --- |
+| Successful | reconciled on Horizon |
+| Unique wallets | distinct wallets among the successful payouts |
+| Rejected | `skipped`: refused by a quality guard, so nothing was owed |
+| Failed | `failed` or `abandoned` |
+| Duplicate | carrying `shared_hash` or `multiple_landed_attempts` |
+| Unreconciled | carrying any finding |
+
+With `--min-settlements` and `--min-wallets`, which must be given together, the
+report judges the window. The target is met only with enough successful payouts,
+enough unique wallets, and zero duplicate and zero unreconciled payouts. The exit
+code is then 1 when the target is not met. Wallets appear shortened (`GABC…WXYZ`)
+with their payout counts. Each full address is on its linked transaction.

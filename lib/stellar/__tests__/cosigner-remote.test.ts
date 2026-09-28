@@ -1,5 +1,6 @@
 import { Keypair } from "@stellar/stellar-sdk";
 import { describe, expect, it } from "vitest";
+import { CoSignerCapError, CoSignerUnavailableError } from "../cosigner-errors";
 import { remotePolicyCoSigner } from "../cosigner-remote";
 import {
   COSIGNER_SIGNATURE_HEADER,
@@ -98,6 +99,103 @@ describe("remotePolicyCoSigner", () => {
     await expect(
       remotePolicyCoSigner({ url, secret, fetchImpl }).signPayout(request),
     ).rejects.toThrow(/ledger amount/);
+  });
+
+  describe("answers that mean \"not now\" (#47)", () => {
+    const failing = (err: unknown) => (async () => Promise.reject(err)) as unknown as typeof fetch;
+
+    it("reports a request that never reached the co-signer as unavailable, without its URL", async () => {
+      const err = await remotePolicyCoSigner({
+        url,
+        secret,
+        fetchImpl: failing(Object.assign(new TypeError("fetch failed"), { cause: new Error(`connect ECONNREFUSED ${url}`) })),
+      })
+        .signPayout(request)
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(CoSignerUnavailableError);
+      expect(err.code).toBe("cosigner_unavailable");
+      expect(err.message).toBe("payout co-signer unreachable: request failed (TypeError)");
+      expect(err.message).not.toContain("cosigner.example");
+    });
+
+    it("reports a timeout as unavailable", async () => {
+      const err = await remotePolicyCoSigner({
+        url,
+        secret,
+        timeoutMs: 1234,
+        fetchImpl: failing(new DOMException("The operation was aborted due to timeout", "TimeoutError")),
+      })
+        .signPayout(request)
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(CoSignerUnavailableError);
+      expect(err.message).toBe("payout co-signer unreachable: timed out after 1234ms");
+    });
+
+    it("reports a body that stalls after the headers as unavailable, not as a bad signature", async () => {
+      // The headers arrived, so fetch resolved; the timeout then fires while the
+      // body is still being read.
+      const stalled = new ReadableStream({
+        start(controller) {
+          controller.error(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+        },
+      });
+      const fetchImpl = (async () => new Response(stalled, { status: 200 })) as unknown as typeof fetch;
+
+      const err = await remotePolicyCoSigner({ url, secret, timeoutMs: 1234, fetchImpl })
+        .signPayout(request)
+        .catch((e) => e);
+
+      expect(err).toBeInstanceOf(CoSignerUnavailableError);
+      expect(err.message).toBe("payout co-signer unreachable: timed out after 1234ms");
+    });
+
+    it("keeps a complete body that is not JSON a plain failure", async () => {
+      const fetchImpl = (async () => new Response("<html>ok</html>", { status: 200 })) as unknown as typeof fetch;
+
+      const err = await remotePolicyCoSigner({ url, secret, fetchImpl }).signPayout(request).catch((e) => e);
+
+      expect(err).not.toBeInstanceOf(CoSignerUnavailableError);
+      expect(err.message).toMatch(/signature/i);
+    });
+
+    it("reports a 5xx as unavailable", async () => {
+      const { fetchImpl } = recordingFetch({ status: 502, body: { error: "Bad Gateway" } });
+
+      const err = await remotePolicyCoSigner({ url, secret, fetchImpl }).signPayout(request).catch((e) => e);
+
+      expect(err).toBeInstanceOf(CoSignerUnavailableError);
+      expect(err.message).toContain("Bad Gateway");
+    });
+
+    it("reports a refusal carrying the cap code as a cap refusal", async () => {
+      const { fetchImpl } = recordingFetch({
+        status: 409,
+        body: { error: "payout co-signer: daily cap reached — …", code: "daily_cap_reached" },
+      });
+
+      const err = await remotePolicyCoSigner({ url, secret, fetchImpl }).signPayout(request).catch((e) => e);
+
+      expect(err).toBeInstanceOf(CoSignerCapError);
+      expect(err.message).toContain("daily cap reached");
+    });
+
+    it("keeps every other refusal a plain refusal, including a cap message with no code", async () => {
+      for (const body of [
+        { error: "submission sub-1 has an unsettled envelope" },
+        { error: "payout co-signer: daily cap reached — from a co-signer older than #47" },
+      ]) {
+        const { fetchImpl } = recordingFetch({ status: 409, body });
+
+        const err = await remotePolicyCoSigner({ url, secret, fetchImpl }).signPayout(request).catch((e) => e);
+
+        expect(err).toBeInstanceOf(Error);
+        expect(err).not.toBeInstanceOf(CoSignerUnavailableError);
+        expect(err).not.toBeInstanceOf(CoSignerCapError);
+        expect(err.message).toMatch(/^payout co-signer refused: /);
+      }
+    });
   });
 
   it("refuses a response that is not a detached signature", async () => {

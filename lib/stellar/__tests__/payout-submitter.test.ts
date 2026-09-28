@@ -52,7 +52,11 @@ function honestCoSigner(signer = coSignerKp): PayoutCoSigner {
 }
 
 /** A Horizon rejection carrying result codes — a definite verdict, not an ambiguous one. */
-function horizonError(result_codes: { transaction?: string; operations?: string[] }) {
+function horizonError(result_codes: {
+  transaction?: string;
+  inner_transaction?: string;
+  operations?: string[];
+}) {
   return { response: { data: { extras: { result_codes } } } };
 }
 
@@ -417,6 +421,65 @@ describe("submitMultisigPayout", () => {
     expect(err.retryable).toBe(true);
   });
 
+  // #46: every payout is a fee bump, and Horizon reports a stale inner sequence
+  // on the bump as tx_fee_bump_inner_failed, never as a bare tx_bad_seq.
+  const feeBumpStaleSeq = { transaction: "tx_fee_bump_inner_failed", inner_transaction: "tx_bad_seq" };
+
+  it("rebuilds and resubmits once on a stale sequence reported through the fee bump", async () => {
+    const coSigner = honestCoSigner();
+    let attempts = 0;
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async () => {
+        attempts += 1;
+        if (attempts === 1) throw horizonError(feeBumpStaleSeq);
+        return { hash: "HASH_RETRY" };
+      }),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+
+    const result = await submitMultisigPayout(request("s1"), { coSigner, config });
+
+    expect(result.hash).toBe("HASH_RETRY");
+    expect(attempts).toBe(2);
+    expect(coSigner.signPayout).toHaveBeenCalledTimes(4);
+  });
+
+  it("classifies sustained contention reported through the fee bump as retryable tx_bad_seq", async () => {
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async () => {
+        throw horizonError(feeBumpStaleSeq);
+      }),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+
+    const err = await submitMultisigPayout(request("s1"), {
+      coSigner: honestCoSigner(),
+      config,
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(StellarPaymentError);
+    expect(err.code).toBe("tx_bad_seq");
+    expect(err.retryable).toBe(true);
+    expect(horizon.server.submitTransaction).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not rebuild a fee bump whose inner transaction failed for another reason", async () => {
+    const horizon = makeHorizon({
+      submitTransaction: vi.fn(async () => {
+        throw horizonError({ transaction: "tx_fee_bump_inner_failed", inner_transaction: "tx_bad_auth" });
+      }),
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+
+    const err = await submitMultisigPayout(request("s1"), {
+      coSigner: honestCoSigner(),
+      config,
+    }).catch((e) => e);
+
+    expect(err).not.toBeInstanceOf(StellarPaymentError);
+    expect(horizon.server.submitTransaction).toHaveBeenCalledTimes(1);
+  });
+
   it("does not rebuild when the submit outcome is ambiguous", async () => {
     // A timeout carries no Horizon result codes, so the transaction may well have
     // been accepted. Rebuilding here is what double-pays.
@@ -728,6 +791,29 @@ describe("submitMultisigPayout attempt journal (#38)", () => {
       `open:${first}`,
       `submit:${first}`,
       `void:${first}:rejected: tx_bad_seq`,
+      `open:${result.hash}`,
+      `submit:${result.hash}`,
+    ]);
+  });
+
+  it("records the inner verdict when voiding a fee bump the network rejected (#46)", async () => {
+    const j = journal();
+    const horizon = loggedHorizon(j.events, async (tx, n, advanceSequence) => {
+      if (n === 1) {
+        advanceSequence();
+        throw horizonError({ transaction: "tx_fee_bump_inner_failed", inner_transaction: "tx_bad_seq" });
+      }
+      return { hash: tx.hash().toString("hex") };
+    });
+    mockedServer.mockReturnValue(horizon.server as never);
+
+    const result = await submitMultisigPayout(request("s1"), { coSigner: honestCoSigner(), config, attempts: j });
+
+    const first = horizon.server.submitTransaction.mock.calls[0][0].hash().toString("hex");
+    expect(j.events).toEqual([
+      `open:${first}`,
+      `submit:${first}`,
+      `void:${first}:rejected: tx_fee_bump_inner_failed, tx_bad_seq`,
       `open:${result.hash}`,
       `submit:${result.hash}`,
     ]);

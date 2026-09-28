@@ -2,6 +2,7 @@
 //
 //   npm run reconcile:report -- --since=2026-09-24T00:00:00Z [--until=…]
 //   npm run reconcile:report -- --hours=24 [--out=<dir>] [--sent-overdue-min=30] [--no-horizon]
+//   npm run reconcile:report -- --since=… --min-settlements=100 --min-wallets=25   (#49 volume proof)
 //
 // Reads the database named by `DATABASE_URL` and Horizon for the configured
 // network, and writes `report.json` (machine-readable) and `report.md`
@@ -10,8 +11,9 @@
 // confirmed payout paid, unless run with `--no-horizon`.
 //
 // Read-only. Every database session is opened read-only, and the run refuses to
-// start unless the server confirms it. Exits 1 when anything is unreconciled, so
-// a run that needs attention never looks like a clean one.
+// start unless the server confirms it. Exits 1 when anything is unreconciled, or
+// when volume targets are given and not met, so a run that needs attention never
+// looks like a clean one.
 import "dotenv/config";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -26,6 +28,7 @@ interface Args {
   out: string;
   sentOverdueMs: number | undefined;
   horizon: boolean;
+  targets: { settlements: number; wallets: number } | undefined;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -35,7 +38,7 @@ function parseArgs(argv: string[]): Args {
     if (!match) throw new Error(`unexpected argument "${arg}"`);
     opts.set(match[1], match[2] ?? "");
   }
-  const known = new Set(["since", "until", "hours", "out", "sent-overdue-min", "no-horizon"]);
+  const known = new Set(["since", "until", "hours", "out", "sent-overdue-min", "no-horizon", "min-settlements", "min-wallets"]);
   const unknown = [...opts.keys()].filter((k) => !known.has(k));
   if (unknown.length) throw new Error(`unknown option(s): ${unknown.map((k) => `--${k}`).join(" ")}`);
 
@@ -51,6 +54,18 @@ function parseArgs(argv: string[]): Args {
   else throw new Error("give a window: --since=<ISO date> or --hours=<n>");
   if (!(since < until)) throw new Error("--since must be before --until");
 
+  const count = (name: string) => {
+    const value = Number(opts.get(name));
+    if (!Number.isInteger(value) || value < 1) throw new Error(`--${name} must be a positive whole number: ${opts.get(name)}`);
+    return value;
+  };
+  if (opts.has("min-settlements") !== opts.has("min-wallets")) {
+    throw new Error("give both --min-settlements and --min-wallets, or neither");
+  }
+  const targets = opts.has("min-settlements")
+    ? { settlements: count("min-settlements"), wallets: count("min-wallets") }
+    : undefined;
+
   const overdue = opts.get("sent-overdue-min");
   return {
     since,
@@ -58,6 +73,7 @@ function parseArgs(argv: string[]): Args {
     out: opts.get("out") || `reconcile-report-${new Date().toISOString().replace(/[:.]/g, "-")}`,
     sentOverdueMs: overdue ? Number(overdue) * 60_000 : undefined,
     horizon: !opts.has("no-horizon"),
+    targets,
   };
 }
 
@@ -86,6 +102,7 @@ async function main(): Promise<void> {
       until: args.until,
       sentOverdueMs: args.sentOverdueMs,
       horizon,
+      targets: args.targets,
     });
 
     mkdirSync(args.out, { recursive: true });
@@ -96,9 +113,11 @@ async function main(): Promise<void> {
       `[reconcile-report] ${report.window.since} to ${report.window.until}: ${report.totals.submissions} submissions, ` +
         `${report.reconciled.length} reconciled, ${report.pending.length} pending, ` +
         `${report.excluded.qaFixture.length + report.excluded.legacyEvm.length} excluded, ` +
-        `${report.unreconciled.length} unreconciled → ${args.out}/report.{json,md}`,
+        `${report.unreconciled.length} unreconciled, ${report.volume.uniqueWallets} wallets paid` +
+        (report.volume.targets ? `, volume target ${report.volume.met ? "met" : `not met (${report.volume.shortfalls.join("; ")})`}` : "") +
+        ` → ${args.out}/report.{json,md}`,
     );
-    process.exitCode = report.zeroUnreconciled ? 0 : 1;
+    process.exitCode = report.zeroUnreconciled && report.volume.met !== false ? 0 : 1;
   } finally {
     await prisma.$disconnect();
   }

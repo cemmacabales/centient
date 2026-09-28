@@ -76,6 +76,39 @@ export interface ReconcileReport {
   };
   unreconciled: Finding[];
   zeroUnreconciled: boolean;
+  volume: VolumeSummary;
+}
+
+/** What the D4 volume proof (#49) must reach. */
+export interface VolumeTargets {
+  settlements: number;
+  wallets: number;
+}
+
+/**
+ * #49 — the window read as a volume proof. Every count is of submissions, and a
+ * submission is counted once however many findings it carries.
+ */
+export interface VolumeSummary {
+  /** Reconciled on Horizon: settled exactly as owed. */
+  successful: number;
+  /** Distinct wallets among the successful payouts. */
+  uniqueWallets: number;
+  /** `skipped`: refused by a quality guard, so nothing was owed. */
+  rejected: number;
+  /** `failed` or `abandoned`. */
+  failed: number;
+  /** Carrying a `shared_hash` or `multiple_landed_attempts` finding. */
+  duplicate: number;
+  /** Carrying any finding. */
+  unreconciled: number;
+  /** Successful payouts per wallet, most first. Addresses are shortened, never whole. */
+  wallets: { wallet: string; payouts: number }[];
+  targets: VolumeTargets | null;
+  /** Null when no targets were given. */
+  met: boolean | null;
+  /** Why the targets are not met; empty when they are, or when none were given. */
+  shortfalls: string[];
 }
 
 /** Horizon, and what a payout on it must have paid. */
@@ -91,10 +124,13 @@ export interface ReportOptions {
   sentOverdueMs?: number;
   /** Without it, no `confirmed` payout can be shown reconciled. */
   horizon: ReportHorizon | null;
+  /** Judge the window against these (#49). Without them the volume is counted, not judged. */
+  targets?: VolumeTargets;
 }
 
 const DEFAULT_SENT_OVERDUE_MS = 30 * 60_000;
 const LEGACY_EVM_HASH = /^0x[0-9a-fA-F]{64}$/;
+const DUPLICATE_KINDS: ReadonlySet<UnreconciledKind> = new Set(["shared_hash", "multiple_landed_attempts"]);
 
 export async function buildReconcileReport(opts: ReportOptions): Promise<ReconcileReport> {
   const sentOverdueMs = opts.sentOverdueMs ?? DEFAULT_SENT_OVERDUE_MS;
@@ -155,7 +191,9 @@ export async function buildReconcileReport(opts: ReportOptions): Promise<Reconci
     excluded: { qaFixture: [], legacyEvm: [] },
     unreconciled: [],
     zeroUnreconciled: false,
+    volume: emptyVolume(),
   };
+  const paidPerWallet = new Map<string, number>();
 
   for (const row of rows) {
     const hash = row.payoutTxHash;
@@ -215,7 +253,11 @@ export async function buildReconcileReport(opts: ReportOptions): Promise<Reconci
         }
         const onChain = await checkOnHorizon(opts.horizon, hash, row.walletAddress, row.payoutAmountUnits);
         if (onChain) flag(onChain.kind, onChain.detail);
-        else if (!found.length) report.reconciled.push({ submissionId: row.id, hash });
+        else if (!found.length) {
+          report.reconciled.push({ submissionId: row.id, hash });
+          // Horizon matched the envelope to this wallet, so it is never null here.
+          paidPerWallet.set(row.walletAddress!, (paidPerWallet.get(row.walletAddress!) ?? 0) + 1);
+        }
       }
     }
 
@@ -223,7 +265,51 @@ export async function buildReconcileReport(opts: ReportOptions): Promise<Reconci
   }
 
   report.zeroUnreconciled = report.unreconciled.length === 0;
+  report.volume = summarizeVolume(report, rows, paidPerWallet, opts.targets ?? null);
   return report;
+}
+
+function emptyVolume(): VolumeSummary {
+  const none = { successful: 0, uniqueWallets: 0, rejected: 0, failed: 0, duplicate: 0, unreconciled: 0 };
+  return { ...none, wallets: [], targets: null, met: null, shortfalls: [] };
+}
+
+function summarizeVolume(
+  report: ReconcileReport,
+  rows: { payoutStatus: string }[],
+  paidPerWallet: Map<string, number>,
+  targets: VolumeTargets | null,
+): VolumeSummary {
+  const submissionsWith = (match: (f: Finding) => boolean) =>
+    new Set(report.unreconciled.filter(match).map((f) => f.submissionId)).size;
+
+  const volume: VolumeSummary = {
+    successful: report.reconciled.length,
+    uniqueWallets: paidPerWallet.size,
+    rejected: rows.filter((r) => r.payoutStatus === "skipped").length,
+    failed: rows.filter((r) => r.payoutStatus === "failed" || r.payoutStatus === "abandoned").length,
+    duplicate: submissionsWith((f) => DUPLICATE_KINDS.has(f.kind)),
+    unreconciled: submissionsWith(() => true),
+    wallets: [...paidPerWallet]
+      .map(([wallet, payouts]) => ({ wallet: shortenWallet(wallet), payouts }))
+      .sort((a, b) => b.payouts - a.payouts || a.wallet.localeCompare(b.wallet)),
+    targets,
+    met: null,
+    shortfalls: [],
+  };
+  if (!targets) return volume;
+
+  if (volume.successful < targets.settlements) volume.shortfalls.push(`${volume.successful} of ${targets.settlements} settlements`);
+  if (volume.uniqueWallets < targets.wallets) volume.shortfalls.push(`${volume.uniqueWallets} of ${targets.wallets} unique wallets`);
+  if (volume.duplicate) volume.shortfalls.push(`${volume.duplicate} duplicate`);
+  if (volume.unreconciled) volume.shortfalls.push(`${volume.unreconciled} unreconciled`);
+  volume.met = volume.shortfalls.length === 0;
+  return volume;
+}
+
+/** `GABC…WXYZ`: enough to match a wallet on stellar.expert, not enough to list the cohort. */
+function shortenWallet(address: string): string {
+  return `${address.slice(0, 4)}…${address.slice(-4)}`;
 }
 
 /**
@@ -285,6 +371,30 @@ export function renderReconcileMarkdown(r: ReconcileReport): string {
   lines.push(`| Excluded: QA fixture hash | ${r.excluded.qaFixture.length} |`);
   lines.push(`| Excluded: pre-Stellar EVM hash | ${r.excluded.legacyEvm.length} |`);
   lines.push(`| **Unreconciled findings** | **${r.unreconciled.length}** |`, "");
+
+  const v = r.volume;
+  lines.push("## Volume", "");
+  if (v.targets) {
+    lines.push(
+      v.met
+        ? `**Volume target met:** at least ${v.targets.settlements} settlements across at least ${v.targets.wallets} unique wallets, with nothing duplicate or unreconciled.`
+        : `**Volume target not met:** ${v.shortfalls.join("; ")}.`,
+      "",
+    );
+  }
+  lines.push("| Outcome | Submissions |", "| --- | ---: |");
+  lines.push(`| Successful (reconciled on Horizon) | ${v.successful} |`);
+  lines.push(`| Unique wallets paid | ${v.uniqueWallets} |`);
+  lines.push(`| Rejected by a quality guard | ${v.rejected} |`);
+  lines.push(`| Failed or abandoned | ${v.failed} |`);
+  lines.push(`| Duplicate | ${v.duplicate} |`);
+  lines.push(`| Unreconciled | ${v.unreconciled} |`, "");
+  if (v.wallets.length) {
+    lines.push("Wallets are shortened; each full address is on the linked transactions.", "");
+    lines.push("| Wallet | Payouts |", "| --- | ---: |");
+    for (const w of v.wallets) lines.push(`| \`${w.wallet}\` | ${w.payouts} |`);
+    lines.push("");
+  }
 
   if (r.unreconciled.length) {
     lines.push("## Unreconciled", "", "| Kind | Submission | Status | Hash | Detail |", "| --- | --- | --- | --- | --- |");
