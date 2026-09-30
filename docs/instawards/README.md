@@ -15,14 +15,14 @@ Weekly milestone reports for the Stellar Development Foundation Instawards progr
 
 ## Evidence checklist (SOW §6.2)
 
-Where each deliverable's §6.1 evidence stands today. Each row links to its deliverable page, which has the full traceability table.
+Where each deliverable's §6.1 evidence stands today. Each row links to its deliverable page, which has the full traceability table. The [SOW evidence map](reference/sow-evidence-map.md) maps every SOW requirement and success metric to its proof on one page.
 
 | Deliverable | Evidence | Status | Comments |
 | --- | --- | --- | --- |
 | [D1](deliverables/d1.md) | GitHub repo + testnet tx hash | ✅ **Present** | A two-signature, fee-bumped USDC payout on stellar.expert; payout account at threshold 2/2/2; payments lane green in CI. QA passed 28/28 |
 | [D2](deliverables/d2.md) | GitHub repo + screen recording | ✅ **Present** | Code, testnet sponsorship and identity tests are all present, and QA passed at `8f660cc`. The connect → signed challenge → session recording and proof are in the [D2 evidence folder](https://drive.google.com/drive/folders/1JS5hYQ-G4g-n92Hzf9RTNRBKWsUuvbFd?usp=drive_link) |
 | [D3](deliverables/d3.md) | Public URL + demo video + tx hashes | 🟡 **Partial** | The public URL is live, and instant per-answer payouts are on stellar.expert. QA passed at `1fde77d`. The demo video comes in Week 4 |
-| [D4](deliverables/d4.md) | Reconciler output + mainnet tx hash | ⬜ Week 4 | The reconciler output comes from the Week 4 volume run. The mainnet transaction is out of scope: the sprint is testnet only (D-7) |
+| [D4](deliverables/d4.md) | Reconciler output + mainnet tx hash | ✅ **Present** | The [volume proof](https://github.com/artisam-centient/centient/blob/develop/docs/superpowers/specs/2026-09-28-d4-volume-proof.md) reconciles 122 payouts to 25 wallets, with 0 duplicate and 0 unreconciled. The mainnet transaction is out of scope: the sprint is testnet only (D-7). The #53 release gate is still to run |
 
 ## What Centient is
 
