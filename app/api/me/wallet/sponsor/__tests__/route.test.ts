@@ -248,7 +248,7 @@ describe("POST /api/me/wallet/sponsor", () => {
     const res = await post();
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ established: true });
-    expect(mockPrepare).toHaveBeenCalledWith("SIGNED", ADDR);
+    expect(mockPrepare).toHaveBeenCalledWith("SIGNED", ADDR, undefined);
     expect(mockOpenIntent).toHaveBeenCalledWith(
       { userId: "user-1", address: ADDR, kind: "account+trustline", txHash: "H", expiresAt: EXPIRES },
       // The chain lookup lets the ledger re-check a `confirmed` row (PR #105 review).
@@ -263,7 +263,40 @@ describe("POST /api/me/wallet/sponsor", () => {
   it("accepts a body naming the session's own wallet", async () => {
     const res = await POST(postReq({ address: ADDR, signedXdr: "SIGNED" }));
     expect(res.status).toBe(200);
-    expect(mockPrepare).toHaveBeenCalledWith("SIGNED", ADDR);
+    expect(mockPrepare).toHaveBeenCalledWith("SIGNED", ADDR, undefined);
+  });
+
+  describe("#170 — an envelope offered at sign-in", () => {
+    it("400 invalid_body when the offer is not a string", async () => {
+      expect((await POST(postReq({ signedXdr: "SIGNED", offer: 7 }))).status).toBe(400);
+      expect(mockPrepare).not.toHaveBeenCalled();
+    });
+
+    it("hands the offer to prepare only after the #330 gate, since the sponsor signs there", async () => {
+      const res = await POST(postReq({ address: ADDR, signedXdr: "SIGNED", offer: "TAG" }));
+      expect(res.status).toBe(200);
+      expect(mockPrepare).toHaveBeenCalledWith("SIGNED", ADDR, "TAG");
+      expect(mockCheckAllowed.mock.invocationCallOrder[0]).toBeLessThan(
+        mockPrepare.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("never reaches the sponsor's signature for a user the gate refuses", async () => {
+      mockCheckAllowed.mockResolvedValue({ ok: false, reason: "cap_reached" });
+      const res = await POST(postReq({ signedXdr: "SIGNED", offer: "TAG" }));
+      expect(res.status).toBe(429);
+      expect(mockPrepare).not.toHaveBeenCalled();
+    });
+
+    it("answers 400 invalid_sponsor_tx for an offer that doesn't match, so the client builds afresh", async () => {
+      mockPrepare.mockImplementation(() => {
+        throw new StellarPaymentError("offer does not match the envelope", "invalid_sponsor_tx", false);
+      });
+      const res = await POST(postReq({ signedXdr: "SIGNED", offer: "WRONG" }));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid_sponsor_tx" });
+      expect(mockOpenIntent).not.toHaveBeenCalled();
+    });
   });
 
   it("still answers established if confirming the row fails — it stays pending and counted", async () => {

@@ -29,6 +29,18 @@ export interface StellarSignedMessage {
 }
 
 /**
+ * An ownership proof and a transaction signature asked for in one visit to the
+ * wallet (#170). The proof is in hand. The transaction is collected when the
+ * caller gets to it, which is normally at once; if it is still unanswered, that
+ * means bringing the wallet forward for it again.
+ */
+export interface StellarProofAndTransaction {
+  proof: StellarSignedMessage;
+  /** The co-signed XDR. Throws a {@link WalletError}, as `signTransaction` does. */
+  signedTransaction: () => Promise<string>;
+}
+
+/**
  * Shown when an action needs Freighter and neither transport can reach one:
  * no extension, and no Freighter mobile to pair with.
  */

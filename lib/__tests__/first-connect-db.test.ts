@@ -141,7 +141,7 @@ describe("first connect — a wallet contributor", () => {
     expect(setup.offer).toEqual({ needed: true, address, xdr: "XDR", kind: "account+trustline" });
     expect(setup.submitRes?.status).toBe(200);
     expect(setup.submitted).toEqual({ established: true });
-    expect(prepare).toHaveBeenCalledWith("signed-1", address);
+    expect(prepare).toHaveBeenCalledWith("signed-1", address, undefined);
 
     const rows = await liveRows(address);
     expect(rows).toHaveLength(1);

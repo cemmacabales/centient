@@ -9,7 +9,7 @@ const ITEMS: { q: string; a: string }[] = [
   },
   {
     q: "How much do I earn?",
-    a: `Each task shows its ${REWARD_TOKEN_SYMBOL} reward before you answer. An accepted answer is paid straight to the wallet you signed in with — there is no balance to withdraw.`,
+    a: `Each task shows its ${REWARD_TOKEN_SYMBOL} reward before you answer. An accepted answer is paid straight to the wallet you signed in with. There is no balance to withdraw.`,
   },
   {
     q: "What makes a good submission?",
@@ -25,15 +25,22 @@ const ITEMS: { q: string; a: string }[] = [
   },
 ];
 
-export default function Faq() {
+interface FaqProps {
+  /** The card's own "FAQ" label. Off where a section heading already names it. */
+  showLabel?: boolean;
+}
+
+export default function Faq({ showLabel = true }: FaqProps) {
   return (
     <section className="w-full rounded-2xl bg-surface-container-lowest p-2 shadow-[0_8px_24px_rgba(25,28,30,0.06)]">
-      <div className="px-4 pt-4">
-        <span className="text-xs font-label font-bold uppercase tracking-[0.2em] text-outline">
-          FAQ
-        </span>
-      </div>
-      <ul className="mt-2">
+      {showLabel && (
+        <div className="px-4 pt-4">
+          <span className="text-xs font-label font-bold uppercase tracking-[0.2em] text-outline">
+            FAQ
+          </span>
+        </div>
+      )}
+      <ul className={showLabel ? "mt-2" : ""}>
         {ITEMS.map(({ q, a }, i) => (
           <li
             key={q}

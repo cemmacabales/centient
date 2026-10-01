@@ -97,6 +97,10 @@ describe("contributor key custody on the first-connect path (#30)", () => {
     // The request fields each onboarding route reads.
     expect(source("app/api/auth/wallet/verify/route.ts")).toMatch(/\{ address, nonce, signature, signerAddress \}/);
     expect(source("app/api/me/wallet/route.ts")).toMatch(/body: \{ stellarAddress\?: unknown; signature\?: unknown \}/);
-    expect(source("app/api/me/wallet/sponsor/route.ts")).toMatch(/body: \{ address\?: unknown; signedXdr\?: unknown \}/);
+    // `offer` (#170) is the tag the server itself issued with an envelope at sign-in:
+    // public, like the envelope it vouches for.
+    expect(source("app/api/me/wallet/sponsor/route.ts")).toMatch(
+      /body: \{ address\?: unknown; signedXdr\?: unknown; offer\?: unknown \}/,
+    );
   });
 });

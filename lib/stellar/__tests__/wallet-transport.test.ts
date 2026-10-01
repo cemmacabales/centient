@@ -24,12 +24,14 @@ vi.mock("@stellar/freighter-api", () => ({
 }));
 
 import {
+  batchesSignatures,
   connect,
   isFreighterAvailable,
   prepareWallet,
   resetTransport,
   resolveTransport,
   signOwnership,
+  signOwnershipAndTransaction,
   signTransaction,
 } from "@/lib/stellar/wallet";
 import {
@@ -207,5 +209,51 @@ describe("dispatch", () => {
     await expect(signTransaction("xdr", ADDR)).rejects.toMatchObject({
       code: "freighter_missing",
     });
+  });
+});
+
+describe("#170 — asking for two signatures at once", () => {
+  it("batches only where each signature is a trip out of the browser: the mobile app", async () => {
+    mockIsConnected.mockResolvedValue({ isConnected: false });
+    process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID = "test-project-id";
+    await expect(batchesSignatures()).resolves.toBe(true);
+
+    resetTransport();
+    mockIsConnected.mockResolvedValue({ isConnected: true });
+    await expect(batchesSignatures()).resolves.toBe(false);
+
+    resetTransport();
+    mockIsConnected.mockResolvedValue({ isConnected: false });
+    delete process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
+    await expect(batchesSignatures()).resolves.toBe(false);
+  });
+
+  it("sends both requests to the mobile app together", async () => {
+    mockIsConnected.mockResolvedValue({ isConnected: false });
+    process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID = "test-project-id";
+    const provider = mobileProvider();
+    provider.request.mockImplementation(() => new Promise<never>(() => {}));
+    setWalletConnectProvider(provider);
+
+    void signOwnershipAndTransaction("challenge", "xdr", ADDR).catch(() => {});
+
+    await vi.waitFor(() => expect(provider.request).toHaveBeenCalledTimes(2));
+    expect(provider.request.mock.calls.map(([args]) => args.method)).toEqual([
+      "stellar_signMessage",
+      "stellar_signXDR",
+    ]);
+  });
+
+  it("asks the extension in turn, the transaction only when the caller gets to it", async () => {
+    mockIsConnected.mockResolvedValue({ isConnected: true });
+    mockSignMessage.mockResolvedValue({ signedMessage: "c2ln", signerAddress: ADDR });
+    mockExtSignTransaction.mockResolvedValue({ signedTxXdr: "SIGNED_XDR", signerAddress: ADDR });
+
+    const { proof, signedTransaction } = await signOwnershipAndTransaction("challenge", "xdr", ADDR);
+
+    expect(proof.address).toBe(ADDR);
+    expect(mockExtSignTransaction).not.toHaveBeenCalled();
+    await expect(signedTransaction()).resolves.toBe("SIGNED_XDR");
+    expect(mockExtSignTransaction).toHaveBeenCalledTimes(1);
   });
 });

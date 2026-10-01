@@ -2,8 +2,12 @@ import { describe, it, expect, vi } from "vitest";
 import { Keypair } from "@stellar/stellar-sdk";
 import { WalletError, type WalletErrorCode } from "@/lib/stellar/wallet";
 import {
+  EARLY_ENVELOPE_MARGIN_MS,
   PAYOUT_SETUP_MESSAGES,
+  handOffPayoutSignature,
   setUpPayouts,
+  takeEarlyPayoutSignature,
+  type EarlyPayoutSignature,
   type PayoutSetupDeps,
   type PayoutSetupFailure,
 } from "@/lib/stellar/payout-setup";
@@ -235,5 +239,169 @@ describe("setUpPayouts — recoverable failures", () => {
       "address_in_use", "unavailable", "rate_limited", "network", "failed",
     ];
     for (const reason of reasons) expect(PAYOUT_SETUP_MESSAGES[reason]).toBeTruthy();
+  });
+});
+
+describe("setUpPayouts — the envelope signed at sign-in (#170)", () => {
+  const NOW = Date.parse("2026-09-30T12:00:00.000Z");
+
+  /** A signature sign-in handed over, answered with `answer` unless a test says otherwise. */
+  function early(o: Partial<EarlyPayoutSignature> = {}): EarlyPayoutSignature {
+    return {
+      address: ADDR,
+      kind: "trustline",
+      offer: "TAG",
+      expiresAt: NOW + 180_000,
+      signedTransaction: vi.fn(async () => "EARLY-SIGNED"),
+      ...o,
+    };
+  }
+
+  /** Deps that start from `signature`, at a fixed clock. */
+  function withEarly(signature: EarlyPayoutSignature, opts: Parameters<typeof makeDeps>[0] = {}) {
+    return makeDeps({
+      ...opts,
+      overrides: { takeEarlySignature: () => signature, now: () => NOW, ...opts.overrides },
+    });
+  }
+
+  it("submits it with its offer, without building or signing again", async () => {
+    const signature = early();
+    const { deps, fetchMock } = withEarly(signature);
+
+    await expect(setUpPayouts(deps)).resolves.toEqual({ ok: true, address: ADDR, sponsored: true });
+
+    expect(postedBodies(fetchMock)).toEqual([{ address: ADDR, signedXdr: "EARLY-SIGNED", offer: "TAG" }]);
+    // No GET: nothing was built.
+    expect(fetchMock.mock.calls.filter(([, init]) => !init)).toHaveLength(0);
+    expect(deps.signTransaction).not.toHaveBeenCalled();
+  });
+
+  it("shows the Freighter notice while it collects the signature, and clears it after", async () => {
+    const { deps, onSigning } = withEarly(early());
+    await setUpPayouts(deps);
+    expect(onSigning.mock.calls).toEqual([["trustline"], [null]]);
+  });
+
+  it("reports a transaction declined in Freighter as declined, and submits nothing", async () => {
+    const signature = early({
+      signedTransaction: vi.fn(async () => {
+        throw new WalletError("rejected", "You declined the request in Freighter.");
+      }),
+    });
+    const { deps, fetchMock } = withEarly(signature);
+
+    await expect(setUpPayouts(deps)).resolves.toEqual({ ok: false, reason: "rejected" });
+    expect(postedBodies(fetchMock)).toEqual([]);
+  });
+
+  it("builds a fresh envelope instead once the early one is about to expire", async () => {
+    const signature = early({ expiresAt: NOW + EARLY_ENVELOPE_MARGIN_MS });
+    const { deps, fetchMock } = withEarly(signature);
+
+    await expect(setUpPayouts(deps)).resolves.toEqual({ ok: true, address: ADDR, sponsored: true });
+
+    expect(signature.signedTransaction).not.toHaveBeenCalled();
+    expect(deps.signTransaction).toHaveBeenCalledWith("XDR", ADDR);
+    expect(postedBodies(fetchMock)).toEqual([{ signedXdr: "SIGNED" }]);
+  });
+
+  it("builds a fresh envelope when the early one expired while it sat unanswered in Freighter", async () => {
+    let clock = NOW;
+    const signature = early({
+      signedTransaction: vi.fn(async () => {
+        clock = NOW + 170_000;
+        return "EARLY-SIGNED";
+      }),
+    });
+    const { deps, fetchMock } = withEarly(signature, { overrides: { now: () => clock } });
+
+    await setUpPayouts(deps);
+
+    expect(postedBodies(fetchMock)).toEqual([{ signedXdr: "SIGNED" }]);
+  });
+
+  it("builds afresh when a throttle on the submit outlasts the early envelope, instead of resending it", async () => {
+    let clock = NOW;
+    const { deps, fetchMock } = withEarly(early({ expiresAt: NOW + 60_000 }), {
+      posts: [throttled("40"), json(200, { established: true })],
+      overrides: {
+        now: () => clock,
+        sleep: vi.fn(async (ms: number) => {
+          clock += ms;
+        }),
+      },
+    });
+
+    await expect(setUpPayouts(deps)).resolves.toEqual({ ok: true, address: ADDR, sponsored: true });
+
+    expect(postedBodies(fetchMock)).toEqual([
+      { address: ADDR, signedXdr: "EARLY-SIGNED", offer: "TAG" },
+      { signedXdr: "SIGNED" },
+    ]);
+    expect(deps.signTransaction).toHaveBeenCalledWith("XDR", ADDR);
+  });
+
+  it("resends the early envelope after a throttle it outlives", async () => {
+    let clock = NOW;
+    const { deps, fetchMock } = withEarly(early({ expiresAt: NOW + 180_000 }), {
+      posts: [throttled("40"), json(200, { established: true })],
+      overrides: {
+        now: () => clock,
+        sleep: vi.fn(async (ms: number) => {
+          clock += ms;
+        }),
+      },
+    });
+
+    await expect(setUpPayouts(deps)).resolves.toEqual({ ok: true, address: ADDR, sponsored: true });
+
+    const early_ = { address: ADDR, signedXdr: "EARLY-SIGNED", offer: "TAG" };
+    expect(postedBodies(fetchMock)).toEqual([early_, early_]);
+    expect(deps.signTransaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["its sequence was taken", json(409, { error: "retry" })],
+    ["the route won't take it", json(400, { error: "invalid_sponsor_tx" })],
+    ["it names an address this session doesn't hold", json(403, { error: "address_not_bound" })],
+  ])("builds and signs afresh when %s", async (_name, refusal) => {
+    const { deps, fetchMock } = withEarly(early(), { posts: [refusal, json(200, { established: true })] });
+
+    await expect(setUpPayouts(deps)).resolves.toEqual({ ok: true, address: ADDR, sponsored: true });
+
+    expect(deps.signTransaction).toHaveBeenCalledWith("XDR", ADDR);
+    expect(postedBodies(fetchMock)).toEqual([
+      { address: ADDR, signedXdr: "EARLY-SIGNED", offer: "TAG" },
+      { signedXdr: "SIGNED" },
+    ]);
+  });
+
+  it.each([
+    ["pending", json(202, { established: false, pending: true })],
+    ["cap_reached", json(429, { error: "sponsorship_cap_reached" })],
+    ["address_in_use", json(409, { error: "address_in_use" })],
+    ["failed", json(502, { error: "submit_failed" })],
+  ] as [PayoutSetupFailure, Response][])("reports %s as the ordinary submit would", async (reason, answer) => {
+    const { deps } = withEarly(early(), { posts: [answer] });
+
+    await expect(setUpPayouts(deps)).resolves.toEqual({ ok: false, reason });
+    expect(deps.signTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("handOffPayoutSignature (#170)", () => {
+  it("is taken by the first setup only", () => {
+    const signature: EarlyPayoutSignature = {
+      address: ADDR,
+      kind: "account+trustline",
+      offer: "TAG",
+      expiresAt: 0,
+      signedTransaction: async () => "S",
+    };
+    handOffPayoutSignature(signature);
+
+    expect(takeEarlyPayoutSignature()).toBe(signature);
+    expect(takeEarlyPayoutSignature()).toBeNull();
   });
 });

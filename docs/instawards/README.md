@@ -21,8 +21,8 @@ Where each deliverable's §6.1 evidence stands today. Each row links to its deli
 | --- | --- | --- | --- |
 | [D1](deliverables/d1.md) | GitHub repo + testnet tx hash | ✅ **Present** | A two-signature, fee-bumped USDC payout on stellar.expert; payout account at threshold 2/2/2; payments lane green in CI. QA passed 28/28 |
 | [D2](deliverables/d2.md) | GitHub repo + screen recording | ✅ **Present** | Code, testnet sponsorship and identity tests are all present, and QA passed at `8f660cc`. The connect → signed challenge → session recording and proof are in the [D2 evidence folder](https://drive.google.com/drive/folders/1JS5hYQ-G4g-n92Hzf9RTNRBKWsUuvbFd?usp=drive_link) |
-| [D3](deliverables/d3.md) | Public URL + demo video + tx hashes | 🟡 **Partial** | The public URL is live, and instant per-answer payouts are on stellar.expert. QA passed at `1fde77d`. The demo video comes in Week 4 |
-| [D4](deliverables/d4.md) | Reconciler output + mainnet tx hash | ⬜ Week 4 | The reconciler output comes from the Week 4 volume run. The mainnet transaction is out of scope: the sprint is testnet only (D-7) |
+| [D3](deliverables/d3.md) | Public URL + demo video + tx hashes | ✅ **Present** | The public URL is live, instant per-answer payouts are on stellar.expert, and the [demo video](https://drive.google.com/drive/folders/11SiPEsUuHDKGgJcfm3yWfejjQuOElUD9) shows the full rank → earn flow. QA passed at `1fde77d` |
+| [D4](deliverables/d4.md) | Reconciler output + mainnet tx hash | 🟡 **Partial** | The reconciler output is present: the [D4 volume proof](https://github.com/artisam-centient/centient/blob/develop/docs/superpowers/specs/2026-09-28-d4-volume-proof.md) reconciles 122 payouts across 25 wallets, 0 unreconciled. The [demo video](https://drive.google.com/drive/folders/11SiPEsUuHDKGgJcfm3yWfejjQuOElUD9) is published. The mainnet transaction is out of scope: the sprint is testnet only (D-7). The #53 QA gate remains |
 
 ## What Centient is
 

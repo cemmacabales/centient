@@ -16,3 +16,11 @@ ROADMAP.md
 # QA reproduction kit: throwaway testnet keystore, never committed
 D2-QA-UNBLOCK/keys.json
 keys.json
+
+# Impeccable scratch: review captures, decision rounds, detector cache, local config
+.impeccable/review/
+.impeccable/questions/
+.impeccable/mocks/
+.impeccable/build/
+.impeccable/hook.cache.json
+.impeccable/config.local.json

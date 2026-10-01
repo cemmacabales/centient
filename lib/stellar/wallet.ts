@@ -38,6 +38,7 @@ import {
   FREIGHTER_REQUIRED_MESSAGE,
   WalletError,
   type StellarConnection,
+  type StellarProofAndTransaction,
   type StellarSignedMessage,
 } from "./wallet-errors";
 
@@ -46,6 +47,7 @@ export {
   WalletError,
   type SignatureScheme,
   type StellarConnection,
+  type StellarProofAndTransaction,
   type StellarSignedMessage,
   type StellarWallet,
   type WalletErrorCode,
@@ -201,6 +203,38 @@ export async function signTransaction(
     return (await walletConnect()).signTransaction(xdr, expectedAddress);
   }
   throw noFreighter();
+}
+
+/**
+ * True when every separate request for a signature sends the contributor out of
+ * this browser and back: the Freighter mobile app. A flow that is about to need
+ * two signatures should then ask for both at once, with
+ * {@link signOwnershipAndTransaction} (#170). The extension prompts in this
+ * browser, so there it saves nothing.
+ */
+export async function batchesSignatures(): Promise<boolean> {
+  return (await resolveTransport()) === "walletconnect";
+}
+
+/**
+ * Prove ownership of `expectedAddress` and co-sign `xdr`, in one visit to the
+ * Freighter app where that is what it takes (#170). Resolves with the proof; the
+ * co-signed XDR comes from `signedTransaction`, which fails as
+ * {@link signTransaction} does.
+ */
+export async function signOwnershipAndTransaction(
+  message: string,
+  xdr: string,
+  expectedAddress: string,
+): Promise<StellarProofAndTransaction> {
+  const transport = await resolveTransport();
+  if (transport === "walletconnect") {
+    return (await walletConnect()).signOwnershipAndTransaction(message, xdr, expectedAddress);
+  }
+  // Nothing to save on the extension, whose prompts open in this browser: ask
+  // in turn, the transaction only once the caller gets to it.
+  const proof = await signOwnership(message, expectedAddress);
+  return { proof, signedTransaction: () => signTransaction(xdr, expectedAddress) };
 }
 
 /**
