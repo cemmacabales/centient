@@ -116,7 +116,8 @@ The **[D4 demo video](https://drive.google.com/drive/folders/11SiPEsUuHDKGgJcfm3
 | D2 on `main` | — | Promoted by PR #121 on 21 September |
 | D3 QA-passed | [`1fde77d`](https://github.com/artisam-centient/centient/commit/1fde77d539ca040bb12c07df0c82dad5c8cf3a58) | `QA PASSED` on #41, 24 September |
 | `staging` after D3 | [`36524aa`](https://github.com/artisam-centient/centient/commit/36524aacd32df08a518d18508ac4a3e1c8bedc67) | `1fde77d` plus the landing-page promo video (PR #153), ruled outside D3. Superseded by the Week 4 promotions |
-| D4 build under test | — | Recorded on #53 at the freeze. [`/api/version`](https://beta.centient.work/api/version) always reports the live SHA |
+| D4 QA-passed | [`e9c28ad`](https://github.com/artisam-centient/centient/commit/e9c28ad9537e2e72d0dd33d374c7338a9094aaec) | [`QA PASSED`](https://github.com/webnxt-2030/Centient/issues/53#issuecomment-5964089790) on #53, 3 October, 35/36 passed; reviewed `P0:0 P1:0` |
+| `staging` after D4 | [`bcc8af2`](https://github.com/artisam-centient/centient/commit/bcc8af2413176411dc08554d49ff5e02b91647bf) | `e9c28ad` plus the screen loader and landing copy (PRs #181 and #183), ruled outside D4. [`/api/version`](https://beta.centient.work/api/version) always reports the live SHA |
 
 ## Screenshots and recordings
 
