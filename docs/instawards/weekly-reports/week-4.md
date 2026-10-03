@@ -5,7 +5,7 @@
 **Deliverable:** [D4 — Reconciliation and public release](../deliverables/d4.md)
 
 {% hint style="success" %}
-**Verdict, 3 October:** QA gate #53 recorded [`QA PASSED`](https://github.com/webnxt-2030/Centient/issues/53#issuecomment-5964089790) at [`e9c28ad`](https://github.com/artisam-centient/centient/commit/e9c28ad9537e2e72d0dd33d374c7338a9094aaec). #45–#49 and #52 are merged and closed, and #50–#51 are out of scope (D-7). The volume proof reconciles 122 payouts across 25 wallets with zero unreconciled, and the full-history report finds zero duplicates. → [D4](../deliverables/d4.md)
+**Verdict, 3 October:** QA gate #53 recorded `QA PASSED` at [`e9c28ad`](https://github.com/artisam-centient/centient/commit/e9c28ad9537e2e72d0dd33d374c7338a9094aaec). #45–#49 and #52 are merged and closed, and #50–#51 are out of scope (D-7). The volume proof reconciles 122 payouts across 25 wallets with zero unreconciled, and the full-history report finds zero duplicates. → [D4](../deliverables/d4.md)
 
 The sections below are the plan, written before the week started.
 {% endhint %}
