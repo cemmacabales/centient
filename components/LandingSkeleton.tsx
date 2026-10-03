@@ -7,13 +7,14 @@ import { HEADER_LOGO } from "./LoginScreen";
 const BLOCK = "bg-surface-container-high motion-safe:animate-pulse";
 
 /**
- * What the app shows while it works out where a session belongs: the landing
- * page's shape in placeholder blocks. It has no text or images of its own, so
+ * What the app shows on first load, while it works out where a session
+ * belongs: the landing page's shape in placeholder blocks, since that is where
+ * most first loads land. Waits inside the app use `ScreenLoader` instead. It has no text or images of its own, so
  * nothing branded flashes up before the real screen replaces it. It starts the
  * landing header's logo downloading, so that header can paint with the rest of
  * the page instead of after it.
  */
-export default function LoadingScreen() {
+export default function LandingSkeleton() {
   const { props: logo } = getImageProps({ ...HEADER_LOGO, alt: "" });
   preload(logo.src, {
     as: "image",
@@ -42,7 +43,7 @@ export default function LoadingScreen() {
           </div>
         </div>
 
-        <div className="mx-auto grid max-w-6xl items-center gap-10 px-5 pb-20 pt-6 sm:px-8 lg:min-h-[calc(100dvh-4.5rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,30rem)] lg:gap-10 xl:grid-cols-[minmax(0,1fr)_minmax(0,34rem)] lg:pb-14 lg:pt-2">
+        <div className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-10 px-5 pb-20 pt-6 sm:px-8 lg:min-h-[calc(100dvh-4.5rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,30rem)] lg:gap-10 xl:grid-cols-[minmax(0,1fr)_minmax(0,34rem)] lg:pb-14 lg:pt-2">
           <div className="flex flex-col items-start">
             <div className={`h-12 w-[62%] rounded-2xl sm:h-[4.5rem] lg:h-[4.25rem] xl:h-20 ${BLOCK}`} />
             <div className={`mt-3 h-12 w-[88%] rounded-2xl sm:h-[4.5rem] lg:h-[4.25rem] xl:h-20 ${BLOCK}`} />
@@ -50,22 +51,22 @@ export default function LoadingScreen() {
               <div className={`h-4 w-full rounded-full ${BLOCK}`} />
               <div className={`h-4 w-2/3 rounded-full ${BLOCK}`} />
             </div>
-            <div className={`mt-9 h-14 w-full max-w-xs rounded-full ${BLOCK}`} />
+            <div className={`mt-9 h-14 w-full rounded-full sm:max-w-xs ${BLOCK}`} />
             <div className={`mt-4 h-4 w-72 max-w-full rounded-full ${BLOCK}`} />
           </div>
-          {/* The hero phone, with the owl at its lower left. */}
+          {/* The hero phone, with the owl at its lower left; LandingPhone's placement. */}
           <div className="mx-auto w-full max-w-[34rem]">
             <div className="flex justify-center">
-              <div className="relative translate-x-8 sm:translate-x-12 lg:translate-x-14">
+              <div className="relative sm:translate-x-12 lg:translate-x-14">
                 <div
                   className={`aspect-[360/760] w-[16.5rem] rounded-[2.6rem] sm:w-[18rem] lg:w-[18.5rem] lg:rounded-[2.9rem] xl:w-[19.5rem] ${BLOCK}`}
                 />
                 <div
-                  className={`absolute -bottom-3 right-full -mr-7 h-[5.5rem] w-[5.5rem] rounded-full sm:-mr-11 sm:h-36 sm:w-36 lg:-mr-12 lg:h-40 lg:w-40 ${BLOCK}`}
+                  className={`absolute -bottom-3 right-full -mr-10 h-20 w-20 rounded-full sm:-mr-11 sm:h-36 sm:w-36 lg:-mr-12 lg:h-40 lg:w-40 ${BLOCK}`}
                 />
               </div>
             </div>
-            <div className={`mx-auto mt-6 h-4 w-72 max-w-full rounded-full ${BLOCK}`} />
+            <div className={`mx-auto mt-6 h-4 w-[16.5rem] max-w-full rounded-full sm:w-72 ${BLOCK}`} />
           </div>
         </div>
       </div>

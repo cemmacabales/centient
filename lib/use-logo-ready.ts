@@ -12,7 +12,7 @@ export function useLogoReady() {
   const [ready, setReady] = useState(false);
   // Settles on an error too: a logo that never arrives must not hide the brand.
   const settle = useCallback(() => setReady(true), []);
-  // A logo already in memory (the loading screen preloads the landing
+  // A logo already in memory (the landing skeleton preloads the landing
   // header's) is complete as it mounts. Settling in the ref, before the first
   // paint, saves the frame `onLoad` spends waiting on `decode()`.
   const ref = useCallback((img: HTMLImageElement | null) => {

@@ -60,7 +60,7 @@ export function WalletSignInView({
         : "Connect Freighter";
 
   return (
-    <div className="flex w-full max-w-xs flex-col items-center gap-3">
+    <div className="flex w-full flex-col items-center gap-3 sm:max-w-xs">
       <button
         type="button"
         onClick={onConnect}

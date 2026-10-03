@@ -141,6 +141,18 @@ details > summary {
   transition: none;
 }
 
+/* The in-app loader shows up only once a wait has lasted long enough to notice. */
+@keyframes screen-loader-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* A fingertip on a control: it lands, presses in, and lifts away. */
 @keyframes landing-tap {
   0% {

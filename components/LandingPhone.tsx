@@ -17,13 +17,13 @@ interface SampleTask {
 /** Tasks from the seeded pool (prisma/seed.ts). */
 const SAMPLES: SampleTask[] = [
   {
-    prompt: "What's 0.1 + 0.2 in most programming languages?",
+    prompt: "What is the capital of Australia?",
     responses: [
-      "Exactly 0.3.",
-      "0.30000000000000004. Floating-point numbers can't represent 0.1 and 0.2 exactly in binary, so you get a tiny rounding error.",
+      "Sydney.",
+      "Canberra. It's a common misconception that it's Sydney, which is the largest city but not the capital.",
     ],
     chosen: 1,
-    reason: "A is wrong. B gives the real result and explains the rounding.",
+    reason: "A is wrong. B names the real capital and explains the mix-up.",
     tx: "3f9a…c21e",
   },
   {
@@ -325,8 +325,10 @@ export default function LandingPhone() {
       </p>
 
       <div aria-hidden="true" className="flex justify-center [perspective:1600px]">
-        {/* Nudged right so the owl and the phone, together, sit centered. */}
-        <div className="relative translate-x-8 sm:translate-x-12 lg:translate-x-14">
+        {/* From sm up, nudged right so the owl and the phone, together, sit
+            centered. A phone column has no room for that, so there the phone
+            centers on its own and the owl tucks into the gutter beside it. */}
+        <div className="relative sm:translate-x-12 lg:translate-x-14">
           <div ref={tiltRef} className="transition-transform duration-500 ease-out">
             {/* The handset: a dark frame with side keys, and the screen inside it. */}
             <div className="relative w-[16.5rem] rounded-[2.6rem] bg-inverse-surface p-[0.55rem] shadow-[0_32px_64px_-20px_rgba(25,28,30,0.38),0_14px_28px_rgba(25,28,30,0.10),inset_0_0_0_1.5px_rgba(255,255,255,0.10)] sm:w-[18rem] lg:w-[18.5rem] lg:rounded-[2.9rem] xl:w-[19.5rem]">
@@ -543,11 +545,11 @@ export default function LandingPhone() {
           </div>
 
           {/* The owl stands at the phone's lower left, in front of the frame. */}
-          <div className="absolute -bottom-3 right-full z-10 -mr-7 w-[5.5rem] sm:-mr-11 sm:w-36 lg:-mr-12 lg:w-40">
+          <div className="absolute -bottom-3 right-full z-10 -mr-10 w-20 sm:-mr-11 sm:w-36 lg:-mr-12 lg:w-40">
             <LandingMascot
               pose={poseFor(stage)}
               decorative
-              sizes="(min-width: 1024px) 160px, (min-width: 640px) 144px, 88px"
+              sizes="(min-width: 1024px) 160px, (min-width: 640px) 144px, 80px"
               className="w-full"
             />
           </div>
@@ -556,7 +558,7 @@ export default function LandingPhone() {
 
       <figcaption
         id={captionId}
-        className="mx-auto mt-6 flex w-fit items-start gap-1.5 font-body text-[13px] leading-snug text-on-surface-variant"
+        className="mx-auto mt-6 flex w-fit max-w-[16.5rem] items-start sm:max-w-none gap-1.5 font-body text-[13px] leading-snug text-on-surface-variant"
       >
         <Icon name="replay" size={16} className="mt-px text-outline" />
         Sample task on Stellar testnet, replayed automatically.

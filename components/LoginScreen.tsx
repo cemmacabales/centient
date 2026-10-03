@@ -10,7 +10,7 @@ import { deployedBuild } from "@/lib/build-info";
 import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 import { useLogoReady } from "@/lib/use-logo-ready";
 
-/** The header logo. The loading screen preloads this exact rendition. */
+/** The header logo. The landing skeleton preloads this exact rendition. */
 export const HEADER_LOGO = { src: "/logo.png", width: 36, height: 36 };
 
 interface LoginScreenProps {
@@ -101,9 +101,9 @@ export default function LoginScreen({ onWalletSignedIn, onEmailSignIn, error }: 
       </header>
 
       <main id="top" className="scroll-mt-20">
-        <section className="mx-auto grid max-w-6xl items-center gap-10 px-5 pb-20 pt-6 sm:px-8 lg:min-h-[calc(100dvh-4.5rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,30rem)] lg:gap-10 xl:grid-cols-[minmax(0,1fr)_minmax(0,34rem)] lg:pb-14 lg:pt-2">
+        <section className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-10 px-5 pb-20 pt-6 sm:px-8 lg:min-h-[calc(100dvh-4.5rem)] lg:grid-cols-[minmax(0,1fr)_minmax(0,30rem)] lg:gap-10 xl:grid-cols-[minmax(0,1fr)_minmax(0,34rem)] lg:pb-14 lg:pt-2">
           <div className="flex flex-col items-start">
-            <h1 className="font-headline text-[3.25rem] font-extrabold leading-[0.95] tracking-[-0.04em] text-on-surface sm:text-[5rem] lg:text-[4.5rem] xl:text-[5.25rem]">
+            <h1 className="font-headline text-[min(3.25rem,14.5vw)] font-extrabold leading-[0.95] tracking-[-0.04em] text-on-surface sm:text-[5rem] lg:text-[4.5rem] xl:text-[5.25rem]">
               <span className="block overflow-clip pb-[0.04em]">
                 <span className={LINE_UP}>Train AI,</span>
               </span>
