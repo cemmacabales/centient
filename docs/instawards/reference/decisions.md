@@ -18,7 +18,7 @@ The [Statement of Work](../statement-of-work.md) is never edited. Every place th
 | §4.1 D4, §6.1, §6.3: **one minimal mainnet USDC smoke payout** | **None.** The sprint runs on Stellar testnet only | Owner decision D-7 | Out of scope |
 | §3.7: the public repository is **github.com/cemmacabales/centient** | The public source is [github.com/artisam-centient/centient](https://github.com/artisam-centient/centient), at the same commit SHAs | Owner decision, 25 Sep | — |
 | §3.7: the public testnet URL **"ships with the Week 4 evidence package"** | [beta.centient.work](https://beta.centient.work) has been **live throughout the sprint** | Ahead of plan | — |
-| §3.6: *"[target community, e.g. Discord/Telegram group to launch with]"* | The contributor community is still to be named | The placeholder was never filled in | Tester recruitment for the ≥25-wallet target (R-3) |
+| §3.6: *"[target community, e.g. Discord/Telegram group to launch with]"* | The contributor community is still to be named | The placeholder was never filled in | Accepted as delivered. The ≥25-wallet target it served was met by alpha testers and QA traffic in #49's volume proof (R-3, closed) |
 
 ## Architecture decision records
 

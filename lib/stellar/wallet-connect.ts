@@ -48,7 +48,11 @@
 // never downloads it at all.
 import { isValidStellarAddress, verify } from "./signature";
 import { caipChainId, clientNetworkPassphrase } from "./config";
-import { WalletError, type StellarSignedMessage } from "./wallet-errors";
+import {
+  WalletError,
+  type StellarProofAndTransaction,
+  type StellarSignedMessage,
+} from "./wallet-errors";
 
 /** The `stellar` namespace methods we ask Freighter mobile to approve. */
 const STELLAR_METHODS = [
@@ -516,6 +520,16 @@ async function within(promise: Promise<unknown>, ms: number): Promise<void> {
   clearTimeout(timer);
 }
 
+/** True if `promise` settles, either way, within `ms`. Never rejects. */
+async function settlesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
+  let settled = false;
+  const done = () => {
+    settled = true;
+  };
+  await within(promise.then(done, done), ms);
+  return settled;
+}
+
 /**
  * Wait for Freighter to answer a signing request, but not forever: give up
  * after {@link REQUEST_TIMEOUT_MS} or when the contributor cancels. Either way
@@ -657,7 +671,23 @@ export async function signOwnership(
 ): Promise<StellarSignedMessage> {
   const provider = await getProvider();
   await ensureSession(provider);
+  assertSessionAccount(provider, expectedAddress);
 
+  let result: { signature?: unknown };
+  try {
+    // Send first, then foreground the wallet: the request is on its way over
+    // the relay by the time Freighter comes up, so the prompt is already there.
+    const pending = requestMessageSignature(provider, message);
+    focusWallet(provider);
+    result = await awaitAnswer(provider, pending);
+  } catch (err) {
+    throw walletConnectError(err, "Freighter signing failed");
+  }
+  return readProof(result, message, expectedAddress);
+}
+
+/** Refuse before asking, when the session is for some other account. */
+function assertSessionAccount(provider: WalletConnectProvider, expectedAddress: string): void {
   const accounts = sessionAccounts(provider);
   if (accounts.length > 0 && !accounts.includes(expectedAddress)) {
     throw new WalletError(
@@ -665,21 +695,31 @@ export async function signOwnership(
       `Freighter is connected as ${accounts[0]}, not ${expectedAddress}. Switch accounts in Freighter, then try again.`,
     );
   }
+}
 
-  let result: { signature?: unknown };
-  try {
-    // Send first, then foreground the wallet: the request is on its way over
-    // the relay by the time Freighter comes up, so the prompt is already there.
-    const pending = provider.request<{ signature?: unknown }>(
-      { method: "stellar_signMessage", params: { message } },
-      caipChainId(),
-    );
-    focusWallet(provider);
-    result = await awaitAnswer(provider, pending);
-  } catch (err) {
-    throw walletConnectError(err, "Freighter signing failed");
-  }
+function requestMessageSignature(
+  provider: WalletConnectProvider,
+  message: string,
+): Promise<{ signature?: unknown }> {
+  return provider.request({ method: "stellar_signMessage", params: { message } }, caipChainId());
+}
 
+function requestTransactionSignature(
+  provider: WalletConnectProvider,
+  xdr: string,
+): Promise<{ signedXDR?: unknown }> {
+  return provider.request({ method: "stellar_signXDR", params: { xdr } }, caipChainId());
+}
+
+/**
+ * The proof in Freighter's `stellar_signMessage` answer, verified against
+ * `expectedAddress` since the wallet reports no signer of its own.
+ */
+function readProof(
+  result: { signature?: unknown },
+  message: string,
+  expectedAddress: string,
+): StellarSignedMessage {
   const signature = result?.signature;
   if (typeof signature !== "string" || signature.length === 0) {
     throw new WalletError("rejected", "Freighter returned no signature (signing was rejected).");
@@ -712,16 +752,20 @@ export async function signTransaction(
   let result: { signedXDR?: unknown };
   try {
     // Sent before the app is foregrounded — see signOwnership.
-    const pending = provider.request<{ signedXDR?: unknown }>(
-      { method: "stellar_signXDR", params: { xdr } },
-      caipChainId(),
-    );
+    const pending = requestTransactionSignature(provider, xdr);
     focusWallet(provider);
     result = await awaitAnswer(provider, pending);
   } catch (err) {
     throw walletConnectError(err, "Freighter signing failed");
   }
+  return readSignedEnvelope(result, expectedAddress);
+}
 
+/** The co-signed XDR in Freighter's `stellar_signXDR` answer, checked for `expectedAddress`'s signature. */
+async function readSignedEnvelope(
+  result: { signedXDR?: unknown },
+  expectedAddress: string,
+): Promise<string> {
   const signedXdr = result?.signedXDR;
   if (typeof signedXdr !== "string" || signedXdr.length === 0) {
     throw new WalletError("rejected", "Freighter returned no signature (signing was rejected).");
@@ -731,10 +775,89 @@ export async function signTransaction(
 }
 
 /**
+ * How long, once the proof is in, a transaction asked for alongside it
+ * ({@link signOwnershipAndTransaction}) gets to arrive before Freighter is
+ * brought forward for it.
+ *
+ * Freighter queues the transaction right behind the message, so the contributor
+ * approves both before coming back. On a phone the browser is frozen until then,
+ * so both answers are waiting on the relay and arrive together. A transaction
+ * still missing after this was left open in Freighter, and the contributor
+ * needs taking back to it, as they would for a request of its own.
+ */
+export const BATCHED_ANSWER_GRACE_MS = 3_000;
+
+/**
+ * Prove ownership of `expectedAddress` and co-sign `xdr` in **one** visit to the
+ * Freighter app (#170), where {@link signOwnership} then {@link signTransaction}
+ * would take two.
+ *
+ * On a phone, every request is a trip out of the browser and back: the browser
+ * is frozen while Freighter is in front, so it can't send the next request
+ * until the contributor returns. Sending both before Freighter comes up puts
+ * them in Freighter's queue together, and the contributor answers them back to
+ * back.
+ *
+ * Resolves once the proof is in, so sign-in isn't held up by payout setup. The
+ * transaction is collected later through `signedTransaction`, which fails the
+ * way {@link signTransaction} does.
+ */
+export async function signOwnershipAndTransaction(
+  message: string,
+  xdr: string,
+  expectedAddress: string,
+): Promise<StellarProofAndTransaction> {
+  const provider = await getProvider();
+  await ensureSession(provider);
+  assertSessionAccount(provider, expectedAddress);
+
+  let result: { signature?: unknown };
+  let pendingTransaction: Promise<{ signedXDR?: unknown }>;
+  try {
+    // The message first, so Freighter shows it first.
+    const pendingMessage = requestMessageSignature(provider, message);
+    pendingTransaction = requestTransactionSignature(provider, xdr);
+    // Nothing may be listening yet, and sign-in may never get as far as asking.
+    pendingTransaction.catch(() => {});
+    focusWallet(provider);
+    result = await awaitAnswer(provider, pendingMessage);
+  } catch (err) {
+    throw walletConnectError(err, "Freighter signing failed");
+  }
+
+  const proof = readProof(result, message, expectedAddress);
+  return {
+    proof,
+    signedTransaction: () => collectTransaction(provider, pendingTransaction, expectedAddress),
+  };
+}
+
+/**
+ * The answer to a transaction request sent by {@link signOwnershipAndTransaction}.
+ * Freighter is brought forward only if the answer isn't already here, and the
+ * wait is then bounded and cancellable like any other signature.
+ */
+async function collectTransaction(
+  provider: WalletConnectProvider,
+  pending: Promise<{ signedXDR?: unknown }>,
+  expectedAddress: string,
+): Promise<string> {
+  let result: { signedXDR?: unknown };
+  try {
+    if (!(await settlesWithin(pending, BATCHED_ANSWER_GRACE_MS))) focusWallet(provider);
+    result = await awaitAnswer(provider, pending);
+  } catch (err) {
+    throw walletConnectError(err, "Freighter signing failed");
+  }
+  return readSignedEnvelope(result, expectedAddress);
+}
+
+/**
  * Throw `wrong_account` unless `signedXdr` carries a valid signature from
- * `expectedAddress`. The platform has already signed as sponsor, so the
- * envelope holds more than one signature and each is checked against the
- * transaction hash until one matches.
+ * `expectedAddress`. The platform may already have signed as sponsor (an
+ * envelope offered at sign-in, #170, it signs later), so the envelope can hold
+ * more than one signature, and each is checked against the transaction hash
+ * until one matches.
  */
 async function assertSignedBy(signedXdr: string, expectedAddress: string): Promise<void> {
   const { Keypair, TransactionBuilder } = await import("@stellar/stellar-sdk");

@@ -4,6 +4,7 @@ import Image from "next/image";
 import SubmitButton from "./SubmitButton";
 import Faq from "./Faq";
 import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
+import { useLogoReady } from "@/lib/use-logo-ready";
 
 interface InAppLandingProps {
   totalEarned: string;
@@ -16,6 +17,7 @@ export default function InAppLanding({ totalEarned, submissionCount, onStart }: 
   const subline = isNew
     ? "Welcome — let's get started."
     : `${submissionCount} submission${submissionCount === 1 ? "" : "s"}`;
+  const logo = useLogoReady();
 
   return (
     <div className="relative min-h-screen bg-surface px-6 pb-12 pt-10">
@@ -25,13 +27,19 @@ export default function InAppLanding({ totalEarned, submissionCount, onStart }: 
       </div>
 
       <div className="relative z-10 mx-auto flex max-w-lg flex-col items-center gap-6">
-        <div className="flex flex-col items-center gap-3">
+        {/* The wordmark and tagline wait for the logo so they appear together. */}
+        <div
+          className={`flex flex-col items-center gap-3 transition-opacity duration-300 motion-reduce:transition-none ${
+            logo.ready ? "opacity-100" : "opacity-0"
+          }`}
+        >
           <Image
             src="/logo.png"
             alt=""
             width={96}
             height={96}
             priority
+            {...logo.imageProps}
             className="select-none drop-shadow-[0_8px_24px_rgba(0,109,61,0.15)]"
           />
           <span className="text-3xl font-headline font-extrabold tracking-tighter text-primary">

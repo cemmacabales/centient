@@ -29,8 +29,10 @@ import {
  *          USDC, else { needed:true, address, xdr, kind } — a platform-signed
  *          sponsored `changeTrust` (+ `createAccount` if the account is unfunded)
  *          for the wallet to co-sign.
- *   POST { signedXdr } → submit the recipient-co-signed tx; the labeler pays
- *          0 XLM (the platform sponsors the reserves).
+ *   POST { signedXdr, offer? } → submit the recipient-co-signed tx; the labeler
+ *          pays 0 XLM (the platform sponsors the reserves). `offer` comes with an
+ *          envelope from sign-in (#170), which the sponsor had not signed yet; it
+ *          signs it here, after the session and the #330 gate, and never before.
  *
  * #30 — the address is always the session's bound wallet: the one sign-in
  * proved, and the one payouts go to. A client may still name it (`?address=` on
@@ -110,13 +112,16 @@ export async function POST(req: NextRequest) {
   const user = await getLabelerUser(req);
   if (!user) return unauthorized();
 
-  let body: { address?: unknown; signedXdr?: unknown };
+  let body: { address?: unknown; signedXdr?: unknown; offer?: unknown };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
-  if (body.address !== undefined && typeof body.address !== "string") {
+  if (
+    (body.address !== undefined && typeof body.address !== "string") ||
+    (body.offer !== undefined && typeof body.offer !== "string")
+  ) {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
   const address = boundWallet(user, body.address ?? null);
@@ -141,7 +146,9 @@ export async function POST(req: NextRequest) {
 
   let prepared: PreparedSponsorship;
   try {
-    prepared = prepareSponsoredTrustline(signedXdr, address);
+    // After the gate on purpose: an offered envelope gets its sponsor signature
+    // inside this call.
+    prepared = prepareSponsoredTrustline(signedXdr, address, body.offer as string | undefined);
   } catch (err) {
     if (err instanceof StellarPaymentError && err.code === "invalid_sponsor_tx") {
       return NextResponse.json({ error: "invalid_sponsor_tx" }, { status: 400 });

@@ -12,6 +12,7 @@
 //
 // USDC is an issued asset, so each recipient must hold a USDC trustline before
 // they can be paid — see `op_no_trust` below and `buildSponsoredTrustlineTx`.
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import {
   BASE_FEE,
   Horizon,
@@ -82,7 +83,9 @@ let _sponsorKeypair: Keypair | null = null;
  * payment operation — the fee bump around it, and the revocation that reclaims
  * the reserve (#29, `sponsorship-reclaim.ts`, whose shape is asserted the same
  * way). It needs XLM for reserves and fees and no payout authority at all.
- * `assertSponsorNotPayoutSigner` enforces that separation.
+ * `assertSponsorNotPayoutSigner` enforces that separation. Its secret also keys
+ * the tag on envelopes offered at sign-in (#170, {@link buildSponsorshipOffer}),
+ * through a hash under a label of its own, never as a signature.
  */
 export function sponsorKeypair(): Keypair {
   if (_sponsorKeypair) return _sponsorKeypair;
@@ -293,6 +296,78 @@ async function accountExists(address: string): Promise<boolean> {
 export async function buildSponsoredTrustlineTx(
   recipientG: string,
 ): Promise<{ xdr: string; kind: SponsorshipKind }> {
+  const { tx, kind } = await composeSponsoredTrustlineTx(recipientG);
+  tx.sign(sponsorKeypair());
+  return { xdr: tx.toXDR(), kind };
+}
+
+/** An envelope offered at sign-in: see {@link buildSponsorshipOffer}. */
+export interface SponsorshipOffer {
+  /** The envelope, carrying no signature at all. */
+  xdr: string;
+  kind: SponsorshipKind;
+  /** Proof the sponsor built this exact envelope; hand it back with the signed XDR. */
+  offer: string;
+  /** The envelope's `maxTime`: after it, the envelope can no longer apply. */
+  expiresAt: Date;
+}
+
+/**
+ * The sponsored-trustline envelope for `recipientG`, built for sign-in (#170),
+ * before its caller has a session.
+ *
+ * Unlike {@link buildSponsoredTrustlineTx}, the sponsor does **not** sign it.
+ * Anyone can ask for a challenge, and #330's per-user cap can't be checked
+ * without a user, so a sponsor-signed envelope handed out here would let a
+ * caller looping fresh keypairs co-sign and broadcast sponsorships themselves,
+ * spending the sponsor's reserves past the cap. This one cannot be broadcast
+ * until {@link prepareSponsoredTrustline} adds the sponsor's signature, which
+ * only happens in the sponsor route, after the session and the gate.
+ *
+ * The contributor's signature doesn't depend on the sponsor's: both sign the
+ * same hash, in either order. `offer` stands in for the missing signature as
+ * proof of origin (see {@link offerTag}).
+ */
+export async function buildSponsorshipOffer(recipientG: string): Promise<SponsorshipOffer> {
+  const { tx, kind } = await composeSponsoredTrustlineTx(recipientG);
+  return {
+    xdr: tx.toXDR(),
+    kind,
+    offer: offerTag(tx.hash(), sponsorKeypair()),
+    expiresAt: new Date(Number(tx.timeBounds!.maxTime) * 1000),
+  };
+}
+
+/**
+ * A sponsor-keyed MAC over an envelope's hash, which commits to every field of
+ * the envelope and to the network. It proves the sponsor built an envelope it
+ * has not signed, the way its signature proves it for one it has. The key is
+ * derived from the sponsor's secret under a label of its own, so the tag can't
+ * be mistaken for, or turned into, anything the key signs on the ledger.
+ */
+function offerTag(hash: Buffer, sponsor: Keypair): string {
+  const key = createHash("sha256")
+    .update("centient/sponsorship-offer/v1\n")
+    .update(sponsor.rawSecretKey())
+    .digest();
+  return createHmac("sha256", key).update(hash).digest("base64url");
+}
+
+/** Compare a presented offer tag with the one `hash` should carry, in constant time. */
+function offerTagMatches(presented: string, hash: Buffer, sponsor: Keypair): boolean {
+  const expected = Buffer.from(offerTag(hash, sponsor));
+  const given = Buffer.from(presented);
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
+
+/**
+ * The unsigned sponsored-trustline sandwich for `recipientG`, with the reserve
+ * pre-check done. Shared by both builders, which differ only in who may be
+ * handed the result, and so in whether the sponsor signs it now.
+ */
+async function composeSponsoredTrustlineTx(
+  recipientG: string,
+): Promise<{ tx: Transaction; kind: SponsorshipKind }> {
   const kp = sponsorKeypair();
   const srv = server();
   const account = await srv.loadAccount(kp.publicKey());
@@ -318,9 +393,8 @@ export async function buildSponsoredTrustlineTx(
     .addOperation(Operation.endSponsoringFutureReserves({ source: recipientG }))
     .setTimeout(TX_TIMEOUT_SECONDS)
     .build();
-  tx.sign(kp);
 
-  return { xdr: tx.toXDR(), kind };
+  return { tx, kind };
 }
 
 /**
@@ -387,6 +461,18 @@ function signedBy(tx: Transaction, hash: Buffer, signer: Keypair): boolean {
   return tx.signatures.some(
     (sig) => sig.hint().equals(signer.signatureHint()) && signer.verify(hash, sig.signature()),
   );
+}
+
+/**
+ * Sign, as the sponsor, an envelope offered at sign-in (#170), once `offer`
+ * proves the sponsor built it. The tag covers the hash, so an envelope changed
+ * in any way after it was offered is refused here, just as a changed
+ * sponsor-signed envelope fails its signature check.
+ */
+function countersignOffer(tx: Transaction, offer: string, sponsor: Keypair): void {
+  const hash = tx.hash();
+  if (!offerTagMatches(offer, hash, sponsor)) rejectSponsorTx("offer does not match the envelope");
+  if (!signedBy(tx, hash, sponsor)) tx.sign(sponsor);
 }
 
 /**
@@ -481,6 +567,8 @@ function assertSponsoredTrustlineShape(
   }
   // The recipient cannot alter a sponsor-signed envelope without invalidating
   // this signature, so checking it proves the envelope is one the sponsor built.
+  // (An envelope offered at sign-in was proven by its offer tag instead, before
+  // the signature was added: see countersignOffer.)
   // The hash commits to the network passphrase, so it also proves the network.
   const hash = tx.hash();
   if (!signedBy(tx, hash, sponsor)) rejectSponsorTx("envelope does not carry a valid sponsor signature");
@@ -515,10 +603,18 @@ export interface PreparedSponsorship {
  * network. The only way to broadcast it is the returned `submit`, so nothing
  * unvalidated can reach Horizon, while the caller still learns the hash and
  * expiry in time to record its intent before the irreversible step.
+ *
+ * `offer` is the tag that came with an envelope from {@link buildSponsorshipOffer}
+ * (#170), which the sponsor has not signed yet. When it matches the envelope, the
+ * sponsor's signature is added here; the shape check that follows is the same
+ * either way. A caller must only pass `offer` once it has done everything it
+ * would do before issuing a sponsor-signed envelope: this is where that
+ * signature comes into being.
  */
 export function prepareSponsoredTrustline(
   signedXdr: string,
   expectedRecipient: string,
+  offer?: string,
 ): PreparedSponsorship {
   // Fix 3: wrap XDR parse so garbage input / fee-bump envelopes become
   // `invalid_sponsor_tx` (→ 400) instead of a raw JS error (→ 502). Only the
@@ -534,7 +630,9 @@ export function prepareSponsoredTrustline(
     if (err instanceof StellarPaymentError) throw err;
     rejectSponsorTx("could not parse XDR (malformed or garbage input)");
   }
-  assertSponsoredTrustlineShape(tx, expectedRecipient, sponsorKeypair(), Date.now());
+  const sponsor = sponsorKeypair();
+  if (offer !== undefined) countersignOffer(tx, offer, sponsor);
+  assertSponsoredTrustlineShape(tx, expectedRecipient, sponsor, Date.now());
 
   const hash = tx.hash().toString("hex");
   // Derived from the validated shape so the caller can record which reserve kind

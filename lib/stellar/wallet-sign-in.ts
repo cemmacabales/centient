@@ -6,7 +6,24 @@
 // Every failure resolves to one {@link WalletSignInFailure} so the UI renders a
 // state rather than a raw error string. Dependencies are injectable so the flow
 // is testable without a browser, a Freighter extension or a server.
-import { WalletError, connect, signOwnership } from "./wallet";
+//
+// #170: on the Freighter mobile app, each signature is a trip out of the browser
+// and back, and payout setup right after sign-in needs one more. So there the
+// challenge also asks for payout setup's envelope, both are signed in the same
+// visit, and the envelope is handed over to payout setup.
+import {
+  WalletError,
+  batchesSignatures,
+  connect,
+  signOwnership,
+  signOwnershipAndTransaction,
+  type StellarSignedMessage,
+} from "./wallet";
+import {
+  handOffPayoutSignature,
+  type EarlyPayoutSignature,
+  type SponsorshipEnvelopeKind,
+} from "./payout-setup";
 
 export type WalletSignInFailure =
   | "freighter_missing"
@@ -30,13 +47,42 @@ export interface WalletSignInDeps {
   connect: typeof connect;
   signOwnership: typeof signOwnership;
   fetch: typeof fetch;
+  /**
+   * #170: payout setup's signature is asked for at sign-in only when all three
+   * are given, and `batchesSignatures` says it saves a trip.
+   */
+  batchesSignatures?: typeof batchesSignatures;
+  signOwnershipAndTransaction?: typeof signOwnershipAndTransaction;
+  handOffPayoutSignature?: typeof handOffPayoutSignature;
 }
 
 const defaultDeps: WalletSignInDeps = {
   connect,
   signOwnership,
   fetch: (...args) => fetch(...args),
+  batchesSignatures,
+  signOwnershipAndTransaction,
+  handOffPayoutSignature,
 };
+
+/** The payout-setup envelope the challenge route offered, as it sent it. */
+interface SponsorshipOfferBody {
+  xdr: string;
+  kind: SponsorshipEnvelopeKind;
+  offer: string;
+  expiresAt: number;
+}
+
+/** The challenge's `sponsorship`, or null when it carries none this flow can use. */
+function readSponsorshipOffer(value: unknown): SponsorshipOfferBody | null {
+  if (!value || typeof value !== "object") return null;
+  const { xdr, kind, offer, expiresAt } = value as Record<string, unknown>;
+  const expires = typeof expiresAt === "string" ? Date.parse(expiresAt) : NaN;
+  if (typeof xdr !== "string" || !xdr || typeof offer !== "string" || !offer || Number.isNaN(expires)) {
+    return null;
+  }
+  return { xdr, offer, expiresAt: expires, kind: kind === "trustline" ? "trustline" : "account+trustline" };
+}
 
 /** Verify rejections from #25 that a fresh challenge and a new attempt can fix. */
 const EXPIRED_REASONS = new Set(["challenge_expired", "challenge_not_found"]);
@@ -100,16 +146,44 @@ export async function signInWithWallet(
     // then the challenge below would be dropped there without a word.
     const { address } = await deps.connect({ fresh: true });
 
-    const challengeRes = await postJson(deps, "/api/auth/wallet/challenge", { address });
+    const { signOwnershipAndTransaction: signBoth, handOffPayoutSignature: handOff } = deps;
+    const batch = !!(signBoth && handOff && (await deps.batchesSignatures?.()));
+
+    const challengeRes = await postJson(
+      deps,
+      "/api/auth/wallet/challenge",
+      batch ? { address, payoutSetup: true } : { address },
+    );
     if (!challengeRes.ok) {
       return { ok: false, reason: challengeRes.status === 429 ? "rate_limited" : "failed" };
     }
-    const challenge = (await challengeRes.json()) as { nonce?: unknown; message?: unknown };
+    const challenge = (await challengeRes.json()) as {
+      nonce?: unknown;
+      message?: unknown;
+      sponsorship?: unknown;
+    };
     if (typeof challenge.nonce !== "string" || typeof challenge.message !== "string") {
       return { ok: false, reason: "failed" };
     }
 
-    const proof = await deps.signOwnership(challenge.message, address);
+    // No offer when the wallet already trusts USDC, or none could be built:
+    // then sign-in asks for its proof alone, and payout setup sees to itself.
+    const offer = batch ? readSponsorshipOffer(challenge.sponsorship) : null;
+    let proof: StellarSignedMessage;
+    let early: EarlyPayoutSignature | null = null;
+    if (offer && signBoth) {
+      const signed = await signBoth(challenge.message, offer.xdr, address);
+      proof = signed.proof;
+      early = {
+        address,
+        kind: offer.kind,
+        offer: offer.offer,
+        expiresAt: offer.expiresAt,
+        signedTransaction: signed.signedTransaction,
+      };
+    } else {
+      proof = await deps.signOwnership(challenge.message, address);
+    }
 
     const verifyRes = await postJson(deps, "/api/auth/wallet/verify", {
       address,
@@ -129,6 +203,8 @@ export async function signInWithWallet(
       return { ok: false, reason: "failed" };
     }
     const verified = (await verifyRes.json()) as { created?: unknown };
+    // Only once signed in: payout setup submits it under the session.
+    if (early) handOff?.(early);
     return { ok: true, address, created: verified.created === true };
   } catch (err) {
     return { ok: false, reason: failureFromError(err) };

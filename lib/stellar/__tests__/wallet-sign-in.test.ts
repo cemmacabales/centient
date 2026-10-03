@@ -224,3 +224,111 @@ describe("WALLET_SIGN_IN_MESSAGES", () => {
     }
   });
 });
+
+describe("signInWithWallet — payout setup's signature in the same visit (#170)", () => {
+  const OFFER = {
+    xdr: "OFFERED-XDR",
+    kind: "trustline",
+    offer: "TAG",
+    expiresAt: "2026-09-30T12:03:00.000Z",
+  };
+  const PROOF = { address: ADDR, signature: "Ym90aA==", scheme: "sep53" as const, wallet: "freighter" as const };
+
+  /** Deps on the mobile app, whose challenge offers `sponsorship` and whose verify answers `verify`. */
+  function mobileDeps(o: { sponsorship?: unknown; verify?: Response; batches?: boolean } = {}) {
+    const signedTransaction = vi.fn(async () => "CO-SIGNED");
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      if (String(url) === "/api/auth/wallet/challenge") {
+        return json(200, { ...CHALLENGE, ...(o.sponsorship !== undefined && { sponsorship: o.sponsorship }) });
+      }
+      return o.verify?.clone() ?? json(200, { success: true, userId: "u1", walletAddress: ADDR, created: true });
+    });
+    const { deps } = makeDeps({
+      fetch: fetchMock as unknown as typeof fetch,
+      batchesSignatures: vi.fn(async () => o.batches ?? true),
+      signOwnershipAndTransaction: vi.fn(async () => ({ proof: PROOF, signedTransaction })),
+      handOffPayoutSignature: vi.fn(),
+    });
+    return { deps, fetchMock, signedTransaction };
+  }
+
+  it("asks for the offer, signs both at once, and hands the transaction to payout setup", async () => {
+    const { deps, fetchMock, signedTransaction } = mobileDeps({ sponsorship: OFFER });
+
+    await expect(signInWithWallet(deps)).resolves.toEqual({ ok: true, address: ADDR, created: true });
+
+    expect(bodyOf(fetchMock, "/api/auth/wallet/challenge")).toEqual({ address: ADDR, payoutSetup: true });
+    expect(deps.signOwnershipAndTransaction).toHaveBeenCalledWith(CHALLENGE.message, "OFFERED-XDR", ADDR);
+    expect(deps.signOwnership).not.toHaveBeenCalled();
+    expect(bodyOf(fetchMock, "/api/auth/wallet/verify")).toMatchObject({ signature: "Ym90aA==", signerAddress: ADDR });
+    expect(deps.handOffPayoutSignature).toHaveBeenCalledWith({
+      address: ADDR,
+      kind: "trustline",
+      offer: "TAG",
+      expiresAt: Date.parse(OFFER.expiresAt),
+      signedTransaction,
+    });
+    // Sign-in doesn't wait on the transaction: payout setup collects it.
+    expect(signedTransaction).not.toHaveBeenCalled();
+  });
+
+  it("hands over only once verify has signed the contributor in", async () => {
+    const { deps, fetchMock } = mobileDeps({ sponsorship: OFFER });
+    vi.mocked(deps.handOffPayoutSignature!).mockImplementation(() => {
+      expect(fetchMock.mock.calls.map(([u]) => String(u))).toContain("/api/auth/wallet/verify");
+    });
+    await signInWithWallet(deps);
+    expect(deps.handOffPayoutSignature).toHaveBeenCalledTimes(1);
+  });
+
+  it("signs the message alone when the challenge offers nothing (the wallet already trusts USDC)", async () => {
+    const { deps } = mobileDeps();
+
+    await expect(signInWithWallet(deps)).resolves.toMatchObject({ ok: true });
+
+    expect(deps.signOwnership).toHaveBeenCalledWith(CHALLENGE.message, ADDR);
+    expect(deps.signOwnershipAndTransaction).not.toHaveBeenCalled();
+    expect(deps.handOffPayoutSignature).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no offer tag", { ...OFFER, offer: undefined }],
+    ["no envelope", { ...OFFER, xdr: "" }],
+    ["an unreadable expiry", { ...OFFER, expiresAt: "soon" }],
+    ["not an object", "OFFERED-XDR"],
+  ])("ignores an offer with %s, and signs the message alone", async (_name, sponsorship) => {
+    const { deps } = mobileDeps({ sponsorship });
+
+    await expect(signInWithWallet(deps)).resolves.toMatchObject({ ok: true });
+
+    expect(deps.signOwnership).toHaveBeenCalled();
+    expect(deps.signOwnershipAndTransaction).not.toHaveBeenCalled();
+  });
+
+  it("doesn't ask for the offer where signatures don't cost a trip (the extension)", async () => {
+    const { deps, fetchMock } = mobileDeps({ sponsorship: OFFER, batches: false });
+
+    await signInWithWallet(deps);
+
+    expect(bodyOf(fetchMock, "/api/auth/wallet/challenge")).toEqual({ address: ADDR });
+    expect(deps.signOwnershipAndTransaction).not.toHaveBeenCalled();
+    expect(deps.handOffPayoutSignature).not.toHaveBeenCalled();
+  });
+
+  it("hands nothing over when verify refuses the proof", async () => {
+    const { deps } = mobileDeps({ sponsorship: OFFER, verify: json(401, { error: "challenge_expired" }) });
+
+    await expect(signInWithWallet(deps)).resolves.toEqual({ ok: false, reason: "expired" });
+    expect(deps.handOffPayoutSignature).not.toHaveBeenCalled();
+  });
+
+  it("reports a declined message as a declined sign-in", async () => {
+    const { deps } = mobileDeps({ sponsorship: OFFER });
+    vi.mocked(deps.signOwnershipAndTransaction!).mockRejectedValue(
+      new WalletError("rejected", "You declined the request in Freighter."),
+    );
+
+    await expect(signInWithWallet(deps)).resolves.toEqual({ ok: false, reason: "rejected" });
+    expect(deps.handOffPayoutSignature).not.toHaveBeenCalled();
+  });
+});

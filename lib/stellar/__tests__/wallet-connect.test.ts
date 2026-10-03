@@ -23,7 +23,9 @@ import {
   onPairing,
   setWalletConnectProvider,
   signOwnership,
+  signOwnershipAndTransaction,
   signTransaction,
+  BATCHED_ANSWER_GRACE_MS,
   pairingIsPending,
   resetMobileLinkCache,
   type WalletConnectProvider,
@@ -887,6 +889,222 @@ describe("signTransaction", () => {
     setWalletConnectProvider(provider);
 
     await expect(signTransaction("unsigned-xdr", ADDR)).rejects.toMatchObject({ code: "rejected" });
+  });
+});
+
+describe("signOwnershipAndTransaction — one visit for sign-in and payout setup (#170)", () => {
+  const REDIRECT = "freighterwallet://";
+
+  /** A co-signed envelope, as the wallet returns it. */
+  function coSigned(signer = kp): string {
+    const {
+      Account,
+      Asset,
+      Networks,
+      Operation,
+      TransactionBuilder,
+    } = require("@stellar/stellar-sdk") as typeof import("@stellar/stellar-sdk");
+    const tx = new TransactionBuilder(new Account(ADDR, "1"), { fee: "100", networkPassphrase: Networks.TESTNET })
+      .addOperation(Operation.changeTrust({ asset: new Asset("USDC", OTHER) }))
+      .setTimeout(120)
+      .build();
+    tx.sign(signer);
+    return tx.toXDR();
+  }
+
+  /**
+   * A phone browser whose every hand-off to Freighter is logged, next to the
+   * provider's requests, so the order of the two can be checked.
+   */
+  function onPhone() {
+    const log: string[] = [];
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)" });
+    vi.stubGlobal("window", {
+      location: {
+        set href(link: string) {
+          log.push(`focus ${link}`);
+        },
+      },
+    });
+    return log;
+  }
+
+  /** A live session whose requests are answered by `answers`, by method. */
+  function answeringProvider(
+    log: string[],
+    answers: Record<string, () => Promise<unknown>>,
+  ): WalletConnectProvider & { request: ReturnType<typeof vi.fn> } {
+    const provider = fakeProvider({ accounts: [ADDR] });
+    provider.session!.peer = { metadata: { redirect: { native: REDIRECT } } };
+    provider.disconnect = vi.fn(async () => {
+      provider.session = undefined;
+    });
+    provider.request.mockImplementation(({ method }: { method: string }) => {
+      log.push(method);
+      return answers[method]();
+    });
+    return provider;
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("sends the message and the transaction, message first, before bringing Freighter up once", async () => {
+    const log = onPhone();
+    const xdr = coSigned();
+    setWalletConnectProvider(
+      answeringProvider(log, {
+        stellar_signMessage: async () => ({ signature: sep53Sign(MESSAGE) }),
+        stellar_signXDR: async () => ({ signedXDR: xdr }),
+      }),
+    );
+
+    const { proof, signedTransaction } = await signOwnershipAndTransaction(MESSAGE, "offered-xdr", ADDR);
+
+    expect(proof).toEqual({ address: ADDR, signature: sep53Sign(MESSAGE), scheme: "sep53", wallet: "freighter" });
+    await expect(signedTransaction()).resolves.toBe(xdr);
+    // Already answered: collecting it didn't send the contributor back.
+    expect(log).toEqual(["stellar_signMessage", "stellar_signXDR", `focus ${REDIRECT}`]);
+  });
+
+  it("asks for the transaction with the offered envelope, on the active chain", async () => {
+    const provider = answeringProvider([], {
+      stellar_signMessage: async () => ({ signature: sep53Sign(MESSAGE) }),
+      stellar_signXDR: async () => ({ signedXDR: coSigned() }),
+    });
+    setWalletConnectProvider(provider);
+
+    await signOwnershipAndTransaction(MESSAGE, "offered-xdr", ADDR);
+
+    expect(provider.request).toHaveBeenCalledWith(
+      { method: "stellar_signXDR", params: { xdr: "offered-xdr" } },
+      CHAIN,
+    );
+  });
+
+  it("resolves with the proof without waiting on the transaction", async () => {
+    setWalletConnectProvider(
+      answeringProvider([], {
+        stellar_signMessage: async () => ({ signature: sep53Sign(MESSAGE) }),
+        stellar_signXDR: () => new Promise<never>(() => {}),
+      }),
+    );
+
+    await expect(signOwnershipAndTransaction(MESSAGE, "offered-xdr", ADDR)).resolves.toMatchObject({
+      proof: { address: ADDR },
+    });
+  });
+
+  it("takes the contributor back to Freighter when the transaction is still unanswered after the grace", async () => {
+    vi.useFakeTimers();
+    const log = onPhone();
+    const xdr = coSigned();
+    let answer!: (value: unknown) => void;
+    setWalletConnectProvider(
+      answeringProvider(log, {
+        stellar_signMessage: async () => ({ signature: sep53Sign(MESSAGE) }),
+        stellar_signXDR: () => new Promise((resolve) => (answer = resolve)),
+      }),
+    );
+
+    const { signedTransaction } = await signOwnershipAndTransaction(MESSAGE, "offered-xdr", ADDR);
+    const collected = signedTransaction();
+    await vi.advanceTimersByTimeAsync(BATCHED_ANSWER_GRACE_MS - 1);
+    expect(log.filter((l) => l.startsWith("focus"))).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(log.filter((l) => l.startsWith("focus"))).toHaveLength(2);
+    answer({ signedXDR: xdr });
+    await expect(collected).resolves.toBe(xdr);
+  });
+
+  it("reports a declined transaction as rejected, and the proof stands", async () => {
+    setWalletConnectProvider(
+      answeringProvider([], {
+        stellar_signMessage: async () => ({ signature: sep53Sign(MESSAGE) }),
+        stellar_signXDR: async () => {
+          throw new Error("User rejected the request");
+        },
+      }),
+    );
+
+    const { proof, signedTransaction } = await signOwnershipAndTransaction(MESSAGE, "offered-xdr", ADDR);
+
+    expect(proof.address).toBe(ADDR);
+    await expect(signedTransaction()).rejects.toMatchObject({ code: "rejected" });
+  });
+
+  it("checks the transaction came back signed by the address, as signTransaction does", async () => {
+    setWalletConnectProvider(
+      answeringProvider([], {
+        stellar_signMessage: async () => ({ signature: sep53Sign(MESSAGE) }),
+        stellar_signXDR: async () => ({ signedXDR: coSigned(Keypair.random()) }),
+      }),
+    );
+
+    const { signedTransaction } = await signOwnershipAndTransaction(MESSAGE, "offered-xdr", ADDR);
+
+    await expect(signedTransaction()).rejects.toMatchObject({ code: "wrong_account" });
+  });
+
+  it("fails as a whole when the message is declined", async () => {
+    setWalletConnectProvider(
+      answeringProvider([], {
+        stellar_signMessage: async () => {
+          throw new Error("User rejected the request");
+        },
+        stellar_signXDR: () => new Promise<never>(() => {}),
+      }),
+    );
+
+    await expect(signOwnershipAndTransaction(MESSAGE, "offered-xdr", ADDR)).rejects.toMatchObject({
+      code: "rejected",
+    });
+  });
+
+  it("refuses before asking anything when the session is some other account", async () => {
+    const provider = fakeProvider({ accounts: [OTHER] });
+    setWalletConnectProvider(provider);
+
+    await expect(signOwnershipAndTransaction(MESSAGE, "offered-xdr", ADDR)).rejects.toMatchObject({
+      code: "wrong_account",
+    });
+    expect(provider.request).not.toHaveBeenCalled();
+  });
+
+  it("gives up on a transaction Freighter never answers, like any other request", async () => {
+    vi.useFakeTimers();
+    const provider = answeringProvider([], {
+      stellar_signMessage: async () => ({ signature: sep53Sign(MESSAGE) }),
+      stellar_signXDR: () => new Promise<never>(() => {}),
+    });
+    setWalletConnectProvider(provider);
+
+    const { signedTransaction } = await signOwnershipAndTransaction(MESSAGE, "offered-xdr", ADDR);
+    const attempt = expect(signedTransaction()).rejects.toMatchObject({ code: "timed_out" });
+    await vi.advanceTimersByTimeAsync(BATCHED_ANSWER_GRACE_MS + REQUEST_TIMEOUT_MS);
+    await attempt;
+    expect(provider.disconnect).toHaveBeenCalled();
+  });
+
+  it("lets the contributor cancel the wait for the transaction", async () => {
+    vi.useFakeTimers();
+    setWalletConnectProvider(
+      answeringProvider([], {
+        stellar_signMessage: async () => ({ signature: sep53Sign(MESSAGE) }),
+        stellar_signXDR: () => new Promise<never>(() => {}),
+      }),
+    );
+
+    const { signedTransaction } = await signOwnershipAndTransaction(MESSAGE, "offered-xdr", ADDR);
+    const attempt = signedTransaction();
+    attempt.catch(() => {});
+    await vi.advanceTimersByTimeAsync(BATCHED_ANSWER_GRACE_MS);
+    cancelWalletRequest();
+    await vi.advanceTimersByTimeAsync(DROP_SESSION_WAIT_MS);
+    await expect(attempt).rejects.toMatchObject({ code: "cancelled" });
   });
 });
 

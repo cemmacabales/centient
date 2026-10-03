@@ -60,13 +60,13 @@ export function WalletSignInView({
         : "Connect Freighter";
 
   return (
-    <div className="flex w-full max-w-xs flex-col items-center gap-3">
+    <div className="flex w-full flex-col items-center gap-3 sm:max-w-xs">
       <button
         type="button"
         onClick={onConnect}
         disabled={connecting}
         aria-busy={connecting}
-        className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-br from-primary to-primary-container font-label text-lg font-bold text-white shadow-[0_8px_24px_rgba(0,109,61,0.2)] transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-60"
+        className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-br from-primary to-primary-container font-label text-lg font-bold text-white shadow-[0_8px_24px_rgba(0,109,61,0.2)] transition-[translate,scale,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_32px_rgba(0,109,61,0.3)] active:translate-y-0 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-60 disabled:hover:translate-y-0"
       >
         <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
           account_balance_wallet
@@ -107,10 +107,15 @@ interface WalletSignInProps {
   onSignedIn: (result: { address: string; created: boolean }) => void;
   /** Injectable for tests; defaults to the real Freighter + API flow. */
   signIn?: () => Promise<WalletSignInResult>;
+  /**
+   * Mount the mobile-app pairing prompt. The prompt listens for any pairing on
+   * the page, so a page with two sign-in buttons mounts it once.
+   */
+  pairing?: boolean;
 }
 
 /** Freighter sign-in: connect, sign the one-time challenge, get a session. */
-export default function WalletSignIn({ onSignedIn, signIn = signInWithWallet }: WalletSignInProps) {
+export default function WalletSignIn({ onSignedIn, signIn = signInWithWallet, pairing = true }: WalletSignInProps) {
   const [phase, setPhase] = useState<WalletSignInPhase>("idle");
   const [reason, setReason] = useState<WalletSignInFailure | undefined>();
   const [transport, setTransport] = useState<WalletTransport | null>(null);
@@ -153,7 +158,7 @@ export default function WalletSignIn({ onSignedIn, signIn = signInWithWallet }: 
         onConnect={handleConnect}
         onCancel={() => void cancelWalletRequest()}
       />
-      <FreighterPairing />
+      {pairing && <FreighterPairing />}
     </>
   );
 }

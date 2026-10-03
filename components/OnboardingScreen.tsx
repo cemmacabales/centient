@@ -5,7 +5,7 @@ import Image from "next/image";
 import CountryDropdown from "./CountryDropdown";
 import SegmentedControl from "./SegmentedControl";
 import SubmitButton from "./SubmitButton";
-import LoadingScreen from "./LoadingScreen";
+import ScreenLoader from "./ScreenLoader";
 import Toast, { type ToastKind, type ToastMessage } from "./Toast";
 
 interface OnboardingScreenProps {
@@ -67,7 +67,7 @@ export default function OnboardingScreen({ onComplete }: OnboardingScreenProps) 
   };
 
   if (submitting) {
-    return <LoadingScreen />;
+    return <ScreenLoader />;
   }
 
   return (

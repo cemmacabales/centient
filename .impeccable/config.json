@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-color",
+        "value": "#000",
+        "files": [
+          "app/globals.css"
+        ],
+        "createdAt": "2026-09-30T17:43:23.290Z",
+        "reason": "Claude triage: #000/#0000 in .receipt-paper/.receipt-stub masks is the mask alpha channel, not a painted colour (recorded in DESIGN.md Shapes)"
+      },
+      {
+        "rule": "design-system-radius",
+        "value": "3rem",
+        "files": [
+          "app/globals.css"
+        ],
+        "createdAt": "2026-09-30T17:43:23.306Z",
+        "reason": "Claude triage: start frame of the landing-frame-open scroll-in keyframe, rests at 2rem (recorded in DESIGN.md Shapes)"
+      }
+    ]
+  }
+}

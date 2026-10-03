@@ -10,12 +10,59 @@
 // address that is already set up answers ready without a signature, and a
 // declined or refused attempt submitted nothing. Dependencies are injectable, as
 // in wallet-sign-in.
+//
+// #170: on the Freighter mobile app, sign-in may already have asked for this
+// signature, in the same visit to Freighter as its own proof, and handed it over
+// with {@link handOffPayoutSignature}. Setup then submits that envelope instead
+// of building one and sending the contributor to Freighter a third time.
 import { WalletError, signTransaction } from "./wallet";
 
 const SPONSOR_URL = "/api/me/wallet/sponsor";
 
 /** The envelope shapes the sponsor route builds. */
 export type SponsorshipEnvelopeKind = "trustline" | "account+trustline";
+
+/**
+ * A payout-setup signature asked for at sign-in (#170), on an envelope the
+ * challenge route offered: one the sponsor hasn't signed yet, which it signs when
+ * `offer` comes back with it.
+ */
+export interface EarlyPayoutSignature {
+  /** The address sign-in proved; the sponsor route refuses it unless it is the bound wallet. */
+  address: string;
+  kind: SponsorshipEnvelopeKind;
+  /** The challenge route's tag for the envelope, sent back with it. */
+  offer: string;
+  /** When the envelope stops being valid, in epoch milliseconds. */
+  expiresAt: number;
+  /** The co-signed envelope; see `StellarProofAndTransaction`. */
+  signedTransaction: () => Promise<string>;
+}
+
+/**
+ * How long before the envelope's own expiry setup stops trusting it: the submit
+ * and the broadcast take time, and the browser's clock may differ from the
+ * server's. Past this, setup builds a fresh envelope instead.
+ */
+export const EARLY_ENVELOPE_MARGIN_MS = 30_000;
+
+let earlySignature: EarlyPayoutSignature | null = null;
+
+/**
+ * Leave a signature for the next setup to use. Sign-in and setup run in the same
+ * page with no reload between them, so this is held in memory, and consumed by
+ * the first setup that runs.
+ */
+export function handOffPayoutSignature(signature: EarlyPayoutSignature): void {
+  earlySignature = signature;
+}
+
+/** Take the signature sign-in left, if any, so no later setup reuses it. */
+export function takeEarlyPayoutSignature(): EarlyPayoutSignature | null {
+  const signature = earlySignature;
+  earlySignature = null;
+  return signature;
+}
 
 export type PayoutSetupFailure =
   | "wallet_required"
@@ -46,6 +93,10 @@ export interface PayoutSetupDeps {
   onWaiting?: (seconds: number | null) => void;
   /** Injectable for tests; a real timer by default. */
   sleep?: (ms: number) => Promise<void>;
+  /** The signature sign-in left, if any; {@link takeEarlyPayoutSignature} by default. */
+  takeEarlySignature?: () => EarlyPayoutSignature | null;
+  /** Injectable for tests; `Date.now` by default. */
+  now?: () => number;
 }
 
 /** The longest `Retry-After` the flow waits out; a longer one is reported instead. */
@@ -120,8 +171,16 @@ async function rateLimitWait(res: Response): Promise<number | null> {
  * One sponsor request. A rate limit is a wait, not a failure: the request is
  * sent again, once, after the `Retry-After` the route gave. Resending a submit
  * is safe, because a throttled POST is refused before any intent is written.
+ *
+ * `stillWorthSending` is asked after the wait: when it says no, the throttled
+ * answer is returned instead of resending. An envelope from sign-in (#170) can
+ * expire during a wait of up to {@link MAX_RATE_LIMIT_WAIT_SECONDS}.
  */
-async function send(deps: PayoutSetupDeps, init?: RequestInit): Promise<Response> {
+async function send(
+  deps: PayoutSetupDeps,
+  init?: RequestInit,
+  stillWorthSending: () => boolean = () => true,
+): Promise<Response> {
   const request = () => (init ? deps.fetch(SPONSOR_URL, init) : deps.fetch(SPONSOR_URL));
   const res = await request();
   const wait = await rateLimitWait(res);
@@ -132,6 +191,7 @@ async function send(deps: PayoutSetupDeps, init?: RequestInit): Promise<Response
   } finally {
     deps.onWaiting?.(null);
   }
+  if (!stillWorthSending()) return res;
   return request();
 }
 
@@ -143,6 +203,12 @@ async function send(deps: PayoutSetupDeps, init?: RequestInit): Promise<Response
  */
 export async function setUpPayouts(deps: PayoutSetupDeps = defaultDeps): Promise<PayoutSetupResult> {
   try {
+    const early = (deps.takeEarlySignature ?? takeEarlyPayoutSignature)();
+    if (early) {
+      const result = await submitEarlySignature(deps, early);
+      if (result) return result;
+    }
+
     for (let attempt = 0; attempt < 2; attempt++) {
       const build = await send(deps);
       const offer = await readJson(build);
@@ -177,6 +243,56 @@ export async function setUpPayouts(deps: PayoutSetupDeps = defaultDeps): Promise
   } catch (err) {
     return { ok: false, reason: failureFromError(err) };
   }
+}
+
+/**
+ * Refusals that say only that the envelope from sign-in can't be used: its
+ * sequence was taken (`retry`), the route won't take it (`invalid_sponsor_tx`, as
+ * after a sponsor key change), or it names an address this session doesn't hold.
+ * Setup builds a fresh envelope instead of reporting them.
+ */
+const UNUSABLE_EARLY_ENVELOPE = new Set(["409 retry", "400 invalid_sponsor_tx", "403 address_not_bound"]);
+
+/**
+ * Submit the envelope co-signed at sign-in (#170). Resolves with the outcome, as
+ * the ordinary submit would report it, or null when that envelope can't be used
+ * and setup should build a fresh one. Its signature is normally already in: if
+ * not, collecting it takes the contributor back to Freighter, where it waits.
+ */
+async function submitEarlySignature(
+  deps: PayoutSetupDeps,
+  early: EarlyPayoutSignature,
+): Promise<PayoutSetupResult | null> {
+  const now = deps.now ?? Date.now;
+  const usable = () => now() < early.expiresAt - EARLY_ENVELOPE_MARGIN_MS;
+  if (!usable()) return null;
+
+  let signedXdr: string;
+  deps.onSigning?.(early.kind);
+  try {
+    signedXdr = await early.signedTransaction();
+  } finally {
+    deps.onSigning?.(null);
+  }
+  // It may have sat unanswered in Freighter for a while.
+  if (!usable()) return null;
+
+  const submit = await send(
+    deps,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address: early.address, signedXdr, offer: early.offer }),
+    },
+    usable,
+  );
+  // Throttled until the envelope was too close to expiry to resend.
+  if (submit.status === 429 && !usable()) return null;
+  if (submit.status === 202) return { ok: false, reason: "pending" };
+  if (submit.ok) return { ok: true, address: early.address, sponsored: true };
+  const refusal = await readJson(submit);
+  if (UNUSABLE_EARLY_ENVELOPE.has(`${submit.status} ${String(refusal.error)}`)) return null;
+  return { ok: false, reason: failureFromResponse(submit.status, refusal.error) };
 }
 
 /**

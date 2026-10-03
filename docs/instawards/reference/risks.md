@@ -2,7 +2,7 @@
 
 What is not finished and what is accepted as a known limit. Each item is a way the program could miss a target or the rail could fail. **They are listed here so they can be managed, not as caveats.**
 
-*Last reviewed 18 September 2026. R-3, R-4, R-6 and the mobile limit were updated on 24 September, after the D3 gate. The seeded-credential and cap-alert limits and the small follow-ups were updated on 28 September (D4, #46–#48). The refund limit and the privacy notice were settled the same day, in the owner's rulings on the D4 requirements analysis.*
+*Last reviewed 18 September 2026. R-3, R-4, R-6 and the mobile limit were updated on 24 September, after the D3 gate. The seeded-credential and cap-alert limits and the small follow-ups were updated on 28 September (D4, #46–#48). The refund limit and the privacy notice were settled the same day, in the owner's rulings on the D4 requirements analysis. R-3 was closed on 1 October against the #49 volume proof.*
 
 ## Blocking a future deliverable
 
@@ -10,7 +10,7 @@ What is not finished and what is accepted as a known limit. Each item is a way t
 | --- | --- | --- | --- | --- |
 | R-1 | **The co-signer shares a Railway account with the app** (ADR-0001) | — | — | **Closed by D-7.** The sprint is testnet only, so account isolation no longer gates a deliverable. `same-workspace` still refuses to sign on mainnet |
 | R-2 | ~~Mainnet approval~~ | — | — | **Closed by D-7:** testnet only, no mainnet payout |
-| R-3 | **25 unique wallets.** Not yet counted as onboarded wallets. The payout account has paid 35 distinct addresses, but that total includes proof accounts, withdrawal destinations and QA testers. Real contributors must be recruited | #49 (D4 volume proof) | Week 4 evidence run | Build a tester cohort with the tester guide. Phones can now sign in (D-4), so a contributor no longer needs the desktop extension |
+| R-3 | **25 unique wallets.** The payout account's 35 distinct addresses included proof accounts, withdrawal destinations and QA testers, so they were not a count of onboarded wallets | #49 (D4 volume proof) | Week 4 evidence run | **Closed by #49.** The [D4 volume proof](https://github.com/artisam-centient/centient/blob/develop/docs/superpowers/specs/2026-09-28-d4-volume-proof.md) (28 Sep) counted **25** unique wallets in the instant-payout window: 122 reconciled payouts, 0 duplicate, 0 unreconciled. The window includes alpha testers and D3 QA traffic, by owner ruling |
 | R-4 | **Existing custodial balances.** Email accounts held balances on 15 September | #39 (D3) | Mon 21 Sep | **Decided 21 Sep ([ADR-0007](https://github.com/artisam-centient/centient/blob/develop/docs/adr/0007-retire-accumulate-then-withdraw.md)).** Legacy balances stay withdrawable, with no minimum, until they reach zero. Nothing new accrues. **Closed:** #39 shipped in PR #131 and passed QA in #41 |
 | R-5 | ~~Mainnet key custody~~ | — | — | **Closed by D-7:** testnet only. Testnet keys stay in Railway service variables |
 | R-6 | **Phones can't sign in.** SOW §3.1 promises "anyone with a phone and a Stellar wallet" | §3.1 key outcome, and #35's "mobile-first" | — | **Resolved on iOS.** D-4 (22 Sep) scoped Freighter Mobile over WalletConnect v2 into Week 3, and it passed QA in #41. Android is untested and accepted as a residual (#137) |

@@ -6,7 +6,8 @@ import TaskCard from "@/components/TaskCard";
 import EarningsBadge from "@/components/EarningsBadge";
 import WalletChip from "@/components/WalletChip";
 import SubmitButton from "@/components/SubmitButton";
-import LoadingScreen from "@/components/LoadingScreen";
+import LandingSkeleton from "@/components/LandingSkeleton";
+import ScreenLoader from "@/components/ScreenLoader";
 import AccountSheet from "@/components/AccountSheet";
 import InAppLanding from "@/components/InAppLanding";
 import LoginScreen from "@/components/LoginScreen";
@@ -444,8 +445,10 @@ export default function Home() {
 
   let body: React.ReactNode = null;
 
-  if (screen === "checking" || screen === "loading") {
-    body = <LoadingScreen />;
+  if (screen === "checking") {
+    body = <LandingSkeleton />;
+  } else if (screen === "loading") {
+    body = <ScreenLoader />;
   } else if (screen === "login") {
     body = (
       <LoginScreen

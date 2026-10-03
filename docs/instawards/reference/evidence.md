@@ -85,6 +85,16 @@ Each is one 0.25 USDC instant payout for one validated answer, sent from the pay
 
 The instant path made 80 payments from 21 to 24 September. The [metrics page](metrics.md) shows how to list them all.
 
+## Deliverable 4 evidence
+
+The **volume proof** (#49) reconciles **122 payouts across 25 unique wallets, 0 duplicate, 0 unreconciled**, over 22–28 September — every payout listed by hash in the [D4 volume proof](https://github.com/artisam-centient/centient/blob/develop/docs/superpowers/specs/2026-09-28-d4-volume-proof.md). Both multisig accounts were re-verified on-chain at 2 / 2 / 2 with no drift ([D4 multisig re-verification](https://github.com/artisam-centient/centient/blob/develop/docs/d4-multisig-reverify.md)), and the four named failures were each injected and passed ([payout failure matrix](https://github.com/artisam-centient/centient/blob/develop/docs/payout-failure-matrix.md)).
+
+The **[D4 demo video](https://drive.google.com/drive/folders/11SiPEsUuHDKGgJcfm3yWfejjQuOElUD9)** (3:58, captioned for a non-technical viewer) runs the whole path live on beta.centient.work at build `15bcbe8`, recorded 30 September: create a Freighter wallet → connect → rank → validate → instant USDC → reconciler → stellar.expert. Its payment is below; it was checked on Horizon on 1 October.
+
+| Date | What it proves | Transaction |
+| --- | --- | --- |
+| 30 Sep | **The demo's instant payout**: 0.25 USDC to a new wallet (`GDVE…2WBR`), two signatures inside a fee bump, confirmed by the reconciler (#52) | [`d362d6ff…`](https://stellar.expert/explorer/testnet/tx/d362d6ff1521eee34c063778193d6af613335d717eb94034097cda04d27ba4e5) |
+
 ## Evidence files
 
 | File | Issue | Contents |
@@ -105,7 +115,8 @@ The instant path made 80 payments from 21 to 24 September. The [metrics page](me
 | D2 QA-passed | [`8f660cc`](https://github.com/artisam-centient/centient/commit/8f660cc632f1c868a41618434a1c169dc0edabcc) | `QA PASSED` on #31, 21 September, 38/40 executed; reviewed `P0:0 P1:0`; same tree as `develop` [`aac52cc`](https://github.com/artisam-centient/centient/commit/aac52ccf6533b69e70876390c817be06bf8d0f40) |
 | D2 on `main` | — | Promoted by PR #121 on 21 September |
 | D3 QA-passed | [`1fde77d`](https://github.com/artisam-centient/centient/commit/1fde77d539ca040bb12c07df0c82dad5c8cf3a58) | `QA PASSED` on #41, 24 September |
-| Live on `staging` | [`36524aa`](https://github.com/artisam-centient/centient/commit/36524aacd32df08a518d18508ac4a3e1c8bedc67) | `1fde77d` plus the landing-page promo video (PR #153), ruled outside D3 |
+| `staging` after D3 | [`36524aa`](https://github.com/artisam-centient/centient/commit/36524aacd32df08a518d18508ac4a3e1c8bedc67) | `1fde77d` plus the landing-page promo video (PR #153), ruled outside D3. Superseded by the Week 4 promotions |
+| D4 build under test | — | Recorded on #53 at the freeze. [`/api/version`](https://beta.centient.work/api/version) always reports the live SHA |
 
 ## Screenshots and recordings
 
@@ -114,5 +125,5 @@ The instant path made 80 payments from 21 to 24 September. The [metrics page](me
 | Deliverable 1 proof of deliverables (PDF, explorer captures of both accounts and a two-signature payment) | D1 | Held by the builder; to be attached here |
 | Recording: wallet connect → signed challenge → session issued | D2 | [D2 evidence folder](https://drive.google.com/drive/folders/1JS5hYQ-G4g-n92Hzf9RTNRBKWsUuvbFd?usp=drive_link) |
 | Phone recordings for the #137 cases (iOS) | D3 | Held outside the repository; not yet reviewed on record |
-| Recording: connect → rank → instant USDC → reconciled | D3 | Covered by the Week 4 demo |
-| 3–5 minute demo | D4 | Week 4 |
+| Recording: connect → rank → instant USDC → reconciled | D3 | Covered by the [D4 demo video](https://drive.google.com/drive/folders/11SiPEsUuHDKGgJcfm3yWfejjQuOElUD9) |
+| 3–5 minute demo (connect → rank → validate → instant USDC → stellar.expert → reconciler) | D4 | [D4 demo video](https://drive.google.com/drive/folders/11SiPEsUuHDKGgJcfm3yWfejjQuOElUD9): 3:58, captioned, recorded 30 September |
