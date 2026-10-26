@@ -49,7 +49,7 @@ vi.mock("@/lib/prisma", () => ({
 }));
 
 import { GET, POST, buildWalletLinkMessage } from "../route";
-import { sep53Digest } from "@/lib/stellar/signature";
+import { lanternMessageBytes, sep53Digest } from "@/lib/stellar/signature";
 import { Prisma } from "@/app/generated/prisma/client";
 
 const KP = Keypair.random();
@@ -307,5 +307,28 @@ describe("POST /api/me/wallet (prove + bind)", () => {
     const badSig = wrong.sign(sep53Digest(buildWalletLinkMessage(G, NONCE))).toString("base64");
     await POST(postReq({ stellarAddress: G, signature: badSig }));
     expect(mockTakeOver).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/me/wallet (Lantern proof)", () => {
+  const lanternSig = () => KP.sign(lanternMessageBytes(buildWalletLinkMessage(G, NONCE))).toString("base64");
+
+  it("binds on a lantern-scheme proof", async () => {
+    const res = await POST(postReq({ stellarAddress: G, signature: lanternSig(), scheme: "lantern" }));
+    expect(res.status).toBe(200);
+    expect(mockUserUpdateMany).toHaveBeenCalled();
+  });
+
+  it("401s a Lantern signature presented as SEP-53", async () => {
+    const res = await POST(postReq({ stellarAddress: G, signature: lanternSig() }));
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toBe("invalid_signature");
+  });
+
+  it("400s an unknown scheme before verifying anything", async () => {
+    const res = await POST(postReq({ stellarAddress: G, signature: lanternSig(), scheme: "raw" }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("invalid_body");
+    expect(mockNonceFindFirst).not.toHaveBeenCalled();
   });
 });

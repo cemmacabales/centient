@@ -2,12 +2,15 @@
 
 import { useEffect } from "react";
 
-export type ToastKind = "error" | "info" | "success";
+/** `progress` is the XP loop's (#201): indigo, never an error. */
+export type ToastKind = "error" | "info" | "success" | "progress";
 
 export interface ToastMessage {
   id: number;
   message: string;
   kind: ToastKind;
+  /** A short note on the right, such as the streak beside "Daily goal met". */
+  detail?: string;
 }
 
 interface ToastProps {
@@ -27,6 +30,7 @@ export default function Toast({ toast, onDismiss, durationMs = 4000 }: ToastProp
 
   const isError = toast.kind === "error";
   const isSuccess = toast.kind === "success";
+  const isProgress = toast.kind === "progress";
 
   return (
     <div
@@ -41,22 +45,33 @@ export default function Toast({ toast, onDismiss, durationMs = 4000 }: ToastProp
             ? "bg-error-container text-on-error-container"
             : isSuccess
             ? "bg-primary-container text-on-primary-container"
+            : isProgress
+            ? "items-center bg-tertiary text-on-tertiary shadow-[0_10px_24px_-8px_rgba(73,75,214,0.55)]"
             : "bg-surface-container-highest text-on-surface"
         }`}
       >
         <span
-          className="material-symbols-outlined text-[20px]"
-          style={{ fontVariationSettings: "'FILL' 1" }}
+          className={`material-symbols-outlined ${isProgress ? "text-[22px]" : "text-[20px]"}`}
+          style={isProgress ? undefined : { fontVariationSettings: "'FILL' 1" }}
           aria-hidden="true"
         >
-          {isError ? "error" : isSuccess ? "check_circle" : "info"}
+          {isError ? "error" : isSuccess ? "check_circle" : isProgress ? "today" : "info"}
         </span>
-        <p className="font-body text-sm leading-relaxed">{toast.message}</p>
+        <p className={`font-body text-sm leading-relaxed ${isProgress ? "font-bold" : ""}`}>{toast.message}</p>
+        {toast.detail && (
+          <span className={`whitespace-nowrap font-body text-[13px] ${isProgress ? "text-tertiary-fixed" : "opacity-80"}`}>
+            {toast.detail}
+          </span>
+        )}
         <button
           type="button"
           onClick={onDismiss}
           aria-label="Dismiss"
-          className="ml-2 rounded-full p-1 transition-colors hover:bg-on-surface/10 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+          className={`ml-2 rounded-full p-1 transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 ${
+            isProgress
+              ? "hover:bg-on-tertiary/15 focus-visible:ring-on-tertiary focus-visible:ring-offset-tertiary"
+              : "hover:bg-on-surface/10 focus-visible:ring-primary focus-visible:ring-offset-surface"
+          }`}
         >
           <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
             close

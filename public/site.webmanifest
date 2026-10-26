@@ -9,5 +9,7 @@
   "theme_color": "#006d3d",
   "background_color": "#f8f9fb",
   "display": "standalone",
-  "start_url": "/"
+  "start_url": "/",
+  "related_applications": [{ "platform": "play", "id": "com.lantern.wallet" }],
+  "prefer_related_applications": false
 }

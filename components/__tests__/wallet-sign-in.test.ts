@@ -92,3 +92,43 @@ describe("WalletSignInView", () => {
     expect(render({ phase: "failed", reason: "wrong_account", onConnect: noop })).toContain("text-error");
   });
 });
+
+describe("WalletSignInView — Lantern", () => {
+  const HREF = "intent://open?url=x#Intent;scheme=lantern;package=com.lantern.wallet;end";
+
+  it("leads with Open in Lantern on a phone that has it, with Freighter one tap behind", () => {
+    const html = render({ phase: "idle", onConnect: noop, lanternHref: HREF, onUseFreighter: noop });
+    expect(html).toContain("Open in Lantern");
+    expect(html).toContain('data-lantern="open"');
+    expect(html).toContain(`href="${HREF.replace(/&/g, "&amp;")}"`);
+    expect(html).toContain("Use Freighter instead");
+    expect(html).not.toContain("Connect Freighter");
+  });
+
+  it("keeps the Freighter button when there is no Lantern to open", () => {
+    const html = render({ phase: "idle", onConnect: noop, lanternHref: null });
+    expect(html).toContain("Connect Freighter");
+    expect(html).not.toContain("Lantern");
+  });
+
+  it("shows a Freighter attempt's own state rather than the Lantern offer", () => {
+    const html = render({ phase: "failed", reason: "rejected", onConnect: noop, lanternHref: HREF });
+    expect(html).toContain("Try again");
+    expect(html).not.toContain("Open in Lantern");
+  });
+
+  it("connects through Lantern, in Lantern's button, when running inside it", () => {
+    const html = render({ phase: "idle", transport: "lantern", onConnect: noop, lanternHref: HREF });
+    expect(html).toContain("Connect Lantern");
+    expect(html).toContain('data-lantern="connect"');
+    expect(html).not.toContain("Open in Lantern");
+  });
+
+  it("waits on Lantern, cancellably, and names Lantern in a failure", () => {
+    expect(render({ phase: "connecting", transport: "lantern", onConnect: noop, onCancel: noop })).toContain(
+      "Waiting for Lantern",
+    );
+    const failed = render({ phase: "failed", reason: "rejected", transport: "lantern", onConnect: noop });
+    expect(failed).not.toContain("Freighter");
+  });
+});

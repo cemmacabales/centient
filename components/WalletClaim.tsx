@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { track } from "@/lib/analytics";
 import CancelWalletWait from "./CancelWalletWait";
 import FreighterPairing from "./FreighterPairing";
+import LanternButton from "./LanternButton";
+import { walletCopy } from "@/lib/stellar/lantern";
 import SignOutForm from "./SignOutForm";
 import { cancelWalletRequest, prepareWallet, type WalletTransport } from "@/lib/stellar/wallet";
 import {
@@ -43,15 +45,20 @@ export function WalletClaimView({
   const failure = phase === "failed" ? (reason ?? "failed") : null;
   // See WalletSignIn: the mobile app is opened, not prompted in this browser.
   const mobile = transport === "walletconnect";
+  const inLantern = transport === "lantern";
   const label = connecting
     ? mobile
       ? "Waiting for the Freighter app…"
-      : "Waiting for Freighter…"
+      : inLantern
+        ? "Waiting for Lantern…"
+        : "Waiting for Freighter…"
     : failure
       ? "Try again"
       : mobile
         ? "Open Freighter app"
-        : "Connect Freighter";
+        : inLantern
+          ? "Connect Lantern"
+          : "Connect Freighter";
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-6 text-center">
@@ -64,25 +71,32 @@ export function WalletClaimView({
         <div className="flex flex-col items-center gap-2">
           <h2 className="text-2xl font-headline font-bold text-on-surface">Connect your wallet to keep earning</h2>
           <p className="font-body text-sm text-on-surface-variant">
-            Centient now pays to a Stellar wallet you prove is yours. Connect Freighter once: your balance
-            stays with this account, and from then on you sign in with the wallet — no email or password.
+            Centient now pays to a Stellar wallet you prove is yours. Connect {inLantern ? "Lantern" : "Freighter"}{" "}
+            once: your balance stays with this account, and from then on you sign in with the wallet — no email or
+            password.
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={onConnect}
-          disabled={connecting}
-          aria-busy={connecting}
-          className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-br from-primary to-primary-container font-label text-lg font-bold text-white shadow-[0_8px_24px_rgba(0,109,61,0.2)] transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-60"
-        >
-          <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
-            account_balance_wallet
-          </span>
-          {label}
-        </button>
+        {inLantern ? (
+          <LanternButton onClick={onConnect} disabled={connecting} busy={connecting}>
+            {label}
+          </LanternButton>
+        ) : (
+          <button
+            type="button"
+            onClick={onConnect}
+            disabled={connecting}
+            aria-busy={connecting}
+            className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-br from-primary to-primary-container font-label text-lg font-bold text-white shadow-[0_8px_24px_rgba(0,109,61,0.2)] transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface disabled:opacity-60"
+          >
+            <span className="material-symbols-outlined text-[22px]" aria-hidden="true">
+              account_balance_wallet
+            </span>
+            {label}
+          </button>
+        )}
 
-        {connecting && mobile && onCancel && <CancelWalletWait onCancel={onCancel} />}
+        {connecting && (mobile || inLantern) && onCancel && <CancelWalletWait onCancel={onCancel} />}
 
         <div role="status" aria-live="polite" className="w-full">
           {failure && (
@@ -90,7 +104,7 @@ export function WalletClaimView({
               data-failure={failure}
               className={`font-body text-sm ${failure === "rejected" || failure === "cancelled" ? "text-on-surface-variant" : "text-error"}`}
             >
-              {WALLET_CLAIM_MESSAGES[failure]}
+              {walletCopy(WALLET_CLAIM_MESSAGES[failure], transport)}
             </p>
           )}
           {failure === "freighter_missing" && (

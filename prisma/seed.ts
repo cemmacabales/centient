@@ -12,6 +12,13 @@ const LOCAL_ADMIN_PASSWORD = "GoCent!123";
 const LOCAL_DEMO_PASSWORD = "Demo!123";
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
+// #201: each live task's difficulty (1–9) from the 9 Oct pool pricing, which
+// sets the XP its answer earns. Written on create and on update, so a deploy
+// fills it onto existing rows; it is the only column the update touches.
+const TASK_DIFFICULTY = JSON.parse(
+  readFileSync("prisma/data/task-difficulty-2026-10-09.json", "utf8"),
+) as Record<string, number>;
+
 const prisma = new PrismaClient({ adapter });
 
 function parseCSVLine(line: string): string[] {
@@ -78,7 +85,7 @@ async function seedCSV(path: string) {
 
     await prisma.task.upsert({
       where: { id },
-      update: {},
+      update: { difficulty: TASK_DIFFICULTY[id] },
       create: {
         id,
         prompt,
@@ -87,6 +94,7 @@ async function seedCSV(path: string) {
         category,
         isGold,
         goldAnswer: goldAnswer || null,
+        difficulty: TASK_DIFFICULTY[id],
       },
     });
     count++;
@@ -1035,7 +1043,7 @@ async function main() {
   for (const t of tasks) {
     await prisma.task.upsert({
       where: { id: t.id },
-      update: {},
+      update: { difficulty: TASK_DIFFICULTY[t.id] },
       create: {
         id: t.id,
         prompt: t.prompt,
@@ -1044,6 +1052,7 @@ async function main() {
         category: t.category,
         isGold: t.isGold,
         goldAnswer: t.goldAnswer,
+        difficulty: TASK_DIFFICULTY[t.id],
       },
     });
   }

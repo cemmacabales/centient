@@ -32,6 +32,14 @@ export async function truncateAll(): Promise<void> {
     }
   };
 
+  await tryDelete(() => prisma.xpEvent.deleteMany());
+  await tryDelete(() => prisma.inviteReward.deleteMany());
+  await tryDelete(() => prisma.eventRedemption.deleteMany());
+  await tryDelete(() => prisma.eventCode.deleteMany());
+  await tryDelete(() => prisma.weeklyResult.deleteMany());
+  await tryDelete(() => prisma.boardWeek.deleteMany());
+  await tryDelete(() => prisma.retiredDisplayName.deleteMany());
+  await tryDelete(() => prisma.dailyProgress.deleteMany());
   await tryDelete(() => prisma.flaggedWithdrawal.deleteMany());
   await tryDelete(() => prisma.bannedIdentity.deleteMany());
   await tryDelete(() => prisma.userIdentifierHistory.deleteMany());

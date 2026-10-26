@@ -12,6 +12,7 @@ import prisma from "../prisma";
 import { Prisma, type PrismaClient } from "@/app/generated/prisma/client";
 import { networkPassphrase } from "./config";
 import { isValidStellarAddress, verify } from "./signature";
+import type { SignatureScheme } from "./wallet-errors";
 import { CHALLENGE_TTL_MS, PROOF_ACTION, buildChallengeMessage } from "./challenge-message";
 
 export interface IssuedSignInChallenge {
@@ -152,12 +153,15 @@ export async function consumeSignInChallenge({
   nonce,
   signature,
   signerAddress,
+  scheme = "sep53",
   now = new Date(),
 }: {
   address: string;
   nonce: string;
   signature: string;
   signerAddress?: string;
+  /** How the wallet framed the challenge before signing it (signature.ts). */
+  scheme?: SignatureScheme;
   now?: Date;
 }): Promise<SignInProofResult> {
   const row = await prisma.walletNonce.findUnique({ where: { nonce } });
@@ -183,7 +187,7 @@ export async function consumeSignInChallenge({
     issuedAt: row.issuedAt,
     expiresAt: row.expiresAt,
   });
-  if (!verify(address, message, signature)) return { ok: false, reason: "bad_signature" };
+  if (!verify(address, message, signature, scheme)) return { ok: false, reason: "bad_signature" };
 
   const consumed = await prisma.walletNonce.deleteMany({
     where: { nonce, action: PROOF_ACTION, walletAddress: address, expiresAt: { gt: now } },

@@ -167,9 +167,12 @@ unattended scheduler must not create competing stale envelopes.
 ## Wallet-health schedule and authenticated check
 
 Wallet health is checked by the authenticated `POST /api/cron/wallet-health`
-endpoint. **Nothing in this repository schedules it** — `railway.json` only
-runs migrations before deploy, and the same is true of `/api/cron/payout-retry`
-and `/api/cron/reserve-refill`. Provision a scheduler outside the app (a Railway
+endpoint. **The app never schedules it itself** — the web service's pre-deploy
+only runs migrations, and the same is true of `/api/cron/payout-retry` and
+`/api/cron/reserve-refill`. In `centient-work`, `.railway/railway.ts` declares
+`wallet-health-cron` and `payout-retry-cron`, which call the first two every
+five minutes — slower than the one-minute cadence below — and nothing calls
+`/api/cron/reserve-refill`. Provision a scheduler outside the app (a Railway
 cron service or equivalent) with `CRON_SECRET` in its own secret store and
 invoke it at least once per minute in production so short-lived balance and
 activity breaches are observed promptly:

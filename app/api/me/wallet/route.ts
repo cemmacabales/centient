@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@/app/generated/prisma/client";
 import { getLabelerSession, requireLabelerSession } from "@/lib/labeler-auth";
-import { isValidStellarAddress, verify } from "@/lib/stellar/signature";
+import { isValidStellarAddress, parseSignatureScheme, verify } from "@/lib/stellar/signature";
 import { checkWalletRateLimit, WALLET_BURST_LIMIT } from "@/lib/rate-limit";
 import { WALLET_LINK_ACTION } from "@/lib/stellar/challenge-message";
 import { takeOverUnusedWalletAccount } from "@/lib/stellar/auth-challenge";
@@ -108,7 +108,7 @@ export async function POST(req: NextRequest) {
   const unauthorized = requireLabelerSession(userId);
   if (unauthorized) return unauthorized;
 
-  let body: { stellarAddress?: unknown; signature?: unknown };
+  let body: { stellarAddress?: unknown; signature?: unknown; scheme?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -117,6 +117,10 @@ export async function POST(req: NextRequest) {
 
   const stellarAddress = typeof body.stellarAddress === "string" ? body.stellarAddress : "";
   const signature = typeof body.signature === "string" ? body.signature : "";
+  const scheme = parseSignatureScheme(body.scheme);
+  if (scheme === null) {
+    return NextResponse.json({ error: "invalid_body" }, { status: 400 });
+  }
 
   if (!isValidStellarAddress(stellarAddress)) {
     return NextResponse.json({ error: "invalid_address" }, { status: 400 });
@@ -135,7 +139,7 @@ export async function POST(req: NextRequest) {
   }
 
   const message = buildWalletLinkMessage(stellarAddress, nonceRow.nonce);
-  if (!verify(stellarAddress, message, signature)) {
+  if (!verify(stellarAddress, message, signature, scheme)) {
     return NextResponse.json({ error: "invalid_signature" }, { status: 401 });
   }
 

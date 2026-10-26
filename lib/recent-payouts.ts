@@ -106,10 +106,17 @@ export function toRecentPayouts(records: HorizonPaymentRecord[], options: ParseO
 }
 
 let cached: { at: number; result: RecentPayoutsResult } | null = null;
+/**
+ * The Horizon read in progress, if any. Requests that arrive while the cache is
+ * cold or expired wait on this one read instead of each starting their own, so
+ * a burst of visitors costs Horizon one request, not one per visitor.
+ */
+let inFlight: Promise<RecentPayoutsResult> | null = null;
 
 /** Test hook: forget the cached Horizon read. */
 export function resetRecentPayoutsCache(): void {
   cached = null;
+  inFlight = null;
 }
 
 /**
@@ -118,7 +125,19 @@ export function resetRecentPayoutsCache(): void {
  */
 export async function fetchRecentPayouts(now: number = Date.now()): Promise<RecentPayoutsResult> {
   if (cached && now - cached.at < CACHE_MS) return cached.result;
+  if (inFlight) return inFlight;
 
+  const read = readRecentPayouts(now);
+  inFlight = read;
+  try {
+    return await read;
+  } finally {
+    if (inFlight === read) inFlight = null;
+  }
+}
+
+/** One Horizon read, cached on success. */
+async function readRecentPayouts(now: number): Promise<RecentPayoutsResult> {
   const network = stellarNetwork();
   const explorer = explorerUrl();
   const account = process.env.STELLAR_PLATFORM_ACCOUNT?.trim();

@@ -126,6 +126,7 @@ export async function createTask(
     campaignId: string | null;
     responseTarget: number | null;
     category: string | null;
+    difficulty: number | null;
     createdAt: Date;
   }> = {},
 ) {
@@ -140,6 +141,7 @@ export async function createTask(
       campaignId: overrides.campaignId ?? null,
       responseTarget: overrides.responseTarget ?? null,
       category: overrides.category ?? null,
+      difficulty: overrides.difficulty ?? null,
       createdAt: overrides.createdAt ?? undefined,
     },
   });

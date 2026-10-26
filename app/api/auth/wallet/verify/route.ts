@@ -1,17 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isValidStellarAddress } from "@/lib/stellar/signature";
+import { isValidStellarAddress, parseSignatureScheme } from "@/lib/stellar/signature";
 import { consumeSignInChallenge, findOrCreateWalletUser } from "@/lib/stellar/auth-challenge";
 import { setLabelerSessionCookie, signLabelerJWT } from "@/lib/labeler-auth";
 import { isAnyIdentifierBanned } from "@/lib/ban-identity";
 import prisma from "@/lib/prisma";
+import { attachInviter } from "@/lib/gamification/invites";
+import { INVITE_RULES } from "@/lib/gamification/invite-rules";
 
 /**
  * POST /api/auth/wallet/verify — sign in by proving control of a Stellar address (#25).
  *
- * Body: `{ address, nonce, signature, signerAddress? }`, where `signature` is
- * Freighter's SEP-53 `signMessage` result (base64) over the challenge from
- * `/api/auth/wallet/challenge`, and `signerAddress` is the signer Freighter
- * reported.
+ * Body: `{ address, nonce, signature, signerAddress?, scheme?, embedded? }`,
+ * where `signature` is the wallet's `signMessage` result (base64) over the
+ * challenge from `/api/auth/wallet/challenge`, and `signerAddress` is the signer
+ * the wallet reported. `scheme` is how it framed the message: SEP-53 (Freighter,
+ * the default) or `lantern`. `embedded` asks for a session cookie that works
+ * inside Lantern's frame (see setLabelerSessionCookie).
  *
  * A malformed request is a 400 and leaves the challenge untouched. A refused
  * proof is a 401 and also leaves it: the nonce is not a secret, so consuming it
@@ -34,13 +38,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
 
-  const { address, nonce, signature, signerAddress } = body as Record<string, unknown>;
+  const { address, nonce, signature, signerAddress, embedded } = body as Record<string, unknown>;
+  const scheme = parseSignatureScheme((body as Record<string, unknown>).scheme);
   if (
     typeof nonce !== "string" ||
     !nonce ||
     typeof signature !== "string" ||
     !signature ||
-    (signerAddress !== undefined && typeof signerAddress !== "string")
+    (signerAddress !== undefined && typeof signerAddress !== "string") ||
+    scheme === null
   ) {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
@@ -54,6 +60,7 @@ export async function POST(req: NextRequest) {
     nonce,
     signature,
     signerAddress: signerAddress as string | undefined,
+    scheme,
   });
   if (!result.ok) {
     return NextResponse.json({ error: result.reason }, { status: 401 });
@@ -64,6 +71,12 @@ export async function POST(req: NextRequest) {
   if (await isAnyIdentifierBanned(holder?.email ?? null, result.address, user.id)) {
     return NextResponse.json({ error: "banned" }, { status: 403 });
   }
+  // #203: an invite link's cookie names the inviter of an account created just
+  // now, never one that existed. Best effort: a bad code never blocks sign-in.
+  const invite = req.cookies.get(INVITE_RULES.cookie)?.value;
+  if (user.created && invite) {
+    await attachInviter(user.id, invite).catch(() => false);
+  }
   const token = await signLabelerJWT(user.id);
   const res = NextResponse.json({
     success: true,
@@ -71,5 +84,6 @@ export async function POST(req: NextRequest) {
     walletAddress: result.address,
     created: user.created,
   });
-  return setLabelerSessionCookie(res, token);
+  if (invite) res.cookies.delete(INVITE_RULES.cookie);
+  return setLabelerSessionCookie(res, token, { embedded: embedded === true });
 }

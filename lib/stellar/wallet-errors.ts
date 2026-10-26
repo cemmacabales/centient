@@ -1,6 +1,7 @@
-// The wallet vocabulary shared by both transports — the Freighter browser
-// extension (wallet-extension.ts) and Freighter mobile over WalletConnect
-// (wallet-connect.ts) — plus the facade in wallet.ts that picks between them.
+// The wallet vocabulary shared by every transport — the Freighter browser
+// extension (wallet-extension.ts), Freighter mobile over WalletConnect
+// (wallet-connect.ts) and Lantern's in-app bridge (wallet-lantern.ts) — plus the
+// facade in wallet.ts that picks between them.
 //
 // It lives in its own module so the two transports can both raise the same
 // errors without importing each other, and so wallet.ts can dynamically
@@ -9,10 +10,10 @@
 // for the rest of the app.
 
 /** Which signing scheme produced a signature — selects the server verify path. */
-export type SignatureScheme = "sep53";
+export type SignatureScheme = "sep53" | "lantern";
 
-/** Which Freighter a connection/signature came from. */
-export type StellarWallet = "freighter";
+/** Which wallet a connection/signature came from. */
+export type StellarWallet = "freighter" | "lantern";
 
 /** A connected wallet address plus the wallet it came from. */
 export interface StellarConnection {

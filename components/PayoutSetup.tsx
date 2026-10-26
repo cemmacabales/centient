@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import CancelWalletWait from "./CancelWalletWait";
 import FreighterPairing from "./FreighterPairing";
+import { walletCopy } from "@/lib/stellar/lantern";
 import SignOutForm from "./SignOutForm";
 import {
   cancelWalletRequest,
@@ -35,6 +36,8 @@ interface PayoutSetupViewProps {
   onContinue?: () => void;
   /** Stop waiting on the Freighter app. Shown only while it is being asked to sign. */
   onCancel?: () => void;
+  /** Which wallet is signing, so the copy names Lantern when it is Lantern. */
+  transport?: WalletTransport | null;
 }
 
 /**
@@ -51,6 +54,7 @@ export function PayoutSetupView({
   onRetry,
   onContinue,
   onCancel,
+  transport,
 }: PayoutSetupViewProps) {
   const failure = phase === "failed" ? (reason ?? "failed") : null;
 
@@ -76,7 +80,7 @@ export function PayoutSetupView({
           )}
           {phase === "signing" && (
             <p data-signing={signingKind} className="font-body text-sm text-on-surface-variant">
-              {PAYOUT_SIGNING_NOTICE[signingKind ?? "account+trustline"]}
+              {walletCopy(PAYOUT_SIGNING_NOTICE[signingKind ?? "account+trustline"], transport)}
             </p>
           )}
           {phase === "signing" && onCancel && (
@@ -94,7 +98,7 @@ export function PayoutSetupView({
               data-failure={failure}
               className={`font-body text-sm ${failure === "rejected" || failure === "cancelled" ? "text-on-surface-variant" : "text-error"}`}
             >
-              {PAYOUT_SETUP_MESSAGES[failure]}
+              {walletCopy(PAYOUT_SETUP_MESSAGES[failure], transport)}
             </p>
           )}
         </div>
@@ -159,7 +163,7 @@ export default function PayoutSetup({ onReady, onSkip, run = runSetUpPayouts }: 
   const [waitSeconds, setWaitSeconds] = useState<number | undefined>();
   const [reason, setReason] = useState<PayoutSetupFailure | undefined>();
   const inFlight = useRef(false);
-  // Only the mobile app can be cancelled from here; the extension closes its own prompt.
+  // Only the mobile app and Lantern can be cancelled from here; the extension closes its own prompt.
   const [transport, setTransport] = useState<WalletTransport | null>(null);
   useEffect(() => {
     let live = true;
@@ -214,7 +218,10 @@ export default function PayoutSetup({ onReady, onSkip, run = runSetUpPayouts }: 
         reason={reason}
         onRetry={attempt}
         onContinue={onSkip ? () => onSkip(reason ?? "failed") : undefined}
-        onCancel={transport === "walletconnect" ? () => void cancelWalletRequest() : undefined}
+        onCancel={
+          transport === "walletconnect" || transport === "lantern" ? () => void cancelWalletRequest() : undefined
+        }
+        transport={transport}
       />
       {/* Setup normally rides the session sign-in already paired, but that
           session can expire; if the trustline co-signature has to pair again,

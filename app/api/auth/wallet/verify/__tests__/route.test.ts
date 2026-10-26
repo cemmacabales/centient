@@ -4,7 +4,7 @@ import { Keypair } from "@stellar/stellar-sdk";
 
 import { POST } from "@/app/api/auth/wallet/verify/route";
 import { issueSignInChallenge } from "@/lib/stellar/auth-challenge";
-import { sep53Digest } from "@/lib/stellar/signature";
+import { lanternMessageBytes, sep53Digest } from "@/lib/stellar/signature";
 import { signLabelerJWT, verifyLabelerJWT } from "@/lib/labeler-auth";
 import { prisma, truncateAll } from "@/tests/helpers/db";
 
@@ -289,5 +289,108 @@ describe("POST /api/auth/wallet/verify — banned identity", () => {
     const res = await POST(makeReq(body));
 
     expect(res.status).toBe(200);
+  });
+});
+
+// Lantern (wallet-lantern.ts) signs without SEP-53 and runs this app in a
+// cross-site frame, so its proofs carry a scheme and its sessions are partitioned.
+describe("POST /api/auth/wallet/verify — Lantern", () => {
+  const lanternSign = (kp: Keypair, message: string) => kp.sign(lanternMessageBytes(message)).toString("base64");
+
+  async function lanternProof(kp = Keypair.random()) {
+    const challenge = await issueSignInChallenge(kp.publicKey());
+    return {
+      address: kp.publicKey(),
+      nonce: challenge.nonce,
+      signature: lanternSign(kp, challenge.message),
+      signerAddress: kp.publicKey(),
+      scheme: "lantern",
+    };
+  }
+
+  it("signs in with a lantern-scheme proof and an ordinary cookie when not embedded", async () => {
+    const body = await lanternProof();
+
+    const res = await POST(makeReq(body));
+
+    expect(res.status).toBe(200);
+    const [cookie] = sessionCookies(res);
+    expect(cookie).toMatch(/SameSite=lax/i);
+    expect(cookie).not.toMatch(/Partitioned/i);
+  });
+
+  it("issues a partitioned SameSite=None cookie for an embedded sign-in", async () => {
+    const body = { ...(await lanternProof()), embedded: true };
+
+    const res = await POST(makeReq(body));
+
+    expect(res.status).toBe(200);
+    const [cookie] = sessionCookies(res);
+    expect(cookie).toMatch(/SameSite=none/i);
+    expect(cookie).toMatch(/Secure/);
+    expect(cookie).toMatch(/Partitioned/i);
+    expect(await sessionUserId(res)).toBeDefined();
+  });
+
+  it("refuses a Lantern signature presented as SEP-53, and keeps the challenge", async () => {
+    const { scheme: _scheme, ...body } = await lanternProof();
+    void _scheme;
+
+    const res = await POST(makeReq(body));
+
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ error: "bad_signature" });
+    expect(await prisma.walletNonce.count({ where: { nonce: body.nonce } })).toBe(1);
+  });
+
+  it("400s an unknown scheme without touching the challenge", async () => {
+    const body = { ...(await lanternProof()), scheme: "raw" };
+
+    const res = await POST(makeReq(body));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_body" });
+    expect(await prisma.walletNonce.count({ where: { nonce: body.nonce } })).toBe(1);
+  });
+});
+
+describe("POST /api/auth/wallet/verify - invites (#203)", () => {
+  async function inviterCode() {
+    const { inviteCodeFor } = await import("@/lib/gamification/invites");
+    const inviter = await prisma.user.create({ data: { walletAddress: Keypair.random().publicKey() } });
+    return { inviter, code: await inviteCodeFor(inviter.id) };
+  }
+
+  async function signIn(cookie?: string) {
+    const kp = Keypair.random();
+    const challenge = await issueSignInChallenge(kp.publicKey());
+    const body = { address: kp.publicKey(), nonce: challenge.nonce, signature: sign(kp, challenge.message), signerAddress: kp.publicKey() };
+    return { kp, res: await POST(makeReq(body, cookie)) };
+  }
+
+  it("records the inviter when the invite link's cookie rides on a first sign-in, then clears it", async () => {
+    const { inviter, code } = await inviterCode();
+    const { kp, res } = await signIn(`centient_invite=${code}`);
+    expect(res.status).toBe(200);
+    const created = await prisma.user.findUniqueOrThrow({ where: { walletAddress: kp.publicKey() } });
+    expect(created.invitedById).toBe(inviter.id);
+    expect(res.headers.getSetCookie().some((c) => c.startsWith("centient_invite=;") || /centient_invite=.*Max-Age=0/.test(c))).toBe(true);
+  });
+
+  it("never attaches an inviter to an account that already existed", async () => {
+    const { code } = await inviterCode();
+    const kp = Keypair.random();
+    const existing = await prisma.user.create({ data: { walletAddress: kp.publicKey() } });
+    const challenge = await issueSignInChallenge(kp.publicKey());
+    const body = { address: kp.publicKey(), nonce: challenge.nonce, signature: sign(kp, challenge.message), signerAddress: kp.publicKey() };
+    const res = await POST(makeReq(body, `centient_invite=${code}`));
+    expect(res.status).toBe(200);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: existing.id } })).invitedById).toBeNull();
+  });
+
+  it("signs in as usual with a bad invite cookie", async () => {
+    const { kp, res } = await signIn("centient_invite=NOTACODE!!");
+    expect(res.status).toBe(200);
+    expect((await prisma.user.findUniqueOrThrow({ where: { walletAddress: kp.publicKey() } })).invitedById).toBeNull();
   });
 });

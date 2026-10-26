@@ -1106,6 +1106,53 @@ describe("signOwnershipAndTransaction — one visit for sign-in and payout setup
     await vi.advanceTimersByTimeAsync(DROP_SESSION_WAIT_MS);
     await expect(attempt).rejects.toMatchObject({ code: "cancelled" });
   });
+
+  it("honours a cancel during the grace, and doesn't send the contributor back to Freighter after it", async () => {
+    vi.useFakeTimers();
+    const log = onPhone();
+    setWalletConnectProvider(
+      answeringProvider(log, {
+        stellar_signMessage: async () => ({ signature: sep53Sign(MESSAGE) }),
+        stellar_signXDR: () => new Promise<never>(() => {}),
+      }),
+    );
+
+    const { signedTransaction } = await signOwnershipAndTransaction(MESSAGE, "offered-xdr", ADDR);
+    const attempt = signedTransaction();
+    attempt.catch(() => {});
+    await vi.advanceTimersByTimeAsync(BATCHED_ANSWER_GRACE_MS - 1_000);
+    cancelWalletRequest();
+    await vi.advanceTimersByTimeAsync(DROP_SESSION_WAIT_MS);
+    await expect(attempt).rejects.toMatchObject({ code: "cancelled" });
+
+    await vi.advanceTimersByTimeAsync(BATCHED_ANSWER_GRACE_MS);
+    // The one hand-off at sign-in, and none after the cancel.
+    expect(log.filter((l) => l.startsWith("focus"))).toHaveLength(1);
+  });
+
+  it("doesn't send the contributor back to Freighter while a cancelled session is still being dropped", async () => {
+    vi.useFakeTimers();
+    const log = onPhone();
+    const provider = answeringProvider(log, {
+      stellar_signMessage: async () => ({ signature: sep53Sign(MESSAGE) }),
+      stellar_signXDR: () => new Promise<never>(() => {}),
+    });
+    // A relay that never confirms the drop, so tearing the session down takes
+    // the whole DROP_SESSION_WAIT_MS, longer than what is left of the grace.
+    provider.disconnect = vi.fn(() => new Promise<void>(() => {}));
+    setWalletConnectProvider(provider);
+
+    const { signedTransaction } = await signOwnershipAndTransaction(MESSAGE, "offered-xdr", ADDR);
+    const attempt = signedTransaction();
+    attempt.catch(() => {});
+    await vi.advanceTimersByTimeAsync(BATCHED_ANSWER_GRACE_MS - 1_000);
+    cancelWalletRequest();
+    await vi.advanceTimersByTimeAsync(DROP_SESSION_WAIT_MS);
+    await expect(attempt).rejects.toMatchObject({ code: "cancelled" });
+
+    // The one hand-off at sign-in, and none after the cancel.
+    expect(log.filter((l) => l.startsWith("focus"))).toHaveLength(1);
+  });
 });
 
 describe("formatNativeUrl", () => {

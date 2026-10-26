@@ -64,14 +64,27 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version-file: ".node-version"
           cache: "npm"
+
+      # Fails if setup-node is ever pointed somewhere other than .node-version,
+      # which Railway builds from too (#214).
+      - name: Node version
+        run: |
+          node --version
+          test "$(node --version)" = "v$(cat .node-version)"
 
       - name: Install dependencies
         run: npm ci
 
       - name: Prisma generate
         run: npx prisma generate
+
+      # `next build` only type-checks what it compiles, so errors in tests,
+      # scripts and services/cosigner/** would otherwise reach develop (#219).
+      # After `prisma generate`: the generated client supplies the model types.
+      - name: Typecheck
+        run: npm run typecheck
 
       - name: Run migrations
         run: npx prisma migrate deploy
@@ -146,8 +159,15 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version-file: ".node-version"
           cache: "npm"
+
+      # Fails if setup-node is ever pointed somewhere other than .node-version,
+      # which Railway builds from too (#214).
+      - name: Node version
+        run: |
+          node --version
+          test "$(node --version)" = "v$(cat .node-version)"
 
       - name: Install dependencies
         run: npm ci

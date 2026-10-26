@@ -276,7 +276,7 @@ sequenceDiagram
 
 ### Prerequisites
 
-- Node.js 22.12+
+- Node.js 22.23.4 (pinned in `.node-version`; CI and Railway both build from it)
 - pnpm (`npm i -g pnpm`)
 - Docker (for local PostgreSQL)
 - A funded Stellar **testnet** account for the platform hot wallet

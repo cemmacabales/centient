@@ -190,6 +190,11 @@ export async function signInWithWallet(
       nonce: challenge.nonce,
       signature: proof.signature,
       signerAddress: proof.address,
+      // Sent only off the SEP-53 default, so a Freighter request is unchanged.
+      ...(proof.scheme !== "sep53" && { scheme: proof.scheme }),
+      // Inside Lantern this page is a cross-site frame, where only a
+      // partitioned cookie survives (see setLabelerSessionCookie).
+      ...(proof.wallet === "lantern" && { embedded: true }),
     });
     if (!verifyRes.ok) {
       const code = await readError(verifyRes);

@@ -22,8 +22,16 @@
 // which `@stellar/freighter-api` is just as absent — both land on a path that
 // works instead of on "install the browser extension", which no phone can do.
 //
+// A third transport serves a different wallet: **Lantern** (wallet-lantern.ts),
+// an Android wallet that opens dApps inside itself and signs over
+// `postMessage`. It is chosen only when this page is running inside Lantern
+// (lantern.ts), and then it wins outright — the contributor is already in their
+// wallet, and neither Freighter path can reach anything from inside its frame.
+//
 // Callers (wallet-sign-in.ts, wallet-claim.ts, payout-setup.ts,
 // freighter-proof.ts) import from here and don't know which transport ran.
+import { isInLantern } from "./lantern";
+import * as lantern from "./wallet-lantern";
 import {
   isWalletConnectConfigured,
   type WalletConnectPairing,
@@ -61,8 +69,8 @@ export {
   type WalletConnectPairing,
 } from "./wallet-connect";
 
-/** Which Freighter a call will talk to. */
-export type WalletTransport = "extension" | "walletconnect";
+/** Which wallet a call will talk to. */
+export type WalletTransport = "extension" | "walletconnect" | "lantern";
 
 /**
  * Memoized for the life of the page — see {@link resolveTransport} for why that
@@ -90,6 +98,7 @@ let transportPromise: Promise<WalletTransport | null> | null = null;
 export async function resolveTransport(): Promise<WalletTransport | null> {
   // The promise, not the value, so concurrent callers share one probe.
   transportPromise ??= (async () => {
+    if (isInLantern()) return "lantern";
     if (await isExtensionAvailable()) return "extension";
     if (isWalletConnectConfigured()) return "walletconnect";
     return null;
@@ -149,17 +158,19 @@ function noFreighter(): WalletError {
  */
 export async function connect(options: { fresh?: boolean } = {}): Promise<StellarConnection> {
   const transport = await resolveTransport();
+  if (transport === "lantern") return lantern.connect();
   if (transport === "extension") return extensionConnect();
   if (transport === "walletconnect") return (await walletConnect()).connect(options);
   throw noFreighter();
 }
 
 /**
- * Stop waiting on the Freighter mobile app — for the pairing or a signature —
- * so the call in flight rejects with `cancelled`. A no-op on the extension
+ * Stop waiting on the Freighter mobile app or Lantern — for the pairing or a
+ * signature — so the call in flight rejects with `cancelled`. A no-op on the extension
  * path, whose prompt the contributor closes in the extension itself.
  */
 export async function cancelWalletRequest(): Promise<void> {
+  if ((await resolveTransport()) === "lantern") return lantern.cancelLanternRequest();
   if (!isWalletConnectConfigured()) return;
   (await walletConnect()).cancelWalletRequest();
 }
@@ -177,6 +188,7 @@ export async function signOwnership(
   expectedAddress: string,
 ): Promise<StellarSignedMessage> {
   const transport = await resolveTransport();
+  if (transport === "lantern") return lantern.signOwnership(message, expectedAddress);
   if (transport === "extension") return extensionSignOwnership(message, expectedAddress);
   if (transport === "walletconnect") {
     return (await walletConnect()).signOwnership(message, expectedAddress);
@@ -198,6 +210,7 @@ export async function signTransaction(
   expectedAddress: string,
 ): Promise<string> {
   const transport = await resolveTransport();
+  if (transport === "lantern") return lantern.signTransaction(xdr, expectedAddress);
   if (transport === "extension") return extensionSignTransaction(xdr, expectedAddress);
   if (transport === "walletconnect") {
     return (await walletConnect()).signTransaction(xdr, expectedAddress);

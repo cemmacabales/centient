@@ -3,6 +3,21 @@ import prisma from "@/lib/prisma";
 import { getAdminSession, requireRoleForRoute } from "@/lib/admin-auth";
 import { auditLog } from "@/lib/audit";
 
+/** #202: the crowd a campaign can ask for. Expert-only campaigns come later. */
+const CAMPAIGN_MIN_TIERS = [0, 1, 2] as const;
+
+/** Labelers whose open tier reaches each option: a held tier counts as the one below. */
+async function qualifyingLabelers(): Promise<Record<number, number>> {
+  const rows = await prisma.$queryRaw<{ open: number; n: number }[]>`
+    SELECT (u."tier" - CASE WHEN u."tierOnHold" AND u."tier" > 0 THEN 1 ELSE 0 END)::int AS open, COUNT(*)::int AS n
+    FROM "users" u
+    WHERE u."walletAddress" IS NOT NULL AND u."isBanned" = false
+    GROUP BY 1`;
+  return Object.fromEntries(
+    CAMPAIGN_MIN_TIERS.map((t) => [t, rows.filter((r) => r.open >= t).reduce((sum, r) => sum + r.n, 0)]),
+  );
+}
+
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -24,6 +39,7 @@ export async function GET(
       defaultResponseTarget: true,
       rewardUnits: true,
       csvFileName: true,
+      minTier: true,
       createdAt: true,
       _count: { select: { tasks: true } },
     },
@@ -38,6 +54,7 @@ export async function GET(
     rewardUnits: campaign.rewardUnits.toString(),
     taskCount: campaign._count.tasks,
     createdAt: campaign.createdAt.toISOString(),
+    qualifyingLabelers: await qualifyingLabelers(),
   });
 }
 
@@ -75,12 +92,13 @@ export async function PATCH(
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
-  const { name, defaultResponseTarget, rewardUnits: rewardUnitsRaw, paused } = body;
+  const { name, defaultResponseTarget, rewardUnits: rewardUnitsRaw, paused, minTier } = body;
   const updateData: {
     name?: string;
     defaultResponseTarget?: number;
     rewardUnits?: bigint;
     pausedAt?: Date | null;
+    minTier?: number;
   } = {};
 
   if (name !== undefined) {
@@ -120,8 +138,19 @@ export async function PATCH(
     }
   }
 
+  if (minTier !== undefined) {
+    if (!(CAMPAIGN_MIN_TIERS as readonly unknown[]).includes(minTier)) {
+      return NextResponse.json({ error: "invalid_min_tier" }, { status: 400 });
+    }
+    if (minTier !== campaign.minTier) updateData.minTier = minTier;
+  }
+
   const hasAnyField =
-    name !== undefined || defaultResponseTarget !== undefined || rewardUnitsRaw !== undefined || paused !== undefined;
+    name !== undefined ||
+    defaultResponseTarget !== undefined ||
+    rewardUnitsRaw !== undefined ||
+    paused !== undefined ||
+    minTier !== undefined;
   if (!hasAnyField) {
     return NextResponse.json({ error: "no_fields_to_update" }, { status: 400 });
   }
@@ -148,12 +177,14 @@ export async function PATCH(
         defaultResponseTarget: campaign.defaultResponseTarget,
         rewardUnits: campaign.rewardUnits.toString(),
         pausedAt: campaign.pausedAt?.toISOString() ?? null,
+        minTier: campaign.minTier,
       },
       after: {
         name: updatedCampaign.name,
         defaultResponseTarget: updatedCampaign.defaultResponseTarget,
         rewardUnits: updatedCampaign.rewardUnits.toString(),
         pausedAt: updatedCampaign.pausedAt?.toISOString() ?? null,
+        minTier: updatedCampaign.minTier,
       }
     },
   });

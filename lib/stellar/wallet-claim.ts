@@ -102,7 +102,11 @@ export async function claimWallet(deps: WalletClaimDeps = defaultDeps): Promise<
     const bindRes = await deps.fetch("/api/me/wallet", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ stellarAddress: address, signature: proof.signature }),
+      body: JSON.stringify({
+        stellarAddress: address,
+        signature: proof.signature,
+        ...(proof.scheme !== "sep53" && { scheme: proof.scheme }),
+      }),
     });
     if (!bindRes.ok) return { ok: false, reason: failureFromBind(bindRes.status, await readError(bindRes)) };
     return { ok: true, address };

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=22.12.0"
+    "node": "22.23.4"
   },
   "scripts": {
     "setup": "node scripts/setup-env.mjs && docker compose up -d --wait db && pnpm exec prisma generate && pnpm db:deploy && pnpm db:seed",
@@ -14,6 +14,7 @@
     "worker": "tsx lib/upload-worker.ts",
     "reconciler": "tsx lib/reconciler.ts",
     "reconcile:report": "tsx scripts/reconcile-report.ts",
+    "xp:repair": "tsx scripts/xp-repair.ts",
     "payout": "tsx lib/payout-worker.ts",
     "cosign": "tsx services/cosigner/server.ts",
     "stellar:multisig:setup": "tsx scripts/stellar-multisig-setup.ts",
@@ -41,18 +42,18 @@
     "walletconnect:verify": "tsx scripts/walletconnect-verify.ts"
   },
   "dependencies": {
-    "@prisma/adapter-pg": "^7.0.0",
-    "@prisma/client": "^7.8.0",
-    "@sentry/nextjs": "^10.56.0",
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "@sentry/nextjs": "^10.76.2",
     "@stellar/freighter-api": "^6.0.1",
-    "@stellar/stellar-sdk": "^16.0.1",
+    "@stellar/stellar-sdk": "^16.4.1",
     "@walletconnect/universal-provider": "^2.25.0",
     "async-mutex": "^0.5.0",
     "bcryptjs": "^3.0.3",
     "ioredis": "^5.11.1",
     "jose": "^6.2.3",
-    "next": "^16.2.0",
-    "posthog-js": "^1.379.2",
+    "next": "^16.4.3",
+    "posthog-js": "^1.438.21",
     "posthog-node": "^5.52.4",
     "qrcode": "^1.5.4",
     "react": "^19.2.0",
@@ -70,13 +71,14 @@
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@vitest/coverage-v8": "^4.1.12",
     "dotenv": "^16.6.1",
     "jsdom": "^29.1.1",
-    "prisma": "^7.0.0",
+    "prisma": "^7.10.1",
+    "railway": "3.13.1",
     "tailwindcss": "^4.0.0",
-    "tsx": "^4.7.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.4.0",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.12"
   }
 }

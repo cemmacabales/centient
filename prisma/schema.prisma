@@ -35,6 +35,29 @@ model User {
   ageRange             String?
   onboardingCompleted  Boolean  @default(false)
   lastSubmissionAt     DateTime?
+  // XP loop (#201, ADR-0010). XP is never money. lastGoalDay is a Manila day key.
+  xp                   Int      @default(0)
+  streakDays           Int      @default(0)
+  bestStreak           Int      @default(0)
+  restDays             Int      @default(0)
+  lastGoalDay          String?
+  // Tiers (#202, ADR-0011): 0 Starter … 3 Expert. Never lowered; a missed floor
+  // holds the tier instead, and passes in a row since then reopen it.
+  tier                 Int      @default(0)
+  tierOnHold           Boolean  @default(false)
+  holdChecksPassed     Int      @default(0)
+  // Weekly board (#203, ADR-0012). Names are opt-in, stored lowercase, unique.
+  // An admin hide retires the name, clears it and sets displayNameHiddenAt,
+  // which asks the labeler to choose another.
+  displayName          String?  @unique
+  showOnBoard          Boolean  @default(false)
+  displayNameHiddenAt  DateTime?
+  // Invites (#203, ADR-0012). inviteCode is made on first read; invitedById is
+  // set only when the account is created through an invite link.
+  inviteCode           String?  @unique
+  invitedById          String?
+  invitedBy            User?    @relation("Invites", fields: [invitedById], references: [id], onDelete: SetNull)
+  invitees             User[]   @relation("Invites")
 
   submissions   Submission[]
   disputes      Dispute[]
@@ -44,6 +67,13 @@ model User {
   flaggedWithdrawals FlaggedWithdrawal[]
   sponsoredTrustlines SponsoredTrustline[]
   legacyEarningsBackfill LegacyEarningsBackfill?
+  xpEvents      XpEvent[]
+  dailyProgress DailyProgress[]
+  stamps        UserStamp[]
+  eventRedemptions EventRedemption[]
+  weeklyResults WeeklyResult[]
+  inviteRewardAsInvitee InviteReward? @relation("InviteRewardInvitee")
+  inviteRewardsAsInviter InviteReward[] @relation("InviteRewardInviter")
 
   @@map("users")
 }
@@ -158,6 +188,7 @@ model AdminUser {
 
   campaigns Campaign[]
   auditLogs AdminAuditLog[]
+  eventCodes EventCode[]
   uploadJobs UploadJob[]
 
   @@map("admin_users")
@@ -176,6 +207,8 @@ model Campaign {
   rewardUnits             BigInt
   csvFileName           String?
   pausedAt              DateTime?
+  // #202: the lowest tier served this campaign's tasks. 0 Everyone, 1 Skilled and up, 2 Trusted and up.
+  minTier               Int      @default(0)
   createdAt             DateTime @default(now())
 
   adminUser AdminUser @relation(fields: [adminUserId], references: [id])
@@ -206,6 +239,8 @@ model Task {
   agreementScore Float?
   resolvedAt     DateTime?
   disabled       Boolean   @default(false)
+  // 1–9, from the 9 Oct pool pricing (#201). Sets the answer's XP band; null pays the lowest.
+  difficulty     Int?
 
   submissions Submission[]
   campaign    Campaign?    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
@@ -236,6 +271,10 @@ model Submission {
   payoutError     String?
   lastRetriedAt   DateTime?
   createdAt       DateTime  @default(now())
+  // #202: the labeler's tier when they answered, for exports; null before #202.
+  labelerTier     Int?
+  // #202: a gold check answered during retest. Kept out of the tier floors.
+  retest          Boolean   @default(false)
 
   user User @relation(fields: [userId], references: [id])
   task Task @relation(fields: [taskId], references: [id])
@@ -292,7 +331,7 @@ model WalletNonce {
 model AdminAuditLog {
   id           String   @id @default(uuid())
   adminUserId  String
-  action       String   // "campaign.create", "campaign.update", "campaign.delete", "customer.create", "customer.delete", "tasks.upload", "tasks.upload.queued", "tasks.upload.completed", "tasks.upload.failed", "tasks.upload.retry", "export.download"
+  action       String   // "eventCode.create", "displayName.hide", "campaign.create", "campaign.update", "campaign.delete", "customer.create", "customer.delete", "tasks.upload", "tasks.upload.queued", "tasks.upload.completed", "tasks.upload.failed", "tasks.upload.retry", "export.download"
   targetType   String   // "campaign", "adminUser", "submission"
   targetId     String?  // nullable for bulk actions like "tasks.upload"
   metadata     Json?    // shape depends on action; capture diff for updates, count for bulk
@@ -564,4 +603,139 @@ model QaFixtureRun {
 
   @@index([seededAt])
   @@map("qa_fixture_runs")
+}
+
+enum XpKind {
+  ANSWER
+  QUALITY_CHECK
+  DAILY_GOAL
+  STREAK_MILESTONE
+  CROWD_MATCH
+  EVENT_CODE
+  QUEST
+  INVITE
+}
+
+// XP ledger (#201, ADR-0010). Append-only, like BalanceLedger: never updated or
+// deleted. dedupeKey makes every award idempotent: answer:<submissionId>,
+// check:<submissionId>, goal:<userId>:<dayKey>, streak:<userId>:<dayKey>.
+model XpEvent {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind         XpKind
+  amount       Int
+  submissionId String?  // no FK — same reasoning as UserBalanceLedger
+  dedupeKey    String   @unique
+  dayKey       String   // Manila day
+  weekKey      String   // Monday of that Manila week
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([weekKey, userId])
+  @@map("xp_events")
+}
+
+// One row per labeler per Manila day they did anything the loop counts.
+// `protected`: /api/task had nothing open for them that day, so it can't break
+// their streak. `restUsed`: a rest day covered it.
+model DailyProgress {
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dayKey    String
+  counted   Int     @default(0)
+  goalMet   Boolean @default(false)
+  protected Boolean @default(false)
+  restUsed  Boolean @default(false)
+
+  @@id([userId, dayKey])
+  @@map("daily_progress")
+}
+
+// #202: a stamp is earned once. Definitions live in lib/gamification/stamps.ts.
+model UserStamp {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stampId   String
+  awardedAt DateTime @default(now())
+
+  @@id([userId, stampId])
+  @@map("user_stamps")
+}
+
+// Event codes (#203, ADR-0012). Each code gives its own stamp, `event:<id>`, and
+// 25 XP, once per account, on the Manila days startsDay..endsDay inclusive.
+// `code` is stored uppercase and matched case-insensitively.
+model EventCode {
+  id               String   @id @default(uuid())
+  code             String   @unique
+  stampTitle       String
+  stampIcon        String
+  startsDay        String
+  endsDay          String
+  createdByAdminId String
+  createdBy        AdminUser @relation(fields: [createdByAdminId], references: [id])
+  createdAt        DateTime @default(now())
+
+  redemptions EventRedemption[]
+
+  @@map("event_codes")
+}
+
+// One per account per code: the key is what makes a second redemption fail.
+model EventRedemption {
+  eventCodeId String
+  eventCode   EventCode @relation(fields: [eventCodeId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@id([eventCodeId, userId])
+  @@index([userId])
+  @@map("event_redemptions")
+}
+
+// A display name an admin hid. It can't be chosen again, by anyone.
+model RetiredDisplayName {
+  name      String   @id
+  retiredAt DateTime @default(now())
+
+  @@map("retired_display_names")
+}
+
+// A closed week of the board: its row is written once, by whichever read or
+// cron gets there first, in the same transaction as its results and stamps.
+model BoardWeek {
+  weekKey  String   @id
+  closedAt DateTime @default(now())
+
+  @@map("board_weeks")
+}
+
+// Where each placed labeler finished a closed week, for "Best: #6".
+model WeeklyResult {
+  weekKey String
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rank    Int
+  xp      Int
+
+  @@id([weekKey, userId])
+  @@index([userId])
+  @@map("weekly_results")
+}
+
+// An invite that paid off (#203): written once, when the invitee first reaches
+// Skilled. The key is the invitee, so it pays once. inviterRewarded is false
+// past the inviter's cap of 10; the invitee is rewarded either way.
+model InviteReward {
+  inviteeId       String   @id
+  invitee         User     @relation("InviteRewardInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+  inviterId       String
+  inviter         User     @relation("InviteRewardInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+  inviterRewarded Boolean
+  createdAt       DateTime @default(now())
+
+  @@index([inviterId])
+  @@map("invite_rewards")
 }

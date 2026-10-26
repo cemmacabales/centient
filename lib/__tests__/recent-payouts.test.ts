@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { formatPayoutAmount, toRecentPayouts, type HorizonPaymentRecord } from "../recent-payouts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  fetchRecentPayouts,
+  formatPayoutAmount,
+  resetRecentPayoutsCache,
+  toRecentPayouts,
+  type HorizonPaymentRecord,
+} from "../recent-payouts";
 
 const ACCOUNT = "GC5UOTESTPAYOUTACCOUNTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAR4A6";
 const ISSUER = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
@@ -76,5 +82,54 @@ describe("formatPayoutAmount", () => {
   it("keeps the digits of an amount too small to show in cents", () => {
     expect(formatPayoutAmount("0.0040000")).toBe("0.004");
     expect(formatPayoutAmount("0.0000001")).toBe("0.0000001");
+  });
+});
+
+describe("fetchRecentPayouts", () => {
+  afterEach(() => {
+    resetRecentPayoutsCache();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  /** A Horizon that answers only when `release` is called, counting reads. */
+  function slowHorizon() {
+    vi.stubEnv("STELLAR_PLATFORM_ACCOUNT", ACCOUNT);
+    vi.stubEnv("STELLAR_USDC_ISSUER", ISSUER);
+    let release!: () => void;
+    const answered = new Promise<void>((resolve) => (release = resolve));
+    const fetch = vi.fn(async () => {
+      await answered;
+      return new Response(JSON.stringify({ _embedded: { records: [payment()] } }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    return { fetch, release };
+  }
+
+  it("shares one Horizon read between visitors who arrive while the cache is cold", async () => {
+    const { fetch, release } = slowHorizon();
+
+    const visitors = Promise.all([fetchRecentPayouts(0), fetchRecentPayouts(1), fetchRecentPayouts(2)]);
+    release();
+    const results = await visitors;
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(results[0].payouts).toHaveLength(1);
+    expect(results[1]).toBe(results[0]);
+    expect(results[2]).toBe(results[0]);
+  });
+
+  it("reads again once a failed shared read has settled", async () => {
+    vi.stubEnv("STELLAR_PLATFORM_ACCOUNT", ACCOUNT);
+    vi.stubEnv("STELLAR_USDC_ISSUER", ISSUER);
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("busy", { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ _embedded: { records: [] } }), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    await expect(Promise.all([fetchRecentPayouts(0), fetchRecentPayouts(1)])).rejects.toThrow("horizon_503");
+    await expect(fetchRecentPayouts(2)).resolves.toMatchObject({ payouts: [] });
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });

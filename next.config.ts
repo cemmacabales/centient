@@ -1,6 +1,7 @@
 import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
 import { resolveDeployedSha } from "./lib/build-info";
+import { parseLanternOrigins } from "./lib/stellar/lantern";
 
 // PostHog is reached through the same-origin `/ingest` rewrite below, so the
 // CSP needs no PostHog hosts; `worker-src blob:` is for session replay's worker.
@@ -20,6 +21,11 @@ const walletConnect = [
   "https://pulse.walletconnect.org",
 ];
 
+// Lantern (lib/stellar/lantern.ts) runs dApps in a frame inside its Android app and
+// its Chrome extension, so those origins have to be allowed to frame this one. Empty unless
+// NEXT_PUBLIC_LANTERN_ORIGINS is set, which leaves the app framing only itself.
+const lanternFrameAncestors = parseLanternOrigins(process.env.NEXT_PUBLIC_LANTERN_ORIGINS);
+
 const csp = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.sentry.io",
@@ -29,7 +35,7 @@ const csp = [
   `connect-src 'self' https://*.sentry.io ${walletConnect.join(" ")}`,
   "worker-src 'self' blob:",
   `frame-src 'self' ${walletConnectVerify.join(" ")} ${youtubeEmbed}`,
-  "frame-ancestors 'self'",
+  ["frame-ancestors 'self'", ...lanternFrameAncestors].join(" "),
   "base-uri 'self'",
   "form-action 'self'",
 ].join("; ");
@@ -46,14 +52,16 @@ const config: NextConfig = {
     "*.ngrok-free.dev",
     "*.ngrok-free.app",
   ],
-  /** Security headers on every route; the CSP only lets the app frame itself. */
+  /** Security headers on every route; the CSP only lets the app (and Lantern) frame it. */
   async headers() {
     return [
       {
         source: "/(.*)",
         headers: [
           { key: "Content-Security-Policy", value: csp },
-          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          // X-Frame-Options can't name another origin. With Lantern on, the CSP's
+          // frame-ancestors above is the one rule, as every current browser reads it.
+          ...(lanternFrameAncestors.length === 0 ? [{ key: "X-Frame-Options", value: "SAMEORIGIN" }] : []),
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), interest-cohort=()" },

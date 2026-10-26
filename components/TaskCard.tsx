@@ -4,6 +4,8 @@ import { useRef, useState, type KeyboardEvent } from "react";
 import SubmitButton from "./SubmitButton";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 import { validateReason } from "@/lib/validators";
+import { GAMIFICATION_ON } from "@/lib/gamification/flag";
+import { TIERS } from "@/lib/gamification/tiers";
 
 type Side = "A" | "B";
 
@@ -23,6 +25,10 @@ interface TaskCardProps {
   error?: string | null;
   reward?: string;
   tokenSymbol?: string;
+  /** #201: what the answer earns in XP if accepted; null when it earns none. */
+  xp?: number | null;
+  /** #202: the tier whose band holds the task; above Starter it shows a chip. */
+  tier?: number;
 }
 
 const SIDES: readonly Side[] = ["A", "B"];
@@ -47,7 +53,7 @@ export function choiceForKey(key: string, focused: Side): Side | null {
 }
 
 /** One ranking task: holds the chosen response and the reason, and submits them. */
-export default function TaskCard({ task, onSubmit, loading, error = null, reward, tokenSymbol }: TaskCardProps) {
+export default function TaskCard({ task, onSubmit, loading, error = null, reward, tokenSymbol, xp, tier }: TaskCardProps) {
   const [choice, setChoice] = useState<Side | null>(null);
   const [reason, setReason] = useState("");
 
@@ -66,6 +72,8 @@ export default function TaskCard({ task, onSubmit, loading, error = null, reward
       error={error}
       reward={reward}
       tokenSymbol={tokenSymbol}
+      xp={xp}
+      tier={tier}
       onChoose={setChoice}
       onReasonChange={setReason}
       onSubmit={handleSubmit}
@@ -81,6 +89,8 @@ interface TaskCardViewProps {
   error: string | null;
   reward?: string;
   tokenSymbol?: string;
+  xp?: number | null;
+  tier?: number;
   onChoose: (side: Side) => void;
   onReasonChange: (reason: string) => void;
   onSubmit: () => void;
@@ -95,6 +105,8 @@ export function TaskCardView({
   error,
   reward,
   tokenSymbol,
+  xp,
+  tier,
   onChoose,
   onReasonChange,
   onSubmit,
@@ -150,17 +162,34 @@ export function TaskCardView({
             monetization_on
           </span>
           <span className="font-headline text-sm font-bold text-secondary">{displayReward} {displaySymbol}</span>
+          {GAMIFICATION_ON && xp != null && (
+            <>
+              <span aria-hidden="true" className="h-3.5 w-px bg-outline-variant" />
+              <span className="font-headline text-sm font-extrabold text-tertiary">+{xp} XP</span>
+            </>
+          )}
         </div>
       </div>
 
       <section className="rounded-2xl bg-surface-container-lowest p-6 shadow-[0_8px_24px_rgba(25,28,30,0.06)]">
-        <div className="mb-3 flex items-center gap-2">
-          <span className="material-symbols-outlined text-[20px] text-primary" aria-hidden="true">
-            chat
-          </span>
-          <span className="text-xs font-label font-bold uppercase tracking-[0.2em] text-outline">
-            The Prompt
-          </span>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[20px] text-primary" aria-hidden="true">
+              chat
+            </span>
+            <span className="text-xs font-label font-bold uppercase tracking-[0.2em] text-outline">
+              The Prompt
+            </span>
+          </div>
+          {/* #202 (board 04): read from difficulty alone, so a quality check looks like any task. */}
+          {GAMIFICATION_ON && tier !== undefined && tier > 0 && TIERS[tier] && (
+            <span className="flex items-center gap-1 rounded-full bg-tertiary-container px-2 py-[3px] font-label text-[11px] font-bold text-on-tertiary-fixed">
+              <span className="material-symbols-outlined text-[14px]" aria-hidden="true">
+                lock_open
+              </span>
+              {TIERS[tier].name} task
+            </span>
+          )}
         </div>
         <p className="break-words font-body text-base leading-relaxed text-on-surface">{task.prompt}</p>
       </section>

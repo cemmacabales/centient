@@ -15,6 +15,10 @@ import { describe, expect, it } from "vitest";
 // extension, which signs behind `@stellar/freighter-api`, and the mobile app,
 // which signs on the phone and returns the result over WalletConnect. Neither
 // hands a key to this codebase, and the checks below hold each to that.
+//
+// Lantern, the Android wallet that opens Centient inside itself, is held to the
+// same rule: it signs in its own app and answers the framed page over
+// `postMessage` with a signature, never a key.
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -27,10 +31,13 @@ const CLIENT = [
   "components/PayoutSetup.tsx",
   "components/AccountSheet.tsx",
   "components/FreighterPairing.tsx",
+  "components/LanternButton.tsx",
   "lib/stellar/wallet.ts",
   "lib/stellar/wallet-errors.ts",
   "lib/stellar/wallet-extension.ts",
   "lib/stellar/wallet-connect.ts",
+  "lib/stellar/lantern.ts",
+  "lib/stellar/wallet-lantern.ts",
   "lib/stellar/wallet-sign-in.ts",
   "lib/stellar/wallet-claim.ts",
   "lib/stellar/payout-setup.ts",
@@ -82,7 +89,14 @@ describe("contributor key custody on the first-connect path (#30)", () => {
       expect(walletConnect).toContain(method);
     }
 
-    // The facade reaches a wallet only through those two, and signs nothing itself.
+    // Lantern transport: signing is delegated to Lantern over postMessage, by
+    // request type, so again only a message or an envelope leaves this codebase.
+    const lantern = source("lib/stellar/wallet-lantern.ts");
+    for (const request of ["lantern:signMessage", "lantern:signXdr"]) {
+      expect(lantern).toContain(request);
+    }
+
+    // The facade reaches a wallet only through those three, and signs nothing itself.
     const wallet = source("lib/stellar/wallet.ts");
     expect(wallet).toMatch(/from "\.\/wallet-extension"/);
     expect(wallet).toMatch(/import\("\.\/wallet-connect"\)/);
@@ -95,8 +109,15 @@ describe("contributor key custody on the first-connect path (#30)", () => {
 
   it("the server takes only public addresses, signatures and signed envelopes from a contributor", () => {
     // The request fields each onboarding route reads.
-    expect(source("app/api/auth/wallet/verify/route.ts")).toMatch(/\{ address, nonce, signature, signerAddress \}/);
-    expect(source("app/api/me/wallet/route.ts")).toMatch(/body: \{ stellarAddress\?: unknown; signature\?: unknown \}/);
+    // `scheme` names how the wallet framed what it signed, and `embedded` asks for
+    // a cookie that works inside Lantern's frame: neither is anything secret.
+    expect(source("app/api/auth/wallet/verify/route.ts")).toMatch(
+      /\{ address, nonce, signature, signerAddress, embedded \}/,
+    );
+    expect(source("app/api/auth/wallet/verify/route.ts")).toMatch(/parseSignatureScheme\(\(body as Record<string, unknown>\)\.scheme\)/);
+    expect(source("app/api/me/wallet/route.ts")).toMatch(
+      /body: \{ stellarAddress\?: unknown; signature\?: unknown; scheme\?: unknown \}/,
+    );
     // `offer` (#170) is the tag the server itself issued with an envelope at sign-in:
     // public, like the envelope it vouches for.
     expect(source("app/api/me/wallet/sponsor/route.ts")).toMatch(

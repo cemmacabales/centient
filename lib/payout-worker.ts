@@ -6,7 +6,7 @@ import { maybeSendCapAlert } from "./payout-cap";
 import { StellarPaymentError, describeStellarError } from "./stellar/client";
 import { checkAndAlert } from "./stellar/balance";
 import { computeIAA } from "./quality";
-import { SETTLED_STATUSES } from "./constants";
+import { RESOLUTION_MIN_ANSWERS, SETTLED_STATUSES } from "./constants";
 import { refundReversal } from "./user-balance";
 import {
   abandonAcceptedPayment,
@@ -19,6 +19,8 @@ import { refundCampaignBalance } from "./payout-refund";
 import { confirmAttempt, settleOpenAttempt } from "./payout-attempts";
 import { CoSignerCapError, CoSignerUnavailableError } from "./stellar/cosigner-errors";
 import { COSIGNER_RETRY_AFTER_MS, raiseCoSignerDeferralAlert } from "./payout-deferral";
+import { recordCrowd } from "./gamification/crowd";
+import { updateStanding } from "./gamification/standing";
 
 const STALE_PROCESSING_MS = 60_000;
 // Refresh the in-flight job's heartbeat well within STALE_PROCESSING_MS so a slow
@@ -342,6 +344,31 @@ async function processWithdrawalJob(
 }
 
 /**
+ * Write a task's majority and agreement once it has `resolveAt` settled answers.
+ * Conditional, so two workers settling the same task resolve it once (#202).
+ * Returns whether this call resolved it.
+ */
+async function resolveTask(taskId: string, resolveAt: number): Promise<boolean> {
+  const paidCount = await prisma.submission.count({
+    where: {
+      taskId,
+      isGoldCheck: false,
+      // Settled answers only: an in-flight one may still be refunded, and a
+      // resolved task is never recomputed (#37).
+      payoutStatus: { in: [...SETTLED_STATUSES] },
+    },
+  });
+  if (paidCount < resolveAt) return false;
+  const iaa = await computeIAA(taskId);
+  if (!iaa) return false;
+  const { count } = await prisma.task.updateMany({
+    where: { id: taskId, resolvedAt: null },
+    data: { majorityAnswer: iaa.majorityAnswer, agreementScore: iaa.agreementScore, resolvedAt: new Date() },
+  });
+  return count === 1;
+}
+
+/**
  * Settle one submission reward: pay the linked wallet, record the broadcast
  * tuple, then credit the submission and user bookkeeping. The tuple is persisted
  * before the bookkeeping so a bookkeeping failure cannot unwind a paid reward.
@@ -543,27 +570,23 @@ async function processSubmissionPayout(
     maybeSendCapAlert().catch(() => {});
 
     const task = submission.task;
-    if (!task.isGold && task.responseTarget != null && !task.resolvedAt) {
-      const paidCount = await prisma.submission.count({
-        where: {
-          taskId: submission.taskId,
-          isGoldCheck: false,
-          // Settled answers only: an in-flight one may still be refunded, and a
-          // resolved task is never recomputed (#37).
-          payoutStatus: { in: [...SETTLED_STATUSES] },
-        },
-      });
-      if (paidCount >= task.responseTarget) {
-        const iaa = await computeIAA(submission.taskId);
-        if (iaa) {
-          await prisma.task.update({
-            where: { id: submission.taskId },
-            data: {
-              majorityAnswer: iaa.majorityAnswer,
-              agreementScore: iaa.agreementScore,
-              resolvedAt: new Date(),
-            },
-          });
+    let resolvedNow = false;
+    if (!task.isGold && !task.resolvedAt) {
+      if (task.responseTarget != null) {
+        // A task with its own target resolves on the rail, as it always has.
+        resolvedNow = await resolveTask(submission.taskId, task.responseTarget);
+      } else {
+        // #202: any other task resolves at its campaign's target or
+        // RESOLUTION_MIN_ANSWERS, beside the rail. It writes the majority only
+        // and supply stays uncapped, so a failure here retries on the task's
+        // next payout instead of quarantining one already paid.
+        try {
+          resolvedNow = await resolveTask(
+            submission.taskId,
+            task.campaign?.defaultResponseTarget ?? RESOLUTION_MIN_ANSWERS,
+          );
+        } catch (err) {
+          Sentry.captureException(err, { extra: { context: "payout-resolve", submissionId } });
         }
       }
     }
@@ -572,6 +595,22 @@ async function processSubmissionPayout(
       where: { id: jobId },
       data: { status: "done", completedAt: new Date(), workerHeartbeatAt: new Date() },
     });
+
+    // #202 (ADR-0011): crowd XP, tiers and stamps sit beside the rail, like the
+    // submit route's XP. Best effort, and after the job is `done`, so nothing
+    // here can hold or quarantine a payout.
+    if (!task.isGold) {
+      try {
+        await recordCrowd({ taskId: submission.taskId, submissionId, resolvedNow });
+      } catch (err) {
+        Sentry.captureException(err, { extra: { context: "payout-crowd-xp", submissionId } });
+      }
+    }
+    try {
+      await updateStanding(submission.userId, "payout");
+    } catch (err) {
+      Sentry.captureException(err, { extra: { context: "payout-standing", submissionId } });
+    }
 
     console.log(`[payout-worker] submission job ${jobId} completed: submission ${submissionId} paid ${txHash}`);
   } catch (err) {

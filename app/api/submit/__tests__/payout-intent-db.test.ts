@@ -8,6 +8,10 @@
 // worker broadcasts — so a rejection that leaves any of these behind would be
 // paid. The debit and credit run for real here; only the rate limit
 // and the repetition check are stubbed, to trigger them deterministically.
+//
+// #201 — the same rejections earn no XP: no `XpEvent`, no `DailyProgress`, no
+// change to `User.xp`. XP is written after the accepted answer commits, beside
+// the payout rail, so its failure never touches the answer (ADR-0010).
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
@@ -102,6 +106,16 @@ async function payoutIntent(userId: string, campaignId: string) {
   };
 }
 
+/** Every XP store, as totals that a rejection must leave unchanged (#201). */
+async function xpState(userId: string) {
+  const [events, days, user] = await Promise.all([
+    prisma.xpEvent.findMany({ where: { userId }, select: { kind: true, amount: true, submissionId: true } }),
+    prisma.dailyProgress.findMany({ where: { userId } }),
+    prisma.user.findUnique({ where: { id: userId }, select: { xp: true, streakDays: true, lastGoalDay: true } }),
+  ]);
+  return { events, days, user };
+}
+
 /**
  * Submit, then assert the rejection left no payout intent: no store moved, and
  * any `Submission` the request wrote reads as skipped with no amount.
@@ -111,13 +125,16 @@ async function expectNoPayoutIntent(
   taskId: string,
   campaignId: string,
   overrides: Record<string, unknown> = {},
+  { earnsXp = false }: { earnsXp?: boolean } = {},
 ) {
   const before = await payoutIntent(userId, campaignId);
+  const xpBefore = await xpState(userId);
   const startedAt = new Date();
   const res = await submit(userId, taskId, overrides);
   const after = await payoutIntent(userId, campaignId);
 
   expect(after).toEqual(before);
+  if (!earnsXp) expect(await xpState(userId)).toEqual(xpBefore);
   const written = await prisma.submission.findMany({
     where: { userId, createdAt: { gte: startedAt } },
     select: { payoutStatus: true, payoutAmountUnits: true },
@@ -173,6 +190,59 @@ describe("POST /api/submit — the accepted path creates payout intent", () => {
     expect(jobs[0]).toMatchObject({ type: "SUBMISSION_PAYOUT", status: "queued", txHash: null });
   });
 
+  it("awards one ANSWER event by the task's difficulty, after the payout commits (#201)", async () => {
+    const user = await createUser();
+    const { task } = await fundedCampaignTask();
+    await prisma.task.update({ where: { id: task.id }, data: { difficulty: 8 } });
+
+    const res = await submit(user.id, task.id);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe("pending");
+    expect(body.progress).toMatchObject({
+      lines: [{ kind: "ANSWER", amount: 20 }],
+      xpGained: 20,
+      xpTotal: 20,
+      today: { counted: 1, goal: 5, goalMet: false, goalJustMet: false },
+    });
+
+    const { events, user: after } = await xpState(user.id);
+    expect(events).toEqual([{ kind: "ANSWER", amount: 20, submissionId: body.submissionId }]);
+    expect(after?.xp).toBe(20);
+  });
+
+  it("still accepts and queues the payout when the XP write fails (#201, ADR-0010)", async () => {
+    await prisma.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION test_refuse_xp_event() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'forced xp_events insert failure'; END;
+      $$ LANGUAGE plpgsql`);
+    await prisma.$executeRawUnsafe(`
+      CREATE TRIGGER test_refuse_xp_event BEFORE INSERT ON "xp_events"
+      FOR EACH ROW EXECUTE FUNCTION test_refuse_xp_event()`);
+    vi.mocked(Sentry.captureException).mockReset();
+    try {
+      const user = await createUser();
+      const { task } = await fundedCampaignTask();
+
+      const res = await submit(user.id, task.id);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ status: "pending", submissionId: expect.any(String) });
+
+      const { sub, jobs } = await acceptedIntent(user.id, task.id);
+      expect(sub.payoutStatus).toBe("pending");
+      expect(jobs).toHaveLength(1);
+      expect(await xpState(user.id)).toMatchObject({ events: [], days: [], user: { xp: 0 } });
+      expect(vi.mocked(Sentry.captureException)).toHaveBeenCalledWith(
+        expect.any(Error),
+        expect.objectContaining({ extra: expect.objectContaining({ context: "submit-xp" }) }),
+      );
+    } finally {
+      await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_refuse_xp_event ON "xp_events"`);
+      await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS test_refuse_xp_event()`);
+    }
+  });
+
   it("queues a platform-funded payout for a campaign-less task, with no debit", async () => {
     const user = await createUser();
     const { campaign } = await fundedCampaignTask();
@@ -215,6 +285,7 @@ describe("POST /api/submit — the accepted path creates payout intent", () => {
 
       expect(await payoutIntent(user.id, campaign.id)).toEqual(before);
       expect(await prisma.submission.count({ where: { userId: user.id, taskId: task.id } })).toBe(0);
+      expect(await prisma.xpEvent.count({ where: { userId: user.id } })).toBe(0);
     } finally {
       error.mockRestore();
       await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_refuse_payout_job ON "payout_jobs"`);
@@ -238,10 +309,11 @@ describe("POST /api/submit — a repeated request converges (#38)", () => {
     expect(await prisma.submission.count({ where: { userId: user.id, taskId: task.id } })).toBe(1);
     expect(await prisma.payoutJob.count()).toBe(1);
     expect(await prisma.balanceLedger.count({ where: { campaignId: campaign.id, type: "DEBIT_REWARD" } })).toBe(1);
+    expect(await prisma.xpEvent.count({ where: { userId: user.id, kind: "ANSWER" } })).toBe(1);
   });
 });
 
-describe("POST /api/submit — every rejected path creates no payout intent", () => {
+describe("POST /api/submit — every rejected path creates no payout intent and earns no XP", () => {
   it("spam reason", async () => {
     const user = await createUser();
     const { campaign, task } = await fundedCampaignTask();
@@ -449,13 +521,22 @@ describe("POST /api/submit — every rejected path creates no payout intent", ()
     const user = await createUser();
     const { campaign } = await fundedCampaignTask();
     const gold = await createGoldTask("A");
-    const res = await expectNoPayoutIntent(user.id, gold.id, campaign.id);
+    const res = await expectNoPayoutIntent(user.id, gold.id, campaign.id, {}, { earnsXp: true });
     expect(res.status).toBe(200);
-    expect(await errorOf(res)).toBe("quality_check_passed");
+    const body = await res.json();
+    expect(body.reason).toBe("quality_check_passed");
     const row = await prisma.submission.findUniqueOrThrow({
       where: { userId_taskId: { userId: user.id, taskId: gold.id } },
     });
     expect(row.goldPassed).toBe(true);
+    // #201: unpaid, but it earns +5 XP and counts toward the daily goal.
+    expect(body.progress).toMatchObject({
+      lines: [{ kind: "QUALITY_CHECK", amount: 5 }],
+      today: { counted: 1 },
+    });
+    expect((await xpState(user.id)).events).toEqual([
+      { kind: "QUALITY_CHECK", amount: 5, submissionId: row.id },
+    ]);
   });
 
   it("gold check during retest", async () => {
@@ -464,7 +545,8 @@ describe("POST /api/submit — every rejected path creates no payout intent", ()
     const gold = await createGoldTask("A");
     const res = await expectNoPayoutIntent(user.id, gold.id, campaign.id);
     expect(res.status).toBe(200);
-    // A correct answer: it says passed (OQ-10) and still earns nothing.
+    // A correct answer: it says passed (OQ-10) and still earns nothing, XP
+    // included (#201): the account is under review.
     expect(await errorOf(res)).toBe("quality_check_passed");
   });
 

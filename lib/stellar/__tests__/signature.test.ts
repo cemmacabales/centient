@@ -3,6 +3,8 @@ import { Keypair, hash } from "@stellar/stellar-sdk";
 import {
   verify,
   isValidStellarAddress,
+  lanternMessageBytes,
+  parseSignatureScheme,
   sep53Digest,
 } from "@/lib/stellar/signature";
 
@@ -104,5 +106,38 @@ describe("verify", () => {
   it("returns false (never throws) for a garbage signature", () => {
     expect(verify(PUBLIC_KEY, MESSAGE, "!!!not-base64!!!")).toBe(false);
     expect(verify(PUBLIC_KEY, MESSAGE, "")).toBe(false);
+  });
+});
+
+// Lantern signs `"Lantern signed message:\n" + message`, raw — no digest.
+describe("verify — lantern scheme", () => {
+  const lanternSign = (message: string) =>
+    kp.sign(Buffer.concat([Buffer.from("Lantern signed message:\n", "utf8"), Buffer.from(message, "utf8")]));
+
+  it("accepts Lantern's signature over its prefixed message", () => {
+    expect(verify(PUBLIC_KEY, MESSAGE, lanternSign(MESSAGE), "lantern")).toBe(true);
+    expect(lanternMessageBytes(MESSAGE).toString("utf8")).toBe(`Lantern signed message:\n${MESSAGE}`);
+  });
+
+  it("keeps the schemes apart: neither signature passes as the other", () => {
+    expect(verify(PUBLIC_KEY, MESSAGE, lanternSign(MESSAGE))).toBe(false);
+    expect(verify(PUBLIC_KEY, MESSAGE, sep53Sign(MESSAGE), "lantern")).toBe(false);
+  });
+
+  it("refuses a Lantern signature over a different message", () => {
+    expect(verify(PUBLIC_KEY, `${MESSAGE}!`, lanternSign(MESSAGE), "lantern")).toBe(false);
+  });
+});
+
+describe("parseSignatureScheme", () => {
+  it("defaults an absent scheme to SEP-53", () => {
+    expect(parseSignatureScheme(undefined)).toBe("sep53");
+  });
+
+  it("accepts the known schemes and nothing else", () => {
+    expect(parseSignatureScheme("sep53")).toBe("sep53");
+    expect(parseSignatureScheme("lantern")).toBe("lantern");
+    expect(parseSignatureScheme("raw")).toBeNull();
+    expect(parseSignatureScheme(null)).toBeNull();
   });
 });

@@ -520,23 +520,21 @@ async function within(promise: Promise<unknown>, ms: number): Promise<void> {
   clearTimeout(timer);
 }
 
-/** True if `promise` settles, either way, within `ms`. Never rejects. */
-async function settlesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> {
-  let settled = false;
-  const done = () => {
-    settled = true;
-  };
-  await within(promise.then(done, done), ms);
-  return settled;
-}
-
 /**
  * Wait for Freighter to answer a signing request, but not forever: give up
  * after {@link REQUEST_TIMEOUT_MS} or when the contributor cancels. Either way
  * the session is dropped, because a session Freighter didn't answer on can't be
  * trusted to carry the next request, and the retry should pair afresh.
+ *
+ * With `focusAfterMs`, Freighter is brought forward only if the answer is still
+ * missing by then. That grace is part of the wait, so a cancel during it stops
+ * the wait and Freighter is not brought forward afterwards.
  */
-async function awaitAnswer<T>(provider: WalletConnectProvider, pending: Promise<T>): Promise<T> {
+async function awaitAnswer<T>(
+  provider: WalletConnectProvider,
+  pending: Promise<T>,
+  { focusAfterMs }: { focusAfterMs?: number } = {},
+): Promise<T> {
   pending.catch(() => {}); // answered after we gave up: nowhere to go
   let timer: ReturnType<typeof setTimeout> | undefined;
   let giveUp: ((reason: WalletError) => void) | undefined;
@@ -554,16 +552,22 @@ async function awaitAnswer<T>(provider: WalletConnectProvider, pending: Promise<
       REQUEST_TIMEOUT_MS,
     );
   });
+  const focusTimer =
+    focusAfterMs === undefined ? undefined : setTimeout(() => focusWallet(provider), focusAfterMs);
 
   try {
     return await Promise.race([pending, givenUp]);
   } catch (err) {
+    // Before the session teardown below, which can take DROP_SESSION_WAIT_MS:
+    // a wait that has ended must not bring Freighter forward in the meantime.
+    clearTimeout(focusTimer);
     if (err instanceof WalletError && (err.code === "timed_out" || err.code === "cancelled")) {
       await dropSession(provider);
     }
     throw err;
   } finally {
     clearTimeout(timer);
+    clearTimeout(focusTimer);
     if (abandonRequest === giveUp) abandonRequest = null;
   }
 }
@@ -834,8 +838,9 @@ export async function signOwnershipAndTransaction(
 
 /**
  * The answer to a transaction request sent by {@link signOwnershipAndTransaction}.
- * Freighter is brought forward only if the answer isn't already here, and the
- * wait is then bounded and cancellable like any other signature.
+ * Freighter is brought forward only if the answer is still missing after
+ * {@link BATCHED_ANSWER_GRACE_MS}. The whole wait, grace included, is bounded
+ * and cancellable like any other signature.
  */
 async function collectTransaction(
   provider: WalletConnectProvider,
@@ -844,8 +849,7 @@ async function collectTransaction(
 ): Promise<string> {
   let result: { signedXDR?: unknown };
   try {
-    if (!(await settlesWithin(pending, BATCHED_ANSWER_GRACE_MS))) focusWallet(provider);
-    result = await awaitAnswer(provider, pending);
+    result = await awaitAnswer(provider, pending, { focusAfterMs: BATCHED_ANSWER_GRACE_MS });
   } catch (err) {
     throw walletConnectError(err, "Freighter signing failed");
   }

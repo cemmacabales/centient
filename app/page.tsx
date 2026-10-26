@@ -21,6 +21,15 @@ import { identify, track } from "@/lib/analytics";
 import { REWARD_AMOUNT, REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 import { sessionStep, type SessionMe } from "@/lib/contributor-session";
 import { waitForPayoutToSettle } from "@/lib/payout-settle-watch";
+import { GAMIFICATION_ON } from "@/lib/gamification/flag";
+import { trackProgress } from "@/lib/gamification/analytics";
+import type { Progress, ProgressView } from "@/lib/gamification/types";
+import AcceptedStub from "@/components/gamification/AcceptedStub";
+import TodayStrip from "@/components/gamification/TodayStrip";
+import TierUpScreen from "@/components/gamification/TierUpScreen";
+import ProgressScreen, { type ProgressTab } from "@/components/gamification/ProgressScreen";
+import { captureCodeFromUrl, clearPendingCode, pendingCode as storedCode } from "@/lib/gamification/event-link";
+import { captureInviteFromUrl } from "@/lib/gamification/invite-link";
 
 const MIN_LOADING_MS = 1500;
 
@@ -40,7 +49,9 @@ type Screen =
   | "quality_passed"
   | "banned"
   | "cooldown"
-  | "wallet_error";
+  | "wallet_error"
+  | "tier_up"
+  | "progress";
 
 interface TaskData {
   id: string;
@@ -50,6 +61,10 @@ interface TaskData {
   submissionsRemaining?: number | null;
   rewardDisplay?: string;
   rewardSymbol?: string;
+  /** #201: XP the answer earns if accepted; null in retest. */
+  xp?: number | null;
+  /** #202: the tier whose band holds the task, for its chip. */
+  tier?: number;
 }
 
 interface SubmitResponseBody {
@@ -60,6 +75,8 @@ interface SubmitResponseBody {
   error?: string;
   status?: "pending";
   submissionId?: string;
+  /** #201: present when the answer earned XP; absent if the XP write failed. */
+  progress?: Progress;
 }
 
 const EXPLORER_URL =
@@ -89,6 +106,8 @@ function submitErrorMessage(status: number, code?: string): string {
       return "This task is no longer available.";
     case "response_target_reached":
       return "This task has enough submissions. Try the next one.";
+    case "tier_locked":
+      return "This task isn't open at your tier right now. Try the next one.";
     case "payout_check_unavailable":
       return "We couldn't check your wallet can receive USDC. Please try again in a moment.";
     case "payout_failed":
@@ -123,6 +142,16 @@ export default function Home() {
   const [cooldownRemaining, setCooldownRemaining] = useState<string>("");
   const [bannedReason, setBannedReason] = useState<string | null>(null);
   const [disputeOpen, setDisputeOpen] = useState(false);
+  // #201: the XP loop, behind NEXT_PUBLIC_GAMIFICATION. `progress` is undefined
+  // while loading and null when unavailable; `accepted` is the last answer's
+  // award, for the success and quality-check screens.
+  const [progress, setProgress] = useState<ProgressView | null | undefined>(undefined);
+  /** #202: a tier the last answer opened, shown once before the next task. */
+  const [pendingTierUp, setPendingTierUp] = useState<number | null>(null);
+  const [accepted, setAccepted] = useState<{ progress: Progress; at: Date } | null>(null);
+  /** #203: which Progress tab opens, and a booth code waiting to be added. */
+  const [progressTab, setProgressTab] = useState<ProgressTab>("stamps");
+  const [pendingCode, setPendingCode] = useState<string | null>(null);
   const [demographics, setDemographics] = useState<{
     country: string | null;
     gender: string | null;
@@ -171,6 +200,45 @@ export default function Home() {
     return data;
   }, []);
 
+  const fetchProgress = useCallback(async () => {
+    if (!GAMIFICATION_ON) return;
+    const generation = sessionGeneration.current;
+    try {
+      const res = await fetch("/api/me/progress");
+      const data = res.ok ? ((await res.json()) as ProgressView) : null;
+      if (sessionGeneration.current === generation) setProgress(data);
+    } catch {
+      if (sessionGeneration.current === generation) setProgress(null);
+    }
+  }, []);
+
+  // #203: a booth link's `?code=` waits in this tab through sign-in and
+  // onboarding, then opens Progress with the code on the Event code card. An
+  // invite link's `?invite=` waits in a cookie for the first wallet sign-in.
+  useEffect(() => {
+    if (!GAMIFICATION_ON) return;
+    captureInviteFromUrl();
+    captureCodeFromUrl();
+    setPendingCode(storedCode());
+  }, []);
+
+  useEffect(() => {
+    if (screen === "landing" && pendingCode) {
+      setProgressTab("stamps");
+      setScreen("progress");
+    }
+  }, [screen, pendingCode]);
+
+  const settleCode = useCallback(() => {
+    clearPendingCode();
+    setPendingCode(null);
+  }, []);
+
+  // Home and each task show today's goal and the streak as they stand.
+  useEffect(() => {
+    if (screen === "landing" || screen === "task" || screen === "tier_up" || screen === "progress") void fetchProgress();
+  }, [screen, task?.id, fetchProgress]);
+
   // #39: the sheet shows earnings, which may have risen since the last refresh.
   useEffect(() => {
     if (accountOpen) fetchUserData().catch(() => {});
@@ -198,6 +266,8 @@ export default function Home() {
         submissionsRemaining: data.task.submissionsRemaining,
         rewardDisplay: data.task.rewardDisplay,
         rewardSymbol: data.task.rewardSymbol,
+        xp: data.task.xp ?? null,
+        tier: typeof data.task.tier === "number" ? data.task.tier : undefined,
       });
       setScreen("task");
       track("task_presented", { task_id: data.task.id });
@@ -334,6 +404,11 @@ export default function Home() {
     setCooldownRemaining("");
     setBannedReason(null);
     setDisputeOpen(false);
+    setProgress(undefined);
+    setAccepted(null);
+    setPendingTierUp(null);
+    clearPendingCode();
+    setPendingCode(null);
     setDemographics({ country: null, gender: null, ageRange: null });
     setScreen("login");
   }, []);
@@ -349,6 +424,39 @@ export default function Home() {
    * failure stays on it as `submitError`, which TaskCard announces beside the
    * submit action with the choice and reason kept for a retry.
    */
+  /** #201: an answer's XP, for the screen that follows and the next task's strip. */
+  function applyProgress(earned: Progress | undefined) {
+    setAccepted(earned ? { progress: earned, at: new Date() } : null);
+    if (!earned || !GAMIFICATION_ON) return;
+    trackProgress(earned);
+    if (earned.tier.tierUp !== null) setPendingTierUp(earned.tier.tierUp);
+    setProgress((prev) =>
+      prev
+        ? {
+            ...prev,
+            xpTotal: earned.xpTotal,
+            xpThisWeek: prev.xpThisWeek + earned.xpGained,
+            today: { ...prev.today, counted: earned.today.counted, goalMet: earned.today.goalMet },
+            streak: {
+              days: earned.streak.days,
+              best: earned.streak.best,
+              restDays: earned.streak.restDays,
+              endedAtDays: null,
+            },
+          }
+        : prev,
+    );
+    if (earned.today.goalJustMet) {
+      setToast({
+        id: Date.now(),
+        kind: "progress",
+        // A no-break space keeps "+20 XP" together when the toast wraps on a phone.
+        message: `Daily goal met. +${earned.lines.find((l) => l.kind === "DAILY_GOAL")?.amount ?? 20}\u00a0XP`,
+        detail: `${earned.streak.days}-day streak`,
+      });
+    }
+  }
+
   async function handleSubmit(choice: "A" | "B", reason: string) {
     if (!task) return;
     const generation = sessionGeneration.current;
@@ -410,6 +518,7 @@ export default function Home() {
       // #37: a passed gold check earns nothing. It was served like any other
       // task, so this is the first the contributor hears it was a quality check.
       if (!data.paid && data.reason === "quality_check_passed") {
+        applyProgress(data.progress);
         setScreen("quality_passed");
         track("submission_quality_check_passed", { task_id: task.id });
         return;
@@ -420,6 +529,7 @@ export default function Home() {
         // profile; its status is read from the account sheet, not shown here.
         await fetchUserData();
         if (loggedOutSince()) return;
+        applyProgress(data.progress);
         setScreen("success");
         // #39: earnings rise only once the worker has paid, after this returns.
         // Refresh them when it has, so the last answer of a session is counted.
@@ -441,6 +551,15 @@ export default function Home() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  /** After an answer: the tier-up screen first if the answer opened a tier, then the next task. */
+  function continueAfterAnswer() {
+    if (GAMIFICATION_ON && pendingTierUp !== null) {
+      setScreen("tier_up");
+      return;
+    }
+    void fetchTask();
   }
 
   let body: React.ReactNode = null;
@@ -471,43 +590,53 @@ export default function Home() {
         totalEarned={totalEarned}
         submissionCount={submissionCount}
         onStart={handleStartEarning}
+        progress={progress}
+        onOpenProgress={(tab = "stamps") => {
+          setProgressTab(tab);
+          setScreen("progress");
+        }}
       />
     );
   } else if (screen === "task" && task) {
     body = (
       <div className="min-h-screen bg-surface">
-        <header className="sticky top-0 z-40 flex w-full items-center justify-between bg-surface-container-low px-4 py-4">
-          <div className="flex items-center gap-2">
-            <Image
-              src="/logo.png"
-              alt=""
-              width={32}
-              height={32}
-              priority
-              className="select-none"
-            />
-            <span className="text-xl font-headline font-extrabold tracking-tighter text-primary">
-              Centient
-            </span>
+        <header className="sticky top-0 z-40 w-full bg-surface-container-low">
+          <div className={`flex w-full items-center justify-between px-4 ${GAMIFICATION_ON ? "pb-2.5 pt-4" : "py-4"}`}>
+            <div className="flex items-center gap-2">
+              <Image
+                src="/logo.png"
+                alt=""
+                width={32}
+                height={32}
+                priority
+                className="select-none"
+              />
+              <span className="text-xl font-headline font-extrabold tracking-tighter text-primary">
+                Centient
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setAccountOpen(true)}
+                aria-label="View account"
+                className="rounded-full transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+              >
+                <WalletChip address={wallet} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setAccountOpen(true)}
+                aria-label="View account"
+                className="rounded-full transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+              >
+                <EarningsBadge totalEarned={totalEarned} />
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setAccountOpen(true)}
-              aria-label="View account"
-              className="rounded-full transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-            >
-              <WalletChip address={wallet} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setAccountOpen(true)}
-              aria-label="View account"
-              className="rounded-full transition-transform duration-200 active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
-            >
-              <EarningsBadge totalEarned={totalEarned} />
-            </button>
-          </div>
+          {GAMIFICATION_ON && progress && (
+            <TodayStrip counted={progress.today.counted} streakDays={progress.streak.days} />
+          )}
         </header>
         <main className="mx-auto max-w-lg px-4 py-6">
           <TaskCard
@@ -518,6 +647,8 @@ export default function Home() {
             error={submitError}
             reward={task.rewardDisplay}
             tokenSymbol={task.rewardSymbol}
+            xp={task.xp}
+            tier={task.tier}
           />
         </main>
         <AccountSheet
@@ -538,6 +669,56 @@ export default function Home() {
           }
           onLoggedOut={handleLogout}
         />
+      </div>
+    );
+  } else if (screen === "success" && GAMIFICATION_ON && accepted) {
+    // #201 (board 05): the accepted answer as a receipt stub, USDC in gold and
+    // XP in indigo. Without a progress block (the XP write failed) the success
+    // screen below shows as before.
+    const reward = task?.rewardDisplay ?? REWARD_AMOUNT;
+    const symbol = task?.rewardSymbol ?? REWARD_TOKEN_SYMBOL;
+    body = (
+      <div className="relative flex min-h-screen flex-col items-center justify-center bg-surface px-6 py-10">
+        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
+          <div className="absolute -right-[10%] -top-[20%] h-[80vw] w-[80vw] rounded-full bg-primary/5 blur-[100px]" />
+          <div className="absolute -left-[20%] top-[30%] h-[70vw] w-[70vw] rounded-full bg-secondary/5 blur-[80px]" />
+          <div className="absolute -right-[25%] top-[55%] h-[75vw] w-[75vw] rounded-full bg-tertiary/10 blur-[90px]" />
+        </div>
+        <div className="relative z-10 flex w-full max-w-sm flex-col items-center gap-4">
+          <div className="flex h-22 w-22 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary-container shadow-[0_12px_40px_-12px_rgba(0,109,61,0.5)] motion-safe:animate-[bounce_1s_ease-in-out_1]">
+            <span
+              className="material-symbols-outlined text-[44px] text-white"
+              style={{ fontVariationSettings: "'FILL' 1" }}
+              aria-hidden="true"
+            >
+              check
+            </span>
+          </div>
+          <div className="flex flex-col items-center gap-1.5 text-center">
+            <h2 className="text-2xl font-headline font-bold text-on-surface">
+              <span className="font-extrabold text-secondary">{`+${reward} ${symbol}`}</span> on its way
+            </h2>
+            <p className="font-body text-sm text-on-surface-variant">
+              Your contribution helps improve AI. Your reward is being sent to your wallet — follow it in
+              your account.
+            </p>
+          </div>
+          <div className="mt-3 w-full">
+            <AcceptedStub
+              progress={accepted.progress}
+              reward={reward}
+              symbol={symbol}
+              at={accepted.at}
+              onSeeStamp={() => {
+                setProgressTab("stamps");
+                setScreen("progress");
+              }}
+            />
+          </div>
+          <div className="w-full pt-4">
+            <SubmitButton label="Next Task" onClick={continueAfterAnswer} />
+          </div>
+        </div>
       </div>
     );
   } else if (screen === "success") {
@@ -566,7 +747,7 @@ export default function Home() {
             Your contribution helps improve AI. Your reward is being sent to your wallet —
             follow it in your account.
           </p>
-          <SubmitButton label="Next Task" onClick={() => fetchTask()} />
+          <SubmitButton label="Next Task" onClick={continueAfterAnswer} />
         </div>
       </div>
     );
@@ -584,11 +765,12 @@ export default function Home() {
           </div>
           <h2 className="text-2xl font-headline font-bold text-on-surface">Quality check failed</h2>
           <p className="text-center font-body text-sm text-on-surface-variant">Try another task.</p>
-          <SubmitButton label="Next Task" onClick={() => fetchTask()} />
+          <SubmitButton label="Next Task" onClick={continueAfterAnswer} />
         </div>
       </div>
     );
   } else if (screen === "quality_passed") {
+    const checkXp = accepted?.progress.lines.find((l) => l.kind === "QUALITY_CHECK")?.amount;
     body = (
       <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-6">
         <div className="flex w-full max-w-sm flex-col items-center gap-6">
@@ -601,11 +783,28 @@ export default function Home() {
             </span>
           </div>
           <h2 className="text-2xl font-headline font-bold text-on-surface">Quality check passed</h2>
-          <p className="text-center font-body text-sm text-on-surface-variant">
-            That was a quality-check question. They don&apos;t earn a reward, but passing them keeps your
-            account in good standing.
-          </p>
-          <SubmitButton label="Next Task" onClick={() => fetchTask()} />
+          {GAMIFICATION_ON ? (
+            <>
+              <p className="text-center font-body text-sm text-on-surface-variant">
+                That was a quality-check question. It pays no USDC, but it earns XP and keeps your tier open.
+              </p>
+              {checkXp !== undefined && (
+                <div className="flex w-full items-baseline gap-2 rounded-lg bg-surface-container-lowest px-4 py-3 font-body text-sm leading-5 shadow-[0_4px_12px_rgba(25,28,30,0.04)]">
+                  <span className="text-on-surface-variant">XP</span>
+                  <span aria-hidden="true" className="flex-1 border-b-2 border-dotted border-outline-variant" />
+                  <span className="font-headline font-extrabold tabular-nums text-tertiary">
+                    +{checkXp}
+                  </span>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-center font-body text-sm text-on-surface-variant">
+              That was a quality-check question. They don&apos;t earn a reward, but passing them keeps your
+              account in good standing.
+            </p>
+          )}
+          <SubmitButton label="Next Task" onClick={continueAfterAnswer} />
         </div>
       </div>
     );
@@ -703,6 +902,7 @@ export default function Home() {
             <p className="font-body text-sm text-on-surface-variant">
               You&apos;ve labelled every task currently in the pool. New tasks land as customers
               upload them — check back in a day or two.
+              {GAMIFICATION_ON && " Today won't break your streak."}
             </p>
           </div>
           <div className="flex flex-col items-center gap-1 rounded-3xl bg-surface-container-low px-6 py-4">
@@ -713,6 +913,39 @@ export default function Home() {
           </div>
         </div>
       </div>
+    );
+  } else if (screen === "tier_up" && pendingTierUp !== null) {
+    body = (
+      <TierUpScreen
+        tierUp={pendingTierUp}
+        summary={progress === undefined ? undefined : (progress?.tier ?? null)}
+        onSeeTasks={() => {
+          setPendingTierUp(null);
+          void fetchTask();
+        }}
+        onHome={() => {
+          setPendingTierUp(null);
+          setScreen("landing");
+        }}
+      />
+    );
+  } else if (screen === "progress") {
+    body = (
+      <ProgressScreen
+        key={progressTab}
+        progress={progress}
+        initialTab={progressTab}
+        pendingCode={pendingCode}
+        onRedeemed={() => {
+          settleCode();
+          void fetchProgress();
+        }}
+        onBack={() => {
+          // Seen and left: the link's code doesn't reopen Progress again.
+          settleCode();
+          setScreen("landing");
+        }}
+      />
     );
   // ✅ FIX 2: Add explicit handling for wallet_error state
   } else if (screen === "wallet_error") {

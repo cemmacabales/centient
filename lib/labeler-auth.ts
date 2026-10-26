@@ -68,20 +68,38 @@ export async function getLabelerUser(req: NextRequest): Promise<LabelerUser | nu
   });
 }
 
+/**
+ * Set the session cookie.
+ *
+ * `embedded` is for a session started inside Lantern, whose Apps tab frames
+ * this app from another site: there a `Lax` cookie is never sent, so the
+ * contributor would be signed out on their next request. Instead the cookie is
+ * `SameSite=None` and **partitioned** (CHIPS) — kept under Lantern's top-level
+ * site, so it is sent inside Lantern's frame and nowhere else. A page on some
+ * other site that frames or posts to Centient reads its own, empty partition,
+ * so the cookie still never rides along on a request another site starts.
+ */
 export async function setLabelerSessionCookie(
   res: NextResponse,
-  token: string
+  token: string,
+  { embedded = false }: { embedded?: boolean } = {}
 ): Promise<NextResponse> {
   res.cookies.set(COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
     maxAge: COOKIE_MAX_AGE,
     path: "/",
+    ...(embedded
+      ? { secure: true, sameSite: "none", partitioned: true }
+      : { secure: process.env.NODE_ENV === "production", sameSite: "lax" }),
   });
   return res;
 }
 
+/**
+ * Expire the session cookie. A partitioned cookie is a separate cookie, deleted
+ * only by a `Set-Cookie` that is partitioned too, so both are expired: one
+ * response, whichever kind this browser holds.
+ */
 export function clearLabelerSessionCookie(res: NextResponse): NextResponse {
   res.cookies.set(COOKIE_NAME, "", {
     httpOnly: true,
@@ -90,6 +108,12 @@ export function clearLabelerSessionCookie(res: NextResponse): NextResponse {
     maxAge: 0, // expire immediately
     path: "/",
   });
+  // Appended after `cookies.set`, which rewrites every Set-Cookie it knows of
+  // and holds one per name.
+  res.headers.append(
+    "Set-Cookie",
+    `${COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None; Partitioned`,
+  );
   return res;
 }
 

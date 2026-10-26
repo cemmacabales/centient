@@ -6,6 +6,8 @@ export type TaskRow = {
   category?: string | null;
   isGold?: boolean;
   goldAnswer?: "A" | "B" | null;
+  /** #202: 1–9, which tiers are served the task. Absent or empty: open to every tier. */
+  difficulty?: number;
 };
 
 export function parseCSVLine(line: string): string[] {
@@ -144,6 +146,7 @@ export function parseCSV(text: string): {
   const categoryIdx = headers.indexOf("category");
   const isGoldIdx = headers.indexOf("isgold");
   const goldAnswerIdx = headers.indexOf("goldanswer");
+  const difficultyIdx = headers.indexOf("difficulty");
 
   const rows: TaskRow[] = [];
   const errors: string[] = [];
@@ -195,6 +198,16 @@ export function parseCSV(text: string): {
       continue;
     }
 
+    const difficultyStr = difficultyIdx >= 0 ? values[difficultyIdx]?.trim() ?? "" : "";
+    let difficulty: number | undefined;
+    if (difficultyStr) {
+      if (!/^\d+$/.test(difficultyStr) || Number(difficultyStr) < 1 || Number(difficultyStr) > 9) {
+        errors.push(`Row ${i + 1}: difficulty must be a whole number from 1 to 9, got "${difficultyStr}"`);
+        continue;
+      }
+      difficulty = Number(difficultyStr);
+    }
+
     rows.push({
       prompt,
       responseA,
@@ -203,6 +216,7 @@ export function parseCSV(text: string): {
       category,
       isGold,
       goldAnswer,
+      difficulty,
     });
   }
 

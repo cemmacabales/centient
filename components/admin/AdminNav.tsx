@@ -15,6 +15,7 @@ const TABS_SUPER_ADMIN = [
   { href: "/admin/flagged-withdrawals", label: "Flagged" },
   { href: "/admin/status-health", label: "Status" },
   { href: "/admin/ops", label: "Ops" },
+  { href: "/admin/gamification", label: "Gamification" },
 ];
 
 const TABS_CUSTOMER = [

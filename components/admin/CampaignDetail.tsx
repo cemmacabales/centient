@@ -8,6 +8,8 @@ import { REWARD_TOKEN_SYMBOL } from "@/lib/constants";
 import { usdcToUnits, unitsToUsdcDisplay } from "@/lib/stellar/config";
 import ExportModal from "@/components/admin/ExportModal";
 import BalanceCard from "@/components/admin/BalanceCard";
+import CrowdControl from "@/components/admin/CrowdControl";
+import { GAMIFICATION_ON } from "@/lib/gamification/flag";
 
 interface TaskProgress {
   taskId: string;
@@ -821,6 +823,9 @@ export default function CampaignDetail({
         initialLedger={recentLedger}
         isSuperAdmin={isSuperAdmin}
       />
+
+      {/* #202 (board 10): the campaign's crowd, behind the gamification flag. */}
+      {GAMIFICATION_ON && <CrowdControl campaignId={campaignId} canManage={canManage && !isReadOnly} />}
 
       <section className="rounded-3xl border border-outline-variant/40 bg-surface-container-lowest shadow-[0_4px_24px_rgba(25,28,30,0.04)]">
         <div className="flex items-center justify-between border-b border-outline-variant/30 px-6 py-4">

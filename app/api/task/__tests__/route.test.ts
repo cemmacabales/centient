@@ -351,3 +351,66 @@ describe("GET /api/task - response target filtering", () => {
     expect(body.task.submissionsRemaining).toBe(2);
   });
 });
+
+describe("GET /api/task - XP loop (#201)", () => {
+  it("carries the answer's XP by the task's difficulty", async () => {
+    mockRandom(0.5);
+    await createTask({ difficulty: 5 });
+    const res = await getTaskAsFreshUser();
+    expect((await res.json()).task.xp).toBe(15);
+  });
+
+  it("carries the lowest band for a task with no difficulty", async () => {
+    mockRandom(0.5);
+    await createTask({ difficulty: null });
+    const res = await getTaskAsFreshUser();
+    expect((await res.json()).task.xp).toBe(10);
+  });
+
+  it("carries no XP during retest, which earns none", async () => {
+    mockRandom(0.5);
+    await createGoldTask("A");
+    const user = await createUser({ isBanned: true, bannedUntil: new Date(Date.now() - 1000), banCount: 1 });
+    const res = await getTaskAs(user.id);
+    const body = await res.json();
+    expect(body.task).not.toBeNull();
+    expect(body.task.xp).toBeNull();
+  });
+
+  it("protects today when nothing is left for the labeler", async () => {
+    const user = await createUser();
+    const res = await getTaskAs(user.id);
+    expect((await res.json()).task).toBeNull();
+
+    const days = await prisma.dailyProgress.findMany({ where: { userId: user.id } });
+    expect(days).toHaveLength(1);
+    expect(days[0]).toMatchObject({ protected: true, counted: 0 });
+  });
+
+  it("does not protect today while a task is open", async () => {
+    mockRandom(0.5);
+    await createTask();
+    const user = await createUser();
+    await getTaskAs(user.id);
+    expect(await prisma.dailyProgress.count({ where: { userId: user.id } })).toBe(0);
+  });
+
+  it("still answers when protecting today fails", async () => {
+    await prisma.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION test_refuse_daily_progress() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'forced daily_progress insert failure'; END;
+      $$ LANGUAGE plpgsql`);
+    await prisma.$executeRawUnsafe(`
+      CREATE TRIGGER test_refuse_daily_progress BEFORE INSERT ON "daily_progress"
+      FOR EACH ROW EXECUTE FUNCTION test_refuse_daily_progress()`);
+    try {
+      const user = await createUser();
+      const res = await getTaskAs(user.id);
+      expect(res.status).toBe(200);
+      expect((await res.json()).task).toBeNull();
+    } finally {
+      await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_refuse_daily_progress ON "daily_progress"`);
+      await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS test_refuse_daily_progress()`);
+    }
+  });
+});

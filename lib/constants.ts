@@ -21,6 +21,20 @@ export function parseGoldRatio(raw: string | undefined): number {
 
 export const GOLD_TASK_RATIO = parseGoldRatio(process.env.GOLD_TASK_RATIO);
 
+// #202 (ADR-0011): settled answers that resolve a task with no response target
+// of its own or its campaign's. Resolution only: it writes the majority and
+// never caps supply, which the response target alone does. At least 2, since
+// agreement needs two answers.
+export function parseResolutionMinAnswers(raw: string | undefined): number {
+  const value = Number(raw?.trim() || "5");
+  if (!Number.isInteger(value) || value < 2) {
+    throw new Error(`RESOLUTION_MIN_ANSWERS must be a whole number of at least 2, got "${raw}"`);
+  }
+  return value;
+}
+
+export const RESOLUTION_MIN_ANSWERS = parseResolutionMinAnswers(process.env.RESOLUTION_MIN_ANSWERS);
+
 // Fraud detection: maximum distinct accounts a single wallet can receive
 // withdrawals from before being flagged/blocked.
 export const MAX_SHARED_WALLET_ACCOUNTS = Number(process.env.MAX_SHARED_WALLET_ACCOUNTS ?? "3");

@@ -240,7 +240,7 @@ ask_secret COSIGNER_DB_URL "Paste the full COSIGNER_DATABASE_URL:"
 # ── 3 ─────────────────────────────────────────────────────────────────────
 stage "Service configuration"
 say "Setting start command, health check, and an explicitly empty pre-deploy."
-step "The empty pre-deploy matters: the repo-root railway.json runs"
+step "The empty pre-deploy matters: the web service's pre-deploy runs"
 step "prisma migrate deploy, which this read-only service must never do."
 rw environment edit --service-config "$SVC" deploy.startCommand "npm run cosign"
 rw environment edit --service-config "$SVC" deploy.healthcheckPath "/health"

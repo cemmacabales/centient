@@ -1,6 +1,6 @@
 # ADR-0003: Support Freighter only; descope Albedo from Deliverable 2
 
-- **Status:** Accepted — 2026-09-14, **amended 2026-09-22** (see *Amendment: Freighter Mobile over WalletConnect*)
+- **Status:** Accepted — 2026-09-14, **amended 2026-09-22** (see *Amendment: Freighter Mobile over WalletConnect*) and **2026-10-06** (see *Amendment: Lantern on Android*)
 - **Scope:** Deliverable 2 (wallet-native contributor onboarding) and everything built on it in Deliverables 3–4.
 - **Relates to:** [#21](https://github.com/webnxt-2030/Centient/issues/21) (Epic 2), [#24](https://github.com/webnxt-2030/Centient/issues/24) (wallet signing spike), [#26](https://github.com/webnxt-2030/Centient/issues/26) (wallet-connect session), [#28](https://github.com/webnxt-2030/Centient/issues/28) (sponsored trustline + fee bump), [#31](https://github.com/webnxt-2030/Centient/issues/31) (Epic 2 QA), SOW §3.1, §4.1, §5.1, §6.
 
@@ -133,3 +133,26 @@ criteria in #137.
   the user abandons leaves the dialog open until the page is reloaded. Tracked in #138.
 - **Rollback** is unsetting the project id and rebuilding `web`. There is no revert PR, no
   migration and no persisted state.
+
+## Amendment: Lantern on Android (2026-10-06)
+
+**Status: accepted, shipped.** Proposed 2026-10-02; [PR #185](https://github.com/webnxt-2030/Centient/pull/185)
+shipped it, and it is live on centient.work and beta.centient.work since 2026-10-06.
+`NEXT_PUBLIC_LANTERN_ORIGINS` names Lantern 0.6.0's Android origin,
+`https://android.golantern.xyz` ([#192](https://github.com/webnxt-2030/Centient/issues/192)).
+"Open in Lantern" from Chrome waits on Lantern's directory listing Centient (see
+`docs/lantern-integration.md`).
+
+Lantern is a second *wallet*, not a second transport for Freighter, so this amends the
+decision above rather than its WalletConnect amendment. It is narrow on purpose:
+
+- **Android only.** Lantern ships no iOS app. iOS and desktop are unchanged.
+- **Additive.** Freighter stays the default everywhere, and on Android it is one tap
+  behind the Lantern offer ("Use Freighter instead").
+- **Off until configured.** Everything is behind `NEXT_PUBLIC_LANTERN_ORIGINS`. Unset, the
+  CSP still frames only this app and no Lantern UI renders.
+
+Lantern signs messages without SEP-53 (`ed25519_sign("Lantern signed message:\n" + m)`),
+so `SignatureScheme` widens to `"sep53" | "lantern"` and the verify routes take an optional
+`scheme`. A sign-in made inside Lantern gets a partitioned `SameSite=None` session cookie,
+because Lantern frames this app from another site.

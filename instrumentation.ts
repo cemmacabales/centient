@@ -2,6 +2,9 @@ import * as Sentry from "@sentry/nextjs";
 
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    // The deploy log is the record of which runtime production actually runs;
+    // it should match .node-version (#214).
+    console.log(`[instrumentation] node ${process.version}`);
     await import("./sentry.server.config");
     await assertPayoutSigningSeparation();
     await startBackgroundWorkers();

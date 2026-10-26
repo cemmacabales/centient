@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getAdminSession, assertExportAllowed, type AdminJWTPayload } from "@/lib/admin-auth";
 import { auditLog } from "@/lib/audit";
+import { labelerTierName } from "@/lib/gamification/tiers";
 
 type ExportFormat = "json" | "csv" | "txt";
 type SplitValue = "train" | "test" | "validation" | "all";
@@ -136,7 +137,7 @@ export async function GET(
   if (format === "csv") {
     const headers = [
       "id", "prompt", "chosen", "rejected", "category", "chosen_side",
-      "reason", "model_chosen", "model_rejected", "labeler", "tx_hash", "created_at",
+      "reason", "model_chosen", "model_rejected", "labeler", "labeler_tier", "tx_hash", "created_at",
     ];
     const rows = filtered.map((s) => {
       const chosen = s.choice === "A" ? s.task.responseA : s.task.responseB;
@@ -154,6 +155,7 @@ export async function GET(
         chosenModel ?? "",
         rejectedModel ?? "",
         s.walletAddress ?? "",
+        labelerTierName(s.labelerTier) ?? "",
         s.payoutTxHash ?? "",
         s.createdAt.toISOString(),
       ].map(escapeCsv).join(",");
@@ -181,6 +183,7 @@ Rejected: ${rejected}
 Reason: ${s.reason}
 Category: ${s.task.category ?? "N/A"}
 Labeler: ${s.walletAddress}
+Labeler tier: ${labelerTierName(s.labelerTier) ?? "N/A"}
 Created: ${s.createdAt.toISOString()}
 `;
     });
@@ -212,6 +215,7 @@ Created: ${s.createdAt.toISOString()}
       model_chosen: chosenModel ?? null,
       model_rejected: rejectedModel ?? null,
       labeler: s.walletAddress,
+      labeler_tier: labelerTierName(s.labelerTier),
       tx_hash: s.payoutTxHash ?? null,
       created_at: s.createdAt.toISOString(),
       split: assignSplit(s.id),

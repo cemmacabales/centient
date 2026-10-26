@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@/app/generated/prisma/client";
 import {
@@ -15,12 +16,30 @@ import {
   isInRetest,
   RETEST_GOLD_COUNT,
 } from "@/lib/admin-data";
+import { markProtected } from "@/lib/gamification/ledger";
+import { answerXp } from "@/lib/gamification/rules";
+import { gatingOn } from "@/lib/gamification/flag";
+import { effectiveTier, maxDifficulty, standInDifficulty, tierOfDifficulty, TIERS } from "@/lib/gamification/tiers";
 
 function computeResponseTarget(
   taskResponseTarget: number | null,
   campaignDefaultResponseTarget: number | null,
 ): number | null {
   return taskResponseTarget ?? campaignDefaultResponseTarget ?? null;
+}
+
+/**
+ * A quality check's stand-in difficulty: a real task's, picked stably per seed
+ * from the open tasks in the band, so checks follow the pool's own spread.
+ * Without one, an even pick across the band.
+ */
+async function checkStandIn(seed: string, max: number): Promise<number> {
+  const [row] = await prisma.$queryRaw<{ difficulty: number }[]>`
+    SELECT "difficulty" FROM "tasks"
+    WHERE "isGold" = false AND "disabled" = false AND "difficulty" IS NOT NULL AND "difficulty" <= ${max}
+    ORDER BY md5(id || ${seed})
+    LIMIT 1`;
+  return row?.difficulty ?? standInDifficulty(seed, max);
 }
 
 export async function GET(req: NextRequest) {
@@ -68,6 +87,7 @@ export async function GET(req: NextRequest) {
     isGold: boolean;
     responseTarget: number | null;
     rewardUnits: bigint | null;
+    difficulty: number | null;
     campaign: { defaultResponseTarget: number; rewardUnits: bigint } | null;
     _count: { submissions: number };
   } | null = null;
@@ -99,6 +119,13 @@ export async function GET(req: NextRequest) {
         ? Prisma.sql`AND t.id NOT IN (${Prisma.join(doneIds)})`
         : Prisma.empty;
 
+    // #202: only the labeler's band, and campaigns open to their tier. A held
+    // tier serves the band below. A task with no difficulty is open to all.
+    const tierCondition = gatingOn()
+      ? Prisma.sql`AND (t."difficulty" IS NULL OR t."difficulty" <= ${maxDifficulty(user.tier, user.tierOnHold)})
+        AND COALESCE(c."minTier", 0) <= ${effectiveTier(user.tier, user.tierOnHold)}`
+      : Prisma.empty;
+
     const available = await prisma.$queryRaw<{ id: string }[]>`
       SELECT t.id
       FROM "tasks" t
@@ -110,6 +137,7 @@ export async function GET(req: NextRequest) {
         )
         AND t."disabled" = false
         ${doneIdCondition}
+        ${tierCondition}
         AND (
           COALESCE(t."responseTarget", c."defaultResponseTarget") IS NULL
           OR (
@@ -136,6 +164,13 @@ export async function GET(req: NextRequest) {
   }
 
   if (!task) {
+    // #201: nothing is open for this labeler, so today can't break their streak.
+    // Best effort: the answer below doesn't depend on it.
+    try {
+      await markProtected(userId);
+    } catch (err) {
+      Sentry.captureException(err, { extra: { context: "task-protect-day", userId } });
+    }
     return NextResponse.json({ task: null, message: "No more tasks available" });
   }
 
@@ -143,6 +178,12 @@ export async function GET(req: NextRequest) {
   const submissionsRemaining = target !== null ? Math.max(0, target - task._count.submissions) : null;
   const resolvedUnits = resolveRewardUnits(task.rewardUnits, task.campaign?.rewardUnits ?? null);
   const rewardDisplay = unitsToUsdcDisplay(resolvedUnits);
+
+  // A quality check has no difficulty of its own, which would always read as
+  // 10 XP and Starter. It shows a stand-in from the labeler's band instead.
+  const shownDifficulty = task.isGold
+    ? await checkStandIn(`${task.id}:${userId}`, gatingOn() ? maxDifficulty(user.tier, user.tierOnHold) : TIERS[TIERS.length - 1].maxDifficulty)
+    : task.difficulty;
 
   return NextResponse.json({
     task: {
@@ -154,6 +195,11 @@ export async function GET(req: NextRequest) {
       rewardUnits: resolvedUnits.toString(),
       rewardDisplay,
       rewardSymbol: REWARD_TOKEN_SYMBOL,
+      // #201: what the answer earns if accepted. A retest answer earns none. A
+      // gold task shows a stand-in, so nothing tells it apart.
+      xp: inRetest ? null : answerXp(shownDifficulty),
+      // #202: the band the task belongs to, for the "Skilled task" chip.
+      tier: tierOfDifficulty(shownDifficulty),
     },
   });
 }
